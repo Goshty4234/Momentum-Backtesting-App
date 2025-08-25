@@ -2268,9 +2268,69 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                     data_reindexed_for_config[t] = df
                 total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed_for_config)
                 # Store both series under the unique key for later use
+                # compute today_weights_map (target weights as-if rebalanced at final snapshot date)
+                today_weights_map = {}
+                try:
+                    alloc_dates = sorted(list(historical_allocations.keys()))
+                    final_d = alloc_dates[-1]
+                    metrics_local = historical_metrics
+                    
+                    # Check if momentum is used for this portfolio
+                    use_momentum = cfg.get('use_momentum', True)
+                    
+                    if final_d in metrics_local:
+                        if use_momentum:
+                            # extract Calculated_Weight if present (momentum-based)
+                            weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
+                            # normalize (ensure sums to 1 excluding CASH)
+                            sumw = sum(w for k, w in weights.items() if k != 'CASH')
+                            if sumw > 0:
+                                norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
+                            else:
+                                norm = weights
+                            today_weights_map = norm
+                        else:
+                            # When momentum is not used, use user-defined allocations from portfolio config
+                            today_weights_map = {}
+                            for stock in cfg.get('stocks', []):
+                                ticker = stock.get('ticker', '').strip()
+                                if ticker:
+                                    today_weights_map[ticker] = stock.get('allocation', 0)
+                            # Add CASH if needed
+                            total_alloc = sum(today_weights_map.values())
+                            if total_alloc < 1.0:
+                                today_weights_map['CASH'] = 1.0 - total_alloc
+                            else:
+                                today_weights_map['CASH'] = 0
+                    else:
+                        # fallback: use allocation snapshot at final date but convert market-value alloc to target weights (exclude CASH then renormalize)
+                        final_alloc = historical_allocations.get(final_d, {})
+                        noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
+                        s = sum(noncash.values())
+                        if s > 0:
+                            norm = {k: (v / s) for k, v in noncash.items()}
+                            norm['CASH'] = final_alloc.get('CASH', 0)
+                        else:
+                            norm = final_alloc
+                        today_weights_map = norm
+                except Exception as e:
+                    # If computation fails, use user-defined allocations as fallback
+                    today_weights_map = {}
+                    for stock in cfg.get('stocks', []):
+                        ticker = stock.get('ticker', '').strip()
+                        if ticker:
+                            today_weights_map[ticker] = stock.get('allocation', 0)
+                    # Add CASH if needed
+                    total_alloc = sum(today_weights_map.values())
+                    if total_alloc < 1.0:
+                        today_weights_map['CASH'] = 1.0 - total_alloc
+                    else:
+                        today_weights_map['CASH'] = 0
+
                 all_results[unique_name] = {
                     'no_additions': total_series_no_additions,
-                    'with_additions': total_series
+                    'with_additions': total_series,
+                    'today_weights_map': today_weights_map
                 }
                 all_allocations[unique_name] = historical_allocations
                 all_metrics[unique_name] = historical_metrics
@@ -2500,6 +2560,24 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             if 'stats_df_display' in locals():
                 st.session_state.strategy_comparison_stats_df_display = stats_df_display
             st.session_state.strategy_comparison_all_years = all_years
+            # Save a snapshot used by the allocations UI so charts/tables remain static until rerun
+            try:
+                # Create today_weights_map for all portfolios
+                today_weights_map = {}
+                for unique_name, results in all_results.items():
+                    if isinstance(results, dict) and 'today_weights_map' in results:
+                        today_weights_map[unique_name] = results['today_weights_map']
+                
+                st.session_state.strategy_comparison_snapshot_data = {
+                    'raw_data': data,
+                    'portfolio_configs': st.session_state.strategy_comparison_portfolio_configs,
+                    'all_allocations': all_allocations,
+                    'all_metrics': all_metrics,
+                    'today_weights_map': today_weights_map
+                }
+            except Exception:
+                pass
+            
             st.session_state.strategy_comparison_all_allocations = all_allocations
             st.session_state.strategy_comparison_all_metrics = all_metrics
             # Save portfolio index -> unique key mapping so UI selectors can reference results reliably
@@ -3378,54 +3456,18 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                                 st.markdown("---")
                                 st.markdown("**🔄 Rebalance as of Today**")
                                 
-                                # Get momentum-based calculated weights for today's rebalancing
+                                # Get momentum-based calculated weights for today's rebalancing from stored snapshot
                                 today_weights = {}
                                 
-                                # Check if momentum is used for this portfolio
-                                portfolio_configs = st.session_state.get('strategy_comparison_portfolio_configs', [])
-                                portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
-                                use_momentum = portfolio_cfg.get('use_momentum', True) if portfolio_cfg else True
+                                # Get the stored today_weights_map from snapshot data
+                                snapshot = st.session_state.get('strategy_comparison_snapshot_data', {})
+                                today_weights_map = snapshot.get('today_weights_map', {}) if snapshot else {}
                                 
-                                if use_momentum and selected_portfolio_detail in st.session_state.strategy_comparison_all_metrics:
-                                    metrics_for_portfolio = st.session_state.strategy_comparison_all_metrics[selected_portfolio_detail]
-                                    # Get the latest date from metrics
-                                    if metrics_for_portfolio:
-                                        latest_date = max(metrics_for_portfolio.keys())
-                                        latest_metrics = metrics_for_portfolio[latest_date]
-                                        
-                                        # Extract calculated weights for today's rebalancing
-                                        for ticker, data in latest_metrics.items():
-                                            if ticker is not None:  # Skip None ticker (CASH)
-                                                calculated_weight = data.get('Calculated_Weight', 0)
-                                                if calculated_weight > 0:
-                                                    today_weights[ticker] = calculated_weight
-                                        
-                                        # Add CASH if there's any
-                                        cash_weight = 1.0 - sum(today_weights.values())
-                                        if cash_weight > 0.001:  # Only show if significant
-                                            today_weights['CASH'] = cash_weight
-                                
-                                # If no momentum data or momentum is disabled, use user-defined allocations
-                                if not today_weights:
-                                    if portfolio_cfg and not use_momentum:
-                                        # Use user-defined allocations from portfolio configuration when momentum is disabled
-                                        for stock in portfolio_cfg.get('stocks', []):
-                                            ticker = stock.get('ticker')
-                                            allocation = stock.get('allocation', 0)
-                                            if ticker and allocation > 0:
-                                                today_weights[ticker] = allocation
-                                    else:
-                                        # Use the global ticker allocations (shared across all portfolios)
-                                        global_tickers = st.session_state.get('strategy_comparison_global_tickers', [])
-                                        if global_tickers:
-                                            for ticker_config in global_tickers:
-                                                ticker = ticker_config.get('ticker')
-                                                allocation = ticker_config.get('allocation', 0)
-                                                if ticker and allocation > 0:
-                                                    today_weights[ticker] = allocation
-                                        else:
-                                            # Fallback to current allocation if no global tickers found
-                                            today_weights = final_alloc
+                                if selected_portfolio_detail in today_weights_map:
+                                    today_weights = today_weights_map.get(selected_portfolio_detail, {})
+                                else:
+                                    # Fallback to current allocation if no stored weights found
+                                    today_weights = final_alloc
                                 
                                 # Create labels and values for the plot
                                 labels_today = [k for k, v in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])) if v > 0]
@@ -3826,56 +3868,20 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                         st.markdown("---")
                         st.markdown("**🔄 Rebalance as of Today**")
                         
-                        # Get momentum-based calculated weights for today's rebalancing (fallback scenario)
+                        # Get momentum-based calculated weights for today's rebalancing from stored snapshot (fallback scenario)
                         today_weights = {}
                         
-                        # Check if momentum is used for this portfolio
-                        portfolio_configs = st.session_state.get('strategy_comparison_portfolio_configs', [])
-                        portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
-                        use_momentum = portfolio_cfg.get('use_momentum', True) if portfolio_cfg else True
+                        # Get the stored today_weights_map from snapshot data
+                        snapshot = st.session_state.get('strategy_comparison_snapshot_data', {})
+                        today_weights_map = snapshot.get('today_weights_map', {}) if snapshot else {}
                         
-                        if use_momentum and selected_portfolio_detail in st.session_state.strategy_comparison_all_metrics:
-                            metrics_for_portfolio = st.session_state.strategy_comparison_all_metrics[selected_portfolio_detail]
-                            # Get the latest date from metrics
-                            if metrics_for_portfolio:
-                                latest_date = max(metrics_for_portfolio.keys())
-                                latest_metrics = metrics_for_portfolio[latest_date]
-                                
-                                # Extract calculated weights for today's rebalancing
-                                for ticker, data in latest_metrics.items():
-                                    if ticker is not None:  # Skip None ticker (CASH)
-                                        calculated_weight = data.get('Calculated_Weight', 0)
-                                        if calculated_weight > 0:
-                                            today_weights[ticker] = calculated_weight
-                                
-                                # Add CASH if there's any
-                                cash_weight = 1.0 - sum(today_weights.values())
-                                if cash_weight > 0.001:  # Only show if significant
-                                    today_weights['CASH'] = cash_weight
-                        
-                        # If no momentum data or momentum is disabled, use user-defined allocations
-                        if not today_weights:
-                            if portfolio_cfg and not use_momentum:
-                                # Use user-defined allocations from portfolio configuration when momentum is disabled
-                                for stock in portfolio_cfg.get('stocks', []):
-                                    ticker = stock.get('ticker')
-                                    allocation = stock.get('allocation', 0)
-                                    if ticker and allocation > 0:
-                                        today_weights[ticker] = allocation
-                            else:
-                                # Use the global ticker allocations (shared across all portfolios)
-                                global_tickers = st.session_state.get('strategy_comparison_global_tickers', [])
-                                if global_tickers:
-                                    for ticker_config in global_tickers:
-                                        ticker = ticker_config.get('ticker')
-                                        allocation = ticker_config.get('allocation', 0)
-                                        if ticker and allocation > 0:
-                                            today_weights[ticker] = allocation
-                                else:
-                                    # Fallback to current allocation if no global tickers found
-                                    final_date = last_date
-                                    final_alloc = last_alloc
-                                    today_weights = final_alloc
+                        if selected_portfolio_detail in today_weights_map:
+                            today_weights = today_weights_map.get(selected_portfolio_detail, {})
+                        else:
+                            # Fallback to current allocation if no stored weights found
+                            final_date = last_date
+                            final_alloc = last_alloc
+                            today_weights = final_alloc
                         
                         # Create labels and values for the plot
                         labels_today = [k for k, v in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])) if v > 0]
