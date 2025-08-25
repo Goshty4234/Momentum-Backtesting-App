@@ -1844,33 +1844,57 @@ if 'strategy_comparison_add_stock_flag' in st.session_state and st.session_state
 
 if 'strategy_comparison_remove_stock_flag' in st.session_state and st.session_state.strategy_comparison_remove_stock_flag is not None:
     index = st.session_state.strategy_comparison_remove_stock_flag
-    if len(st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks']) > 1:
-        st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks'].pop(index)
+    try:
+        active_idx = st.session_state.strategy_comparison_active_portfolio_index
+        if (0 <= active_idx < len(st.session_state.strategy_comparison_portfolio_configs) and
+            'stocks' in st.session_state.strategy_comparison_portfolio_configs[active_idx] and
+            len(st.session_state.strategy_comparison_portfolio_configs[active_idx]['stocks']) > 1 and
+            0 <= index < len(st.session_state.strategy_comparison_portfolio_configs[active_idx]['stocks'])):
+            st.session_state.strategy_comparison_portfolio_configs[active_idx]['stocks'].pop(index)
+    except (IndexError, KeyError) as e:
+        # Handle rapid UI changes gracefully
+        pass
     st.session_state.strategy_comparison_remove_stock_flag = None
 
 if 'strategy_comparison_remove_global_stock_flag' in st.session_state and st.session_state.strategy_comparison_remove_global_stock_flag is not None:
     index = st.session_state.strategy_comparison_remove_global_stock_flag
-    if len(st.session_state.strategy_comparison_global_tickers) > 1:
-        st.session_state.strategy_comparison_global_tickers.pop(index)
-        sync_global_tickers_to_all_portfolios()
+    try:
+        if (len(st.session_state.strategy_comparison_global_tickers) > 1 and 
+            0 <= index < len(st.session_state.strategy_comparison_global_tickers)):
+            st.session_state.strategy_comparison_global_tickers.pop(index)
+            sync_global_tickers_to_all_portfolios()
+    except (IndexError, KeyError) as e:
+        # Handle rapid UI changes gracefully
+        pass
     st.session_state.strategy_comparison_remove_global_stock_flag = None
 
 # Handle seamless momentum window operations
 if 'strategy_comparison_add_momentum_window_flag' in st.session_state and st.session_state.strategy_comparison_add_momentum_window_flag:
-    idx = st.session_state.strategy_comparison_active_portfolio_index
-    cfg = st.session_state.strategy_comparison_portfolio_configs[idx]
-    if 'momentum_windows' not in cfg:
-        cfg['momentum_windows'] = []
-    cfg['momentum_windows'].append({"lookback": 90, "exclude": 30, "weight": 0.1})
-    st.session_state.strategy_comparison_portfolio_configs[idx] = cfg
+    try:
+        idx = st.session_state.strategy_comparison_active_portfolio_index
+        if 0 <= idx < len(st.session_state.strategy_comparison_portfolio_configs):
+            cfg = st.session_state.strategy_comparison_portfolio_configs[idx]
+            if 'momentum_windows' not in cfg:
+                cfg['momentum_windows'] = []
+            cfg['momentum_windows'].append({"lookback": 90, "exclude": 30, "weight": 0.1})
+            st.session_state.strategy_comparison_portfolio_configs[idx] = cfg
+    except (IndexError, KeyError) as e:
+        # Handle rapid UI changes gracefully
+        pass
     st.session_state.strategy_comparison_add_momentum_window_flag = False
 
 if 'strategy_comparison_remove_momentum_window_flag' in st.session_state and st.session_state.strategy_comparison_remove_momentum_window_flag:
-    idx = st.session_state.strategy_comparison_active_portfolio_index
-    cfg = st.session_state.strategy_comparison_portfolio_configs[idx]
-    if 'momentum_windows' in cfg and cfg['momentum_windows']:
-        cfg['momentum_windows'].pop()
-        st.session_state.strategy_comparison_portfolio_configs[idx] = cfg
+    try:
+        idx = st.session_state.strategy_comparison_active_portfolio_index
+        if (0 <= idx < len(st.session_state.strategy_comparison_portfolio_configs) and
+            'momentum_windows' in st.session_state.strategy_comparison_portfolio_configs[idx] and
+            st.session_state.strategy_comparison_portfolio_configs[idx]['momentum_windows']):
+            cfg = st.session_state.strategy_comparison_portfolio_configs[idx]
+            cfg['momentum_windows'].pop()
+            st.session_state.strategy_comparison_portfolio_configs[idx] = cfg
+    except (IndexError, KeyError) as e:
+        # Handle rapid UI changes gracefully
+        pass
     st.session_state.strategy_comparison_remove_momentum_window_flag = False
 
 # Stock management buttons
