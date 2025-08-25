@@ -1722,25 +1722,47 @@ st.markdown("""
         width: 100% !important;
         max-width: none !important;
     }
-    /* Control overall app sizing to match local */
+    /* Control overall app sizing to match local - 75% zoom level */
     .st-emotion-cache-1wivap2 {
-        font-size: 14px !important;
+        font-size: 12px !important;
+        transform: scale(0.75) !important;
+        transform-origin: top left !important;
     }
     .st-emotion-cache-1r6slb0 {
-        font-size: 14px !important;
+        font-size: 12px !important;
     }
     /* Control plot sizes */
     .plotly-graph-div {
         max-width: 100% !important;
+        transform: scale(0.75) !important;
+        transform-origin: top left !important;
     }
     /* Control input sizes */
     .st-emotion-cache-1r6slb0 input, .st-emotion-cache-1r6slb0 select {
-        font-size: 14px !important;
+        font-size: 12px !important;
     }
     /* Control button sizes */
     .st-emotion-cache-1r6slb0 button {
-        font-size: 14px !important;
-        padding: 8px 16px !important;
+        font-size: 12px !important;
+        padding: 6px 12px !important;
+    }
+    /* Control sidebar sizing - expanded to maximum */
+    .st-emotion-cache-1d391ky {
+        width: 600px !important;
+        min-width: 600px !important;
+        max-width: 600px !important;
+        font-size: 12px !important;
+    }
+    /* Ensure sidebar is fully expanded */
+    .st-emotion-cache-1d391ky .st-emotion-cache-1r6slb0 {
+        width: 100% !important;
+        max-width: 600px !important;
+        padding: 20px !important;
+    }
+    /* Control main content area */
+    .main .block-container {
+        transform: scale(0.75) !important;
+        transform-origin: top left !important;
     }
     /* Make the 'View Details' button more obvious */
     button[aria-label="View Details"] {
