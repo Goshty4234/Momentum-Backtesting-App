@@ -1145,17 +1145,10 @@ def remove_portfolio_callback():
         st.session_state.strategy_comparison_rerun_flag = True
 
 def add_stock_callback():
-    st.session_state.strategy_comparison_global_tickers.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
-    # Sync to all portfolios
-    sync_global_tickers_to_all_portfolios()
-    # Don't trigger immediate re-run for better performance
-    # st.session_state.strategy_comparison_rerun_flag = True
+    st.session_state.strategy_comparison_add_stock_flag = True
 
 def remove_stock_callback(index):
-    if len(st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks']) > 1:
-        st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks'].pop(index)
-        # Don't trigger immediate re-run for better performance
-        # st.session_state.strategy_comparison_rerun_flag = True
+    st.session_state.strategy_comparison_remove_stock_flag = index
 
 def normalize_stock_allocations_callback():
     if 'strategy_comparison_global_tickers' not in st.session_state:
@@ -1317,10 +1310,7 @@ def update_global_stock_dividends(index):
         return
 
 def remove_global_stock_callback(index):
-    if len(st.session_state.strategy_comparison_global_tickers) > 1:
-        st.session_state.strategy_comparison_global_tickers.pop(index)
-        # Sync to all portfolios
-        sync_global_tickers_to_all_portfolios()
+    st.session_state.strategy_comparison_remove_global_stock_flag = index
 
 def reset_beta_callback():
     # Reset beta lookback/exclude to defaults and enable beta calculation
@@ -1350,27 +1340,10 @@ def reset_vol_callback():
     st.session_state.strategy_comparison_rerun_flag = True
 
 def add_momentum_window_callback():
-    # Append a new momentum window with modest defaults
-    idx = st.session_state.strategy_comparison_active_portfolio_index
-    cfg = st.session_state.strategy_comparison_portfolio_configs[idx]
-    if 'momentum_windows' not in cfg:
-        cfg['momentum_windows'] = []
-    # default new window
-    cfg['momentum_windows'].append({"lookback": 90, "exclude": 30, "weight": 0.1})
-    # Don't trigger immediate re-run for better performance
-    # st.session_state.strategy_comparison_rerun_flag = True
-    st.session_state.strategy_comparison_portfolio_configs[idx] = cfg
-    # Don't trigger immediate re-run for better performance
-    # st.session_state.strategy_comparison_rerun_flag = True
+    st.session_state.strategy_comparison_add_momentum_window_flag = True
 
 def remove_momentum_window_callback():
-    idx = st.session_state.strategy_comparison_active_portfolio_index
-    cfg = st.session_state.strategy_comparison_portfolio_configs[idx]
-    if 'momentum_windows' in cfg and cfg['momentum_windows']:
-        cfg['momentum_windows'].pop()
-        st.session_state.strategy_comparison_portfolio_configs[idx] = cfg
-        # Don't trigger immediate re-run for better performance
-        # st.session_state.strategy_comparison_rerun_flag = True
+    st.session_state.strategy_comparison_remove_momentum_window_flag = True
 
 def normalize_momentum_weights_callback():
     if 'strategy_comparison_portfolio_configs' not in st.session_state or 'strategy_comparison_active_portfolio_index' not in st.session_state:
@@ -1838,6 +1811,43 @@ if st.sidebar.button("Reset Selected Portfolio", on_click=reset_portfolio_callba
 st.sidebar.markdown("---")
 st.sidebar.subheader("Global Ticker Management")
 st.sidebar.markdown("*All portfolios use the same tickers*")
+
+# Handle seamless ticker management operations
+if 'strategy_comparison_add_stock_flag' in st.session_state and st.session_state.strategy_comparison_add_stock_flag:
+    st.session_state.strategy_comparison_global_tickers.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+    sync_global_tickers_to_all_portfolios()
+    st.session_state.strategy_comparison_add_stock_flag = False
+
+if 'strategy_comparison_remove_stock_flag' in st.session_state and st.session_state.strategy_comparison_remove_stock_flag is not None:
+    index = st.session_state.strategy_comparison_remove_stock_flag
+    if len(st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks']) > 1:
+        st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks'].pop(index)
+    st.session_state.strategy_comparison_remove_stock_flag = None
+
+if 'strategy_comparison_remove_global_stock_flag' in st.session_state and st.session_state.strategy_comparison_remove_global_stock_flag is not None:
+    index = st.session_state.strategy_comparison_remove_global_stock_flag
+    if len(st.session_state.strategy_comparison_global_tickers) > 1:
+        st.session_state.strategy_comparison_global_tickers.pop(index)
+        sync_global_tickers_to_all_portfolios()
+    st.session_state.strategy_comparison_remove_global_stock_flag = None
+
+# Handle seamless momentum window operations
+if 'strategy_comparison_add_momentum_window_flag' in st.session_state and st.session_state.strategy_comparison_add_momentum_window_flag:
+    idx = st.session_state.strategy_comparison_active_portfolio_index
+    cfg = st.session_state.strategy_comparison_portfolio_configs[idx]
+    if 'momentum_windows' not in cfg:
+        cfg['momentum_windows'] = []
+    cfg['momentum_windows'].append({"lookback": 90, "exclude": 30, "weight": 0.1})
+    st.session_state.strategy_comparison_portfolio_configs[idx] = cfg
+    st.session_state.strategy_comparison_add_momentum_window_flag = False
+
+if 'strategy_comparison_remove_momentum_window_flag' in st.session_state and st.session_state.strategy_comparison_remove_momentum_window_flag:
+    idx = st.session_state.strategy_comparison_active_portfolio_index
+    cfg = st.session_state.strategy_comparison_portfolio_configs[idx]
+    if 'momentum_windows' in cfg and cfg['momentum_windows']:
+        cfg['momentum_windows'].pop()
+        st.session_state.strategy_comparison_portfolio_configs[idx] = cfg
+    st.session_state.strategy_comparison_remove_momentum_window_flag = False
 
 # Stock management buttons
 col_stock_buttons = st.sidebar.columns([1, 1])
