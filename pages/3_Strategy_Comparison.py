@@ -581,6 +581,30 @@ def calculate_upi(cagr, ulcer_index, risk_free_rate=0):
         return np.nan
     return (cagr - risk_free_rate) / ulcer_index
 
+def calculate_total_money_added(config, start_date, end_date):
+    """Calculate total money added to portfolio (initial + periodic additions)"""
+    if start_date is None or end_date is None:
+        return "N/A"
+    
+    # Initial investment
+    initial_value = config.get('initial_value', 0)
+    
+    # Calculate periodic additions
+    added_amount = config.get('added_amount', 0)
+    added_frequency = config.get('added_frequency', 'None')
+    
+    if added_frequency in ['None', 'Never', 'none', None] or added_amount == 0:
+        return initial_value
+    
+    # Get dates when additions were made
+    dates_added = get_dates_by_freq(added_frequency, start_date, end_date, pd.date_range(start_date, end_date, freq='D'))
+    
+    # Count additions (excluding the first date which is initial investment)
+    num_additions = len([d for d in dates_added if d != start_date])
+    total_additions = num_additions * added_amount
+    
+    return initial_value + total_additions
+
 # -----------------------
 # Single-backtest core (adapted from your code, robust)
 # -----------------------
@@ -2375,10 +2399,14 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                     else:
                         today_weights_map['CASH'] = 0
 
+                # Calculate total money added for this portfolio
+                total_money_added = calculate_total_money_added(cfg, total_series.index[0] if len(total_series.index) > 0 else None, total_series.index[-1] if len(total_series.index) > 0 else None)
+                
                 all_results[unique_name] = {
                     'no_additions': total_series_no_additions,
                     'with_additions': total_series,
-                    'today_weights_map': today_weights_map
+                    'today_weights_map': today_weights_map,
+                    'total_money_added': total_money_added
                 }
                 all_allocations[unique_name] = historical_allocations
                 all_metrics[unique_name] = historical_metrics
@@ -2612,16 +2640,21 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             try:
                 # Create today_weights_map for all portfolios
                 today_weights_map = {}
+                total_money_added_map = {}
                 for unique_name, results in all_results.items():
-                    if isinstance(results, dict) and 'today_weights_map' in results:
-                        today_weights_map[unique_name] = results['today_weights_map']
+                    if isinstance(results, dict):
+                        if 'today_weights_map' in results:
+                            today_weights_map[unique_name] = results['today_weights_map']
+                        if 'total_money_added' in results:
+                            total_money_added_map[unique_name] = results['total_money_added']
                 
                 st.session_state.strategy_comparison_snapshot_data = {
                     'raw_data': data,
                     'portfolio_configs': st.session_state.strategy_comparison_portfolio_configs,
                     'all_allocations': all_allocations,
                     'all_metrics': all_metrics,
-                    'today_weights_map': today_weights_map
+                    'today_weights_map': today_weights_map,
+                    'total_money_added_map': total_money_added_map
                 }
             except Exception:
                 pass
@@ -2910,6 +2943,13 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                             print(f"[BETA DEBUG] Failed to compute beta for {name}: {e}")
                 mwrr_val = preserved_mwrr.get(name, "N/A")
 
+                # Get total money added from snapshot data (static until next backtest run)
+                total_money_added = "N/A"
+                if 'strategy_comparison_snapshot_data' in st.session_state:
+                    snapshot_data = st.session_state.strategy_comparison_snapshot_data
+                    if 'total_money_added_map' in snapshot_data and name in snapshot_data['total_money_added_map']:
+                        total_money_added = snapshot_data['total_money_added_map'][name]
+                
                 recomputed_stats[name] = {
                     "Total Return": clamp_stat(total_return, "Total Return"),
                     "CAGR": clamp_stat(cagr, "CAGR"),
@@ -2923,7 +2963,8 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                     "MWRR": mwrr_val,
                     # Final values with and without additions
                     "Final Value (with)": (series_obj['with_additions'].iloc[-1] if isinstance(series_obj, dict) and 'with_additions' in series_obj and len(series_obj['with_additions'])>0 else "N/A"),
-                    "Final Value (no_additions)": (ser_noadd.iloc[-1] if isinstance(ser_noadd, pd.Series) and len(ser_noadd)>0 else "N/A")
+                    "Final Value (no_additions)": (ser_noadd.iloc[-1] if isinstance(ser_noadd, pd.Series) and len(ser_noadd)>0 else "N/A"),
+                    "Total Money Added": total_money_added
                 }
 
             stats_df_display = pd.DataFrame(recomputed_stats).T
@@ -2938,11 +2979,11 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
             stats_df_display = stats_df_display[cols]
             # Rename and format columns similarly to prior display code
             stats_df_display.rename(columns={'MaxDrawdown': 'Max Drawdown', 'UlcerIndex': 'Ulcer Index'}, inplace=True)
-            # Ensure ordering: Beta then MWRR at end, Total Return at the very end
+            # Ensure ordering: Beta then MWRR at end, Total Return and Total Money Added at the very end
             cols = list(stats_df_display.columns)
-            if 'Beta' in cols and 'MWRR' in cols and 'Total Return' in cols:
-                cols.remove('Beta'); cols.remove('MWRR'); cols.remove('Total Return')
-                cols.extend(['Beta','MWRR','Total Return'])
+            if 'Beta' in cols and 'MWRR' in cols and 'Total Return' in cols and 'Total Money Added' in cols:
+                cols.remove('Beta'); cols.remove('MWRR'); cols.remove('Total Return'); cols.remove('Total Money Added')
+                cols.extend(['Beta','MWRR','Total Return','Total Money Added'])
                 stats_df_display = stats_df_display[cols]
 
             st.subheader("Final Performance Statistics")
@@ -2952,6 +2993,8 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                 fmt_map_display[fv_with] = '${:,.2f}'
             if fv_no in stats_df_display.columns:
                 fmt_map_display[fv_no] = '${:,.2f}'
+            if 'Total Money Added' in stats_df_display.columns:
+                fmt_map_display['Total Money Added'] = '${:,.2f}'
             if fmt_map_display:
                 try:
                     st.dataframe(stats_df_display.style.format(fmt_map_display), use_container_width=True)
