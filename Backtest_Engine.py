@@ -1722,33 +1722,33 @@ st.markdown("""
         width: 100% !important;
         max-width: none !important;
     }
-    /* Simple sidebar width control only */
+    /* Simple sidebar width control only - reduced since we're zooming out */
     .st-emotion-cache-1d391ky {
-        width: 400px !important;
-        min-width: 400px !important;
+        width: 320px !important;
+        min-width: 320px !important;
     }
-    /* 70% zoom effect - safer approach */
+    /* 65% zoom effect - more zoomed out */
     .st-emotion-cache-1wivap2 {
-        font-size: 11px !important;
-        zoom: 0.7 !important;
+        font-size: 10px !important;
+        zoom: 0.65 !important;
     }
     .st-emotion-cache-1r6slb0 {
-        font-size: 11px !important;
-        zoom: 0.7 !important;
+        font-size: 10px !important;
+        zoom: 0.65 !important;
     }
-    /* Control input and button sizes for 70% zoom */
+    /* Control input and button sizes for 65% zoom */
     .st-emotion-cache-1r6slb0 input, .st-emotion-cache-1r6slb0 select {
-        font-size: 11px !important;
-        zoom: 0.7 !important;
+        font-size: 10px !important;
+        zoom: 0.65 !important;
     }
     .st-emotion-cache-1r6slb0 button {
-        font-size: 11px !important;
-        padding: 4px 8px !important;
-        zoom: 0.7 !important;
+        font-size: 10px !important;
+        padding: 3px 6px !important;
+        zoom: 0.65 !important;
     }
-    /* Control plot containers for 70% zoom */
+    /* Control plot containers for 65% zoom */
     .plotly-graph-div {
-        zoom: 0.7 !important;
+        zoom: 0.65 !important;
     }
     /* Make the 'View Details' button more obvious */
     button[aria-label="View Details"] {
