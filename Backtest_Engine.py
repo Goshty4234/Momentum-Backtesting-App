@@ -1712,6 +1712,36 @@ st.markdown("""
         overflow: visible !important;
         max-height: none !important;
     }
+    /* Control sidebar width */
+    .st-emotion-cache-1d391ky {
+        width: 400px !important;
+        min-width: 400px !important;
+    }
+    /* Ensure sidebar content is visible */
+    .st-emotion-cache-1d391ky .st-emotion-cache-1r6slb0 {
+        width: 100% !important;
+        max-width: none !important;
+    }
+    /* Control overall app sizing to match local */
+    .st-emotion-cache-1wivap2 {
+        font-size: 14px !important;
+    }
+    .st-emotion-cache-1r6slb0 {
+        font-size: 14px !important;
+    }
+    /* Control plot sizes */
+    .plotly-graph-div {
+        max-width: 100% !important;
+    }
+    /* Control input sizes */
+    .st-emotion-cache-1r6slb0 input, .st-emotion-cache-1r6slb0 select {
+        font-size: 14px !important;
+    }
+    /* Control button sizes */
+    .st-emotion-cache-1r6slb0 button {
+        font-size: 14px !important;
+        padding: 8px 16px !important;
+    }
     /* Make the 'View Details' button more obvious */
     button[aria-label="View Details"] {
         background-color: #0ea5e9 !important;
