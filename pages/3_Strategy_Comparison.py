@@ -1234,71 +1234,85 @@ def reset_momentum_windows_callback():
 
 def update_stock_allocation(index):
     try:
-        key = f"strategy_comparison_alloc_input_{st.session_state.strategy_comparison_active_portfolio_index}_{index}"
-        val = st.session_state.get(key, None)
-        if val is None:
-            return
-        st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks'][index]['allocation'] = float(val) / 100.0
+        active_index = st.session_state.strategy_comparison_active_portfolio_index
+        portfolio_configs = st.session_state.strategy_comparison_portfolio_configs
+        if (active_index < len(portfolio_configs) and 
+            'stocks' in portfolio_configs[active_index] and 
+            index < len(portfolio_configs[active_index]['stocks'])):
+            key = f"strategy_comparison_alloc_input_{active_index}_{index}"
+            val = st.session_state.get(key, None)
+            if val is not None:
+                portfolio_configs[active_index]['stocks'][index]['allocation'] = float(val) / 100.0
     except Exception:
         # Ignore transient errors (e.g., active_portfolio_index changed); UI will reflect state on next render
         return
 
 def update_stock_ticker(index):
     try:
-        key = f"strategy_comparison_ticker_{st.session_state.strategy_comparison_active_portfolio_index}_{index}"
-        val = st.session_state.get(key, None)
-        if val is None:
-            # key not yet initialized (race condition). Skip update; the widget's key will be present on next rerender.
-            return
-        st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks'][index]['ticker'] = val
+        active_index = st.session_state.strategy_comparison_active_portfolio_index
+        portfolio_configs = st.session_state.strategy_comparison_portfolio_configs
+        if (active_index < len(portfolio_configs) and 
+            'stocks' in portfolio_configs[active_index] and 
+            index < len(portfolio_configs[active_index]['stocks'])):
+            key = f"strategy_comparison_ticker_{active_index}_{index}"
+            val = st.session_state.get(key, None)
+            if val is not None:
+                portfolio_configs[active_index]['stocks'][index]['ticker'] = val
     except Exception:
         # Defensive: if portfolio index or structure changed, skip silently
         return
 
 def update_stock_dividends(index):
     try:
-        key = f"strategy_comparison_div_{st.session_state.strategy_comparison_active_portfolio_index}_{index}"
-        val = st.session_state.get(key, None)
-        if val is None:
-            return
-        st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks'][index]['include_dividends'] = bool(val)
+        active_index = st.session_state.strategy_comparison_active_portfolio_index
+        portfolio_configs = st.session_state.strategy_comparison_portfolio_configs
+        if (active_index < len(portfolio_configs) and 
+            'stocks' in portfolio_configs[active_index] and 
+            index < len(portfolio_configs[active_index]['stocks'])):
+            key = f"strategy_comparison_div_{active_index}_{index}"
+            val = st.session_state.get(key, None)
+            if val is not None:
+                portfolio_configs[active_index]['stocks'][index]['include_dividends'] = bool(val)
     except Exception:
         return
 
 # Global ticker management functions
 def update_global_stock_ticker(index):
     try:
-        key = f"strategy_comparison_global_ticker_{index}"
-        val = st.session_state.get(key, None)
-        if val is None:
-            return
-        st.session_state.strategy_comparison_global_tickers[index]['ticker'] = val
-        # Sync to all portfolios
-        sync_global_tickers_to_all_portfolios()
+        global_tickers = st.session_state.strategy_comparison_global_tickers
+        if index < len(global_tickers):
+            key = f"strategy_comparison_global_ticker_{index}"
+            val = st.session_state.get(key, None)
+            if val is not None:
+                global_tickers[index]['ticker'] = val
+                # Sync to all portfolios
+                sync_global_tickers_to_all_portfolios()
     except Exception:
         return
 
 def update_global_stock_allocation(index):
     try:
-        key = f"strategy_comparison_global_alloc_{index}"
-        val = st.session_state.get(key, None)
-        if val is None:
-            return
-        st.session_state.strategy_comparison_global_tickers[index]['allocation'] = float(val) / 100.0
-        # Sync to all portfolios
-        sync_global_tickers_to_all_portfolios()
+        global_tickers = st.session_state.strategy_comparison_global_tickers
+        if index < len(global_tickers):
+            key = f"strategy_comparison_global_alloc_{index}"
+            val = st.session_state.get(key, None)
+            if val is not None:
+                global_tickers[index]['allocation'] = float(val) / 100.0
+                # Sync to all portfolios
+                sync_global_tickers_to_all_portfolios()
     except Exception:
         return
 
 def update_global_stock_dividends(index):
     try:
-        key = f"strategy_comparison_global_div_{index}"
-        val = st.session_state.get(key, None)
-        if val is None:
-            return
-        st.session_state.strategy_comparison_global_tickers[index]['include_dividends'] = bool(val)
-        # Sync to all portfolios
-        sync_global_tickers_to_all_portfolios()
+        global_tickers = st.session_state.strategy_comparison_global_tickers
+        if index < len(global_tickers):
+            key = f"strategy_comparison_global_div_{index}"
+            val = st.session_state.get(key, None)
+            if val is not None:
+                global_tickers[index]['include_dividends'] = bool(val)
+                # Sync to all portfolios
+                sync_global_tickers_to_all_portfolios()
     except Exception:
         return
 
@@ -2065,13 +2079,37 @@ if st.session_state.get('strategy_comparison_active_use_momentum', active_portfo
         st.success(f"Total weight is {total_weight*100:.2f}%.")
 
     def update_momentum_lookback(index):
-        st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['momentum_windows'][index]['lookback'] = st.session_state[f"strategy_comparison_lookback_active_{index}"]
+        try:
+            active_index = st.session_state.strategy_comparison_active_portfolio_index
+            portfolio_configs = st.session_state.strategy_comparison_portfolio_configs
+            if (active_index < len(portfolio_configs) and 
+                'momentum_windows' in portfolio_configs[active_index] and 
+                index < len(portfolio_configs[active_index]['momentum_windows'])):
+                portfolio_configs[active_index]['momentum_windows'][index]['lookback'] = st.session_state[f"strategy_comparison_lookback_active_{index}"]
+        except Exception:
+            pass  # Silently ignore if indices are invalid
 
     def update_momentum_exclude(index):
-        st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['momentum_windows'][index]['exclude'] = st.session_state[f"strategy_comparison_exclude_active_{index}"]
+        try:
+            active_index = st.session_state.strategy_comparison_active_portfolio_index
+            portfolio_configs = st.session_state.strategy_comparison_portfolio_configs
+            if (active_index < len(portfolio_configs) and 
+                'momentum_windows' in portfolio_configs[active_index] and 
+                index < len(portfolio_configs[active_index]['momentum_windows'])):
+                portfolio_configs[active_index]['momentum_windows'][index]['exclude'] = st.session_state[f"strategy_comparison_exclude_active_{index}"]
+        except Exception:
+            pass  # Silently ignore if indices are invalid
     
     def update_momentum_weight(index):
-        st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['momentum_windows'][index]['weight'] = st.session_state[f"strategy_comparison_weight_input_active_{index}"] / 100.0
+        try:
+            active_index = st.session_state.strategy_comparison_active_portfolio_index
+            portfolio_configs = st.session_state.strategy_comparison_portfolio_configs
+            if (active_index < len(portfolio_configs) and 
+                'momentum_windows' in portfolio_configs[active_index] and 
+                index < len(portfolio_configs[active_index]['momentum_windows'])):
+                portfolio_configs[active_index]['momentum_windows'][index]['weight'] = st.session_state[f"strategy_comparison_weight_input_active_{index}"] / 100.0
+        except Exception:
+            pass  # Silently ignore if indices are invalid
 
     # Create lambda functions for on_change callbacks
     def create_momentum_lookback_callback(index):
