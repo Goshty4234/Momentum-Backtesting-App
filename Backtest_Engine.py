@@ -1727,6 +1727,29 @@ st.markdown("""
         width: 400px !important;
         min-width: 400px !important;
     }
+    /* 70% zoom effect - safer approach */
+    .st-emotion-cache-1wivap2 {
+        font-size: 11px !important;
+        zoom: 0.7 !important;
+    }
+    .st-emotion-cache-1r6slb0 {
+        font-size: 11px !important;
+        zoom: 0.7 !important;
+    }
+    /* Control input and button sizes for 70% zoom */
+    .st-emotion-cache-1r6slb0 input, .st-emotion-cache-1r6slb0 select {
+        font-size: 11px !important;
+        zoom: 0.7 !important;
+    }
+    .st-emotion-cache-1r6slb0 button {
+        font-size: 11px !important;
+        padding: 4px 8px !important;
+        zoom: 0.7 !important;
+    }
+    /* Control plot containers for 70% zoom */
+    .plotly-graph-div {
+        zoom: 0.7 !important;
+    }
     /* Make the 'View Details' button more obvious */
     button[aria-label="View Details"] {
         background-color: #0ea5e9 !important;
