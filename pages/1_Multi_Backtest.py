@@ -1136,6 +1136,31 @@ def sync_cashflow_from_first_portfolio_callback():
                 st.session_state.multi_backtest_portfolio_configs[i]['added_amount'] = added_amount
                 st.session_state.multi_backtest_portfolio_configs[i]['added_frequency'] = added_frequency
             
+            # Update UI widget session states to reflect the changes
+            st.session_state['multi_backtest_active_initial'] = initial_value
+            st.session_state['multi_backtest_active_added_amount'] = added_amount
+            st.session_state['multi_backtest_active_add_freq'] = added_frequency
+            
+            st.session_state.multi_backtest_rerun_flag = True
+    except Exception:
+        pass
+
+def sync_rebalancing_from_first_portfolio_callback():
+    """Sync rebalancing frequency from first portfolio to all others"""
+    try:
+        if len(st.session_state.multi_backtest_portfolio_configs) > 1:
+            first_portfolio = st.session_state.multi_backtest_portfolio_configs[0]
+            
+            # Get rebalancing frequency from first portfolio
+            rebalancing_frequency = first_portfolio.get('rebalancing_frequency', 'Monthly')
+            
+            # Update all other portfolios
+            for i in range(1, len(st.session_state.multi_backtest_portfolio_configs)):
+                st.session_state.multi_backtest_portfolio_configs[i]['rebalancing_frequency'] = rebalancing_frequency
+            
+            # Update UI widget session state to reflect the change
+            st.session_state['multi_backtest_active_rebal_freq'] = rebalancing_frequency
+            
             st.session_state.multi_backtest_rerun_flag = True
     except Exception:
         pass
@@ -1495,9 +1520,11 @@ with st.expander("Rebalancing and Added Frequency Explained", expanded=False):
     *Keeping a Rebalancing Frequency to "none" will mean no additional cash is invested, even if you have an `Added Frequency` specified.*
     """)
 
-# Sync cashflow button
+# Sync buttons
 if len(st.session_state.multi_backtest_portfolio_configs) > 1:
     if st.button("Sync ALL Portfolios Cashflow from First Portfolio", on_click=sync_cashflow_from_first_portfolio_callback, use_container_width=True):
+        pass
+    if st.button("Sync ALL Portfolios Rebalancing Frequency from First Portfolio", on_click=sync_rebalancing_from_first_portfolio_callback, use_container_width=True):
         pass
 
 if "multi_backtest_active_benchmark" not in st.session_state:
