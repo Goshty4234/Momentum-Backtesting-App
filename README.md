@@ -1,4 +1,4 @@
-# Momentum Backtesting Application
+# Quantitative Portfolio Momentum Backtest & Analytics
 
 A comprehensive Streamlit application for backtesting momentum-based investment strategies with advanced portfolio analysis tools.
 
