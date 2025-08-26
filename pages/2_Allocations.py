@@ -1,7 +1,7 @@
 import streamlit as st
 import datetime
 from datetime import timedelta, time
-st.set_page_config(layout="wide", page_title="Portfolio Allocations", page_icon="📈")
+st.set_page_config(layout="wide", page_title="Portfolio Allocation Analysis", page_icon="📈")
 st.markdown("""
 <style>
     /* Global Styles for the App */
@@ -297,7 +297,7 @@ st.markdown("""
 </script>
 """, unsafe_allow_html=True)
 
-st.set_page_config(layout="wide", page_title="Portfolio Allocations")
+st.set_page_config(layout="wide", page_title="Portfolio Allocation Analysis")
 
 st.title("Portfolio Allocations")
 st.markdown("Use the forms below to configure and run backtests to obtain allocation insights.")
