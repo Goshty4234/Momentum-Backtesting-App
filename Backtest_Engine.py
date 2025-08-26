@@ -1,85 +1,6 @@
 import numpy as np
 # Backtest_Engine.py
 import streamlit as st
-st.set_page_config(page_title="Backtest Engine", layout="wide", page_icon="📈")
-
-# Clean, simple interface without decimal complications
-
-# ==============================================================================
-# PAGE-SCOPED SESSION STATE INITIALIZATION - MAIN APP
-# ==============================================================================
-# Ensure complete independence from other pages by using page-specific session keys
-if 'main_app_initialized' not in st.session_state:
-    st.session_state.main_app_initialized = True
-    # Clear any shared session state that might interfere with other pages
-    keys_to_clear = [
-        # Multi-backtest page keys
-        'multi_backtest_portfolio_configs', 'multi_backtest_active_portfolio_index', 'multi_backtest_rerun_flag',
-        'multi_backtest_all_results', 'multi_backtest_all_allocations', 'multi_backtest_all_metrics',
-        'multi_backtest_paste_json_text', 'multi_backtest_page_initialized', 'multi_backtest_backtest_ran',
-        # Allocations page keys
-        'alloc_portfolio_configs', 'alloc_active_portfolio_index', 'alloc_rerun_flag',
-        'alloc_all_results', 'alloc_all_allocations', 'alloc_all_metrics',
-        'alloc_paste_json_text', 'allocations_page_initialized',
-        # Any other potential shared keys
-        'multi_all_results', 'multi_all_allocations', 'multi_all_metrics',
-        'all_drawdowns', 'stats_df_display', 'all_years', 'portfolio_key_map',
-        'multi_backtest_ran', 'raw_data'
-    ]
-    for key in keys_to_clear:
-        if key in st.session_state:
-            del st.session_state[key]
-
-# Initialize page-specific session state with default configurations
-if 'main_portfolio_configs' not in st.session_state:
-    # Default configuration for main app
-    st.session_state.main_portfolio_configs = [
-        {
-            'name': 'Main Portfolio',
-            'stocks': [
-                {'ticker': 'SPY', 'allocation': 0.5, 'include_dividends': True},
-                {'ticker': 'QQQ', 'allocation': 0.5, 'include_dividends': True},
-            ],
-            'benchmark_ticker': '^GSPC',
-            'initial_value': 10000,
-            'added_amount': 1000,
-            'added_frequency': 'month',
-            'rebalancing_frequency': 'month',
-            'start_date_user': None,
-            'end_date_user': None,
-            'start_with': 'all',
-            'use_momentum': True,
-            'use_relative_momentum': False,
-            'equal_if_all_negative': False,
-            'momentum_strategy': 'Classic',
-            'negative_momentum_strategy': 'Cash',
-            'momentum_windows': [
-                {"lookback": 365, "exclude": 30, "weight": 0.5},
-                {"lookback": 180, "exclude": 30, "weight": 0.3},
-                {"lookback": 120, "exclude": 30, "weight": 0.2},
-            ],
-            'calc_beta': True,
-            'calc_volatility': True,
-            'beta_window_days': 365,
-            'exclude_days_beta': 30,
-            'vol_window_days': 365,
-            'exclude_days_vol': 30,
-        }
-    ]
-if 'main_active_portfolio_index' not in st.session_state:
-    st.session_state.main_active_portfolio_index = 0
-if 'main_rerun_flag' not in st.session_state:
-    st.session_state.main_rerun_flag = False
-if 'main_paste_json_text' not in st.session_state:
-    st.session_state.main_paste_json_text = ""
-
-# ==============================================================================
-# END PAGE-SCOPED SESSION STATE INITIALIZATION
-# ==============================================================================
-
-import numpy as np
-# Backtest_Engine.py
-import streamlit as st
 import matplotlib.pyplot as plt
 import io
 import contextlib
@@ -1860,7 +1781,7 @@ _ss_default("rebalance_metrics_table", None)
 # The JSON importer writes staging keys prefixed with `_import_` and sets
 # `_import_pending` to True then reruns; this block applies them safely
 # before any widgets instantiate (prevents StreamlitAPIException).
-if st.session_state.get("_import_pending", False):
+if False:  # DISABLED: st.session_state.get("_import_pending", False):
     try:
         # Map of staging key -> target session_state key or transformation
         if "_import_name" in st.session_state:
@@ -2056,7 +1977,7 @@ if st.session_state.get("_import_pending", False):
                     momentum_strategy = main_app_config['momentum_strategy']
                     if momentum_strategy == 'Classic':
                         momentum_strategy = 'Classic momentum'
-                    elif momentum_strategy == 'Relative':
+                    elif momentum_strategy == 'Relative' or momentum_strategy == 'Relative Momentum':
                         momentum_strategy = 'Relative momentum'
                     elif momentum_strategy not in ['Classic momentum', 'Relative momentum']:
                         momentum_strategy = 'Classic momentum'  # Default fallback
@@ -2124,6 +2045,11 @@ if st.session_state.get("_import_pending", False):
     if "_import_pending" in st.session_state:
         del st.session_state["_import_pending"]
 
+# Handle rerun flag for smooth UI updates
+if st.session_state.get('main_rerun_flag', False):
+    st.session_state.main_rerun_flag = False
+    st.rerun()
+
 # Flag processing removed - buttons now execute actions immediately
 
 # Beta and Volatility reset flag processing removed - buttons now execute immediately
@@ -2153,6 +2079,8 @@ if 'mom_windows' not in st.session_state:
         {'lookback': 180, 'exclude': 30, 'weight': 0.30},
         {'lookback': 120, 'exclude': 30, 'weight': 0.20},
     ]
+
+
 
 # -------------------------
 # Helpers
@@ -2185,9 +2113,24 @@ def remove_ticker_row(idx: int):
         # No rerun, no calculations
         # Removed 'break' as it is not valid outside a loop
 
-def remove_ticker_callback(idx: int):
-    """Callback for Remove Ticker button to ensure immediate UI update"""
-    remove_ticker_row(idx)
+def remove_ticker_callback(ticker: str):
+    """Immediate ticker removal callback"""
+    try:
+        # Find and remove the ticker immediately
+        if ticker in st.session_state.tickers:
+            idx = st.session_state.tickers.index(ticker)
+            st.session_state.tickers.pop(idx)
+            st.session_state.allocs.pop(idx)
+            st.session_state.divs.pop(idx)
+            # If this was the last ticker, add an empty one
+            if len(st.session_state.tickers) == 0:
+                st.session_state.tickers.append("")
+                st.session_state.allocs.append(0.0)
+                st.session_state.divs.append(True)
+            # Set rerun flag for smooth UI update
+            st.session_state.main_rerun_flag = True
+    except (ValueError, IndexError):
+        pass
 
 def add_mom_window(lookback=90, exclude=30, weight=0.0):
     st.session_state.mom_windows.append({"lookback": int(lookback), "exclude": int(exclude), "weight": float(weight)})
@@ -2608,6 +2551,9 @@ with st.sidebar:
             help="Enter an annualized drag (e.g. 1.0 for 1% annual drag). Negative values act as additions.",
             key='portfolio_drag_pct', on_change=_on_portfolio_drag_changed
         )
+    
+
+    
     for i in range(len(st.session_state.tickers)):
         col1, col2, col3, col4 = st.columns([1, 1, 1, 0.2])
         with col1:
@@ -2628,7 +2574,7 @@ with st.sidebar:
                 st.session_state[div_key] = st.session_state.divs[i]
             st.checkbox("Include Dividends", key=div_key, on_change=lambda i=i: setattr(st.session_state, f'divs[{i}]', st.session_state[div_key]))
         with col4:
-            if st.button("x", key=f"remove_{i}", help="Remove this ticker", on_click=remove_ticker_callback, args=(i,)):
+            if st.button("x", key=f"remove_{i}_{st.session_state.tickers[i]}_{id(st.session_state.tickers)}", help="Remove this ticker", on_click=remove_ticker_callback, args=(st.session_state.tickers[i],)):
                 pass
         # Only show allocation if NOT using momentum
         if not st.session_state.use_momentum:
@@ -3149,10 +3095,39 @@ with st.sidebar:
                     # Take the first portfolio configuration from the list
                     first_portfolio = imported_config[0]
                     if 'stocks' in first_portfolio and isinstance(first_portfolio['stocks'], list):
-                        st.session_state['_import_portfolio_config'] = first_portfolio
-                        st.session_state['_import_pending'] = True
-                        st.success(f"Portfolio '{first_portfolio.get('name', 'Unknown')}' imported from list (Main App). Applying to UI...")
-                        st.rerun()
+                        # NEW FUNCTIONALITY: If multiple portfolios, just update tickers from first portfolio
+                        if len(imported_config) > 1:
+                            # Extract tickers from the first portfolio only
+                            stocks = first_portfolio['stocks']
+                            tickers = [stock['ticker'] for stock in stocks if stock.get('ticker')]
+                            
+                            # OPERATION 1: CLEAR EXISTING TICKERS AND WIDGET KEYS
+                            st.session_state.tickers = []
+                            st.session_state.allocs = []
+                            st.session_state.divs = []
+                            
+                            # Clear all ticker widget keys to prevent UI interference
+                            for key in list(st.session_state.keys()):
+                                if key.startswith("ticker_") or key.startswith("alloc_input_") or key.startswith("divs_checkbox_"):
+                                    del st.session_state[key]
+                            
+                            # OPERATION 2: UPDATE WITH NEW TICKERS ONLY
+                            st.session_state.tickers = tickers
+                            
+                            # Set equal allocations for the new tickers
+                            if tickers:
+                                equal_allocation = 1.0 / len(tickers)
+                                st.session_state.allocs = [equal_allocation] * len(tickers)
+                                st.session_state.divs = [True] * len(tickers)
+                            
+                            st.success(f"✅ Updated tickers from multiple portfolios: {tickers}")
+                            st.rerun()
+                        else:
+                            # Single portfolio - use existing logic
+                            st.session_state['_import_portfolio_config'] = first_portfolio
+                            st.session_state['_import_pending'] = True
+                            st.success(f"Portfolio '{first_portfolio.get('name', 'Unknown')}' imported from list (Main App). Applying to UI...")
+                            st.rerun()
                     else:
                         st.error("Invalid portfolio configuration structure in list.")
                 # Check if this is a single portfolio configuration (has 'stocks' field)
@@ -3163,31 +3138,29 @@ with st.sidebar:
                     st.success("Portfolio configuration staged for import (Main App). Applying to UI...")
                     st.rerun()
                 else:
-                    # This is a legacy parameter configuration - handle it as before
-                    # Stage known keys into _import_* session keys to avoid writing
-                    # into widget-backed keys after widgets are created.
+                                        # OPERATION 1: COMPLETELY CLEAR ALL TICKERS AND WIDGET KEYS
+                    st.session_state.tickers = []
+                    st.session_state.allocs = []
+                    st.session_state.divs = []
+                    
+                    # Clear all ticker widget keys to prevent UI interference
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("ticker_") or key.startswith("alloc_input_") or key.startswith("divs_checkbox_"):
+                            del st.session_state[key]
+                    
+                    # OPERATION 2: IMMEDIATELY IMPORT FROM JSON (NO RELOAD)
                     if 'name' in imported_config:
-                        st.session_state['_import_name'] = imported_config['name']
+                        st.session_state.portfolio_name = imported_config['name']
                     if 'tickers' in imported_config:
-                        st.session_state['_import_tickers'] = list(imported_config['tickers'])
+                        st.session_state.tickers = imported_config['tickers'].copy()
                     if 'allocs' in imported_config:
-                        # Convert allocations to decimal format (0.0-1.0) if they're in percentage format (0-100)
-                        allocs = []
-                        for a in imported_config['allocs']:
-                            alloc_val = float(a)
-                            if alloc_val > 1.0:
-                                # Convert from percentage to decimal
-                                allocs.append(alloc_val / 100.0)
-                            else:
-                                # Already in decimal format
-                                allocs.append(alloc_val)
-                        st.session_state['_import_allocs'] = allocs
+                        st.session_state.allocs = imported_config['allocs'].copy()
                     if 'divs' in imported_config:
-                        st.session_state['_import_divs'] = [bool(d) for d in imported_config['divs']]
+                        st.session_state.divs = imported_config['divs'].copy()
                     if 'initial_value' in imported_config:
-                        st.session_state['_import_initial_value'] = imported_config['initial_value']
+                        st.session_state.initial_value = imported_config['initial_value']
                     if 'added_amount' in imported_config:
-                        st.session_state['_import_added_amount'] = imported_config['added_amount']
+                        st.session_state.added_amount = imported_config['added_amount']
                     if 'rebalancing_frequency' in imported_config:
                         # Map frequency values from other pages to app.py format
                         freq = imported_config['rebalancing_frequency']
@@ -3208,7 +3181,7 @@ with st.sidebar:
                             '6months': 'Semiannually',
                             'year': 'Annually'
                         }
-                        st.session_state['_import_rebalancing_frequency'] = freq_map.get(freq, 'Monthly')
+                        st.session_state.rebalancing_frequency = freq_map.get(freq, 'Monthly')
                     if 'added_frequency' in imported_config:
                         # Map frequency values from other pages to app.py format
                         freq = imported_config['added_frequency']
@@ -3229,7 +3202,7 @@ with st.sidebar:
                             '6months': 'Semiannually',
                             'year': 'Annually'
                         }
-                        st.session_state['_import_added_frequency'] = freq_map.get(freq, 'Monthly')
+                        st.session_state.added_frequency = freq_map.get(freq, 'Monthly')
                     if 'use_custom_dates' in imported_config:
                         st.session_state['_import_use_custom_dates'] = bool(imported_config['use_custom_dates'])
                     if 'start_date' in imported_config:
@@ -3272,10 +3245,7 @@ with st.sidebar:
                     if 'benchmark_ticker' in imported_config:
                         st.session_state['_import_benchmark_ticker'] = str(imported_config['benchmark_ticker'])
 
-                    # Mark pending import and trigger a rerun so the staging application
-                    # at the top of the script can safely copy values into widget-backed keys.
-                    st.session_state['_import_pending'] = True
-                    st.success("Parameters staged for import. Applying to UI...")
+                    st.success("Configuration imported successfully!")
                     st.rerun()
                     
             except json.JSONDecodeError as e:
