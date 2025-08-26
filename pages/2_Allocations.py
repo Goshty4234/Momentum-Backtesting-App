@@ -1059,10 +1059,23 @@ def add_stock_callback():
     st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'].append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
     st.session_state.alloc_rerun_flag = True
 
-def remove_stock_callback(index):
-    if len(st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks']) > 1:
-        st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'].pop(index)
-        st.session_state.alloc_rerun_flag = True
+def remove_stock_callback(ticker):
+    """Immediate stock removal callback"""
+    try:
+        active_portfolio = st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]
+        stocks = active_portfolio['stocks']
+        
+        # Find and remove the stock with matching ticker
+        for i, stock in enumerate(stocks):
+            if stock['ticker'] == ticker:
+                stocks.pop(i)
+                # If this was the last stock, add an empty one
+                if len(stocks) == 0:
+                    stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                st.session_state.alloc_rerun_flag = True
+                break
+    except (IndexError, KeyError):
+        pass
 
 def normalize_stock_allocations_callback():
     if 'alloc_portfolio_configs' not in st.session_state or 'alloc_active_portfolio_index' not in st.session_state:
@@ -1206,7 +1219,9 @@ def paste_json_callback():
         momentum_strategy = json_data.get('momentum_strategy', 'Classic')
         if momentum_strategy == 'Classic momentum':
             momentum_strategy = 'Classic'
-        elif momentum_strategy not in ['Classic', 'Relative momentum']:
+        elif momentum_strategy == 'Relative momentum':
+            momentum_strategy = 'Relative Momentum'
+        elif momentum_strategy not in ['Classic', 'Relative Momentum']:
             momentum_strategy = 'Classic'  # Default fallback
         
         # Handle negative momentum strategy value mapping from other pages
@@ -1496,6 +1511,9 @@ def update_stock_dividends(index):
         st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][index]['include_dividends'] = bool(val)
     except Exception:
         return
+
+# Update active_portfolio
+active_portfolio = st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]
  
 for i in range(len(active_portfolio['stocks'])):
     stock = active_portfolio['stocks'][i]
@@ -1525,7 +1543,7 @@ for i in range(len(active_portfolio['stocks'])):
             st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][i]['include_dividends'] = st.session_state[div_key]
     with col_b:
         st.write("")
-        if st.button("Remove", key=f"alloc_rem_stock_{st.session_state.alloc_active_portfolio_index}_{i}", on_click=remove_stock_callback, args=(i,)):
+        if st.button("Remove", key=f"alloc_rem_stock_{st.session_state.alloc_active_portfolio_index}_{i}_{stock['ticker']}_{id(stock)}", on_click=remove_stock_callback, args=(stock['ticker'],)):
             pass
 
 if st.button("Add Stock", on_click=add_stock_callback):
@@ -1543,8 +1561,8 @@ if active_portfolio['use_momentum']:
         st.markdown("**Momentum Strategy Options**")
         momentum_strategy = st.selectbox(
             "Momentum strategy when NOT all negative:",
-            ["Classic", "Relative momentum"],
-            index=["Classic", "Relative momentum"].index(active_portfolio.get('momentum_strategy', 'Classic')),
+            ["Classic", "Relative Momentum"],
+            index=["Classic", "Relative Momentum"].index(active_portfolio.get('momentum_strategy', 'Classic')),
             key=f"momentum_strategy_{st.session_state.alloc_active_portfolio_index}"
         )
         negative_momentum_strategy = st.selectbox(
@@ -2109,8 +2127,70 @@ def paste_all_json_callback():
         return
     try:
         obj = json.loads(txt)
-        if isinstance(obj, list):
-            # Process each portfolio configuration for Allocations page
+        if isinstance(obj, list) and len(obj) > 1:
+            # TSAR BOMBA APPROACH: Extract tickers from the first portfolio only
+            first_portfolio = obj[0]
+            stocks = first_portfolio['stocks']
+            tickers = [stock['ticker'] for stock in stocks if stock.get('ticker')]
+            
+            # TSAR BOMBA OPERATION 1: NUKE EVERYTHING
+            # Clear ALL session state keys
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            
+            # TSAR BOMBA OPERATION 2: RECREATE FROM ABSOLUTE SCRATCH
+            # Create default portfolio configs
+            st.session_state.allocations_portfolio_configs = [
+                {
+                    'name': 'Portfolio 1',
+                    'stocks': [],
+                    'benchmark_ticker': '^GSPC',
+                    'initial_value': 10000,
+                    'added_amount': 1000,
+                    'added_frequency': 'Monthly',
+                    'rebalancing_frequency': 'Monthly',
+                    'start_date_user': None,
+                    'end_date_user': None,
+                    'start_with': 'all',
+                    'use_momentum': False,
+                    'use_relative_momentum': False,
+                    'equal_if_all_negative': False,
+                    'momentum_strategy': 'Classic',
+                    'negative_momentum_strategy': 'Cash',
+                    'momentum_windows': [],
+                    'calc_beta': False,
+                    'calc_volatility': False,
+                    'beta_window_days': 365,
+                    'exclude_days_beta': 30,
+                    'vol_window_days': 365,
+                    'exclude_days_vol': 30
+                }
+            ]
+            
+            # TSAR BOMBA OPERATION 3: SET NEW TICKERS
+            st.session_state.allocations_active_portfolio_index = 0
+            
+            # Create new stocks with equal allocations
+            new_stocks = []
+            if tickers:
+                equal_allocation = 1.0 / len(tickers)
+                for ticker in tickers:
+                    new_stocks.append({
+                        'ticker': ticker,
+                        'allocation': equal_allocation,
+                        'include_dividends': True
+                    })
+            
+            # Update the portfolio
+            st.session_state.allocations_portfolio_configs[0]['stocks'] = new_stocks
+            
+            # TSAR BOMBA OPERATION 4: FORCE HARD RESET
+            st.success(f"✅ TSAR BOMBA: Tickers changed to: {tickers}")
+            st.info(f"New stocks: {new_stocks}")
+            st.experimental_rerun()
+            return
+            
+            # Process each portfolio configuration for Allocations page (existing logic)
             processed_configs = []
             for cfg in obj:
                 if not isinstance(cfg, dict) or 'name' not in cfg:
@@ -2121,7 +2201,9 @@ def paste_all_json_callback():
                 momentum_strategy = cfg.get('momentum_strategy', 'Classic')
                 if momentum_strategy == 'Classic momentum':
                     momentum_strategy = 'Classic'
-                elif momentum_strategy not in ['Classic', 'Relative momentum']:
+                elif momentum_strategy == 'Relative momentum':
+                    momentum_strategy = 'Relative Momentum'
+                elif momentum_strategy not in ['Classic', 'Relative Momentum']:
                     momentum_strategy = 'Classic'  # Default fallback
                 
                 # Handle negative momentum strategy value mapping from other pages
