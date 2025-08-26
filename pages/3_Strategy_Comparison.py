@@ -1171,8 +1171,25 @@ def remove_portfolio_callback():
 def add_stock_callback():
     st.session_state.strategy_comparison_add_stock_flag = True
 
-def remove_stock_callback(index):
-    st.session_state.strategy_comparison_remove_stock_flag = index
+def remove_stock_callback(ticker):
+    """Immediate stock removal callback for individual portfolio"""
+    try:
+        active_idx = st.session_state.strategy_comparison_active_portfolio_index
+        if (0 <= active_idx < len(st.session_state.strategy_comparison_portfolio_configs) and
+            'stocks' in st.session_state.strategy_comparison_portfolio_configs[active_idx]):
+            stocks = st.session_state.strategy_comparison_portfolio_configs[active_idx]['stocks']
+            
+            # Find and remove the stock with matching ticker
+            for i, stock in enumerate(stocks):
+                if stock['ticker'] == ticker:
+                    stocks.pop(i)
+                    # If this was the last stock, add an empty one
+                    if len(stocks) == 0:
+                        stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                    st.session_state.strategy_comparison_rerun_flag = True
+                    break
+    except (ValueError, IndexError):
+        pass
 
 def normalize_stock_allocations_callback():
     if 'strategy_comparison_global_tickers' not in st.session_state:
@@ -1333,8 +1350,21 @@ def update_global_stock_dividends(index):
     except Exception:
         return
 
-def remove_global_stock_callback(index):
-    st.session_state.strategy_comparison_remove_global_stock_flag = index
+def remove_global_stock_callback(ticker):
+    """Immediate global stock removal callback"""
+    try:
+        # Find and remove the stock with matching ticker
+        for i, stock in enumerate(st.session_state.strategy_comparison_global_tickers):
+            if stock['ticker'] == ticker:
+                st.session_state.strategy_comparison_global_tickers.pop(i)
+                # If this was the last stock, add an empty one
+                if len(st.session_state.strategy_comparison_global_tickers) == 0:
+                    st.session_state.strategy_comparison_global_tickers.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                sync_global_tickers_to_all_portfolios()
+                st.session_state.strategy_comparison_rerun_flag = True
+                break
+    except (ValueError, IndexError):
+        pass
 
 def reset_beta_callback():
     # Reset beta lookback/exclude to defaults and enable beta calculation
@@ -1362,6 +1392,27 @@ def reset_vol_callback():
     st.session_state['strategy_comparison_active_vol_exclude'] = 30
     # Trigger rerun to update UI
     st.session_state.strategy_comparison_rerun_flag = True
+
+def sync_cashflow_from_first_portfolio_callback():
+    """Sync initial value, added amount, and added frequency from first portfolio to all others"""
+    try:
+        if len(st.session_state.strategy_comparison_portfolio_configs) > 1:
+            first_portfolio = st.session_state.strategy_comparison_portfolio_configs[0]
+            
+            # Get values from first portfolio
+            initial_value = first_portfolio.get('initial_value', 10000)
+            added_amount = first_portfolio.get('added_amount', 1000)
+            added_frequency = first_portfolio.get('added_frequency', 'Monthly')
+            
+            # Update all other portfolios
+            for i in range(1, len(st.session_state.strategy_comparison_portfolio_configs)):
+                st.session_state.strategy_comparison_portfolio_configs[i]['initial_value'] = initial_value
+                st.session_state.strategy_comparison_portfolio_configs[i]['added_amount'] = added_amount
+                st.session_state.strategy_comparison_portfolio_configs[i]['added_frequency'] = added_frequency
+            
+            st.session_state.strategy_comparison_rerun_flag = True
+    except Exception:
+        pass
 
 def add_momentum_window_callback():
     st.session_state.strategy_comparison_add_momentum_window_flag = True
@@ -1409,7 +1460,9 @@ def paste_json_callback():
         momentum_strategy = json_data.get('momentum_strategy', 'Classic')
         if momentum_strategy == 'Classic momentum':
             momentum_strategy = 'Classic'
-        elif momentum_strategy not in ['Classic', 'Relative']:
+        elif momentum_strategy == 'Relative momentum':
+            momentum_strategy = 'Relative Momentum'
+        elif momentum_strategy not in ['Classic', 'Relative Momentum']:
             momentum_strategy = 'Classic'  # Default fallback
         
         # Handle negative momentum strategy value mapping from other pages
@@ -1521,10 +1574,34 @@ def paste_json_callback():
         }
         
         st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index] = strategy_comparison_config
+        
+        # UPDATE GLOBAL TICKERS FROM IMPORTED JSON
+        if stocks:
+            # Clear existing global tickers
+            st.session_state.strategy_comparison_global_tickers = []
+            
+            # Clear all ticker widget keys to prevent UI interference
+            for key in list(st.session_state.keys()):
+                if key.startswith("strategy_comparison_global_ticker_") or key.startswith("strategy_comparison_global_alloc_") or key.startswith("strategy_comparison_global_div_"):
+                    del st.session_state[key]
+            
+            # Update global tickers from imported stocks
+            for stock in stocks:
+                if stock.get('ticker'):
+                    st.session_state.strategy_comparison_global_tickers.append({
+                        'ticker': stock['ticker'],
+                        'allocation': stock.get('allocation', 0.0),
+                        'include_dividends': stock.get('include_dividends', True)
+                    })
+            
+            # Sync global tickers to all portfolios
+            sync_global_tickers_to_all_portfolios()
+        
         st.success("Portfolio configuration updated from JSON (Strategy Comparison page).")
         st.info(f"Final stocks list: {[s['ticker'] for s in strategy_comparison_config['stocks']]}")
         st.info(f"Final momentum windows: {strategy_comparison_config['momentum_windows']}")
         st.info(f"Final use_momentum: {strategy_comparison_config['use_momentum']}")
+        st.info(f"Global tickers updated: {[s['ticker'] for s in st.session_state.strategy_comparison_global_tickers]}")
     except json.JSONDecodeError:
         st.error("Invalid JSON format. Please check the text and try again.")
     except Exception as e:
@@ -1540,7 +1617,7 @@ def paste_all_json_callback():
     try:
         obj = json.loads(txt)
         if isinstance(obj, list):
-            # Process each portfolio configuration for Strategy Comparison page
+            # Process each portfolio configuration for Strategy Comparison page (existing logic)
             processed_configs = []
             for cfg in obj:
                 if not isinstance(cfg, dict) or 'name' not in cfg:
@@ -1551,7 +1628,9 @@ def paste_all_json_callback():
                 momentum_strategy = cfg.get('momentum_strategy', 'Classic')
                 if momentum_strategy == 'Classic momentum':
                     momentum_strategy = 'Classic'
-                elif momentum_strategy not in ['Classic', 'Relative']:
+                elif momentum_strategy == 'Relative momentum':
+                    momentum_strategy = 'Relative Momentum'
+                elif momentum_strategy not in ['Classic', 'Relative Momentum']:
                     momentum_strategy = 'Classic'  # Default fallback
                 
                 # Handle negative momentum strategy value mapping from other pages
@@ -1668,6 +1747,29 @@ def paste_all_json_callback():
                 st.session_state['strategy_comparison_active_add_freq'] = processed_configs[0].get('added_frequency', 'none')
                 st.session_state['strategy_comparison_active_benchmark'] = processed_configs[0].get('benchmark_ticker', '')
                 st.session_state['strategy_comparison_active_use_momentum'] = bool(processed_configs[0].get('use_momentum', True))
+                
+                # UPDATE GLOBAL TICKERS FROM FIRST PORTFOLIO
+                first_portfolio_stocks = processed_configs[0].get('stocks', [])
+                if first_portfolio_stocks:
+                    # Clear existing global tickers
+                    st.session_state.strategy_comparison_global_tickers = []
+                    
+                    # Clear all ticker widget keys to prevent UI interference
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("strategy_comparison_global_ticker_") or key.startswith("strategy_comparison_global_alloc_") or key.startswith("strategy_comparison_global_div_"):
+                            del st.session_state[key]
+                    
+                    # Update global tickers from first portfolio
+                    for stock in first_portfolio_stocks:
+                        if stock.get('ticker'):
+                            st.session_state.strategy_comparison_global_tickers.append({
+                                'ticker': stock['ticker'],
+                                'allocation': stock.get('allocation', 0.0),
+                                'include_dividends': stock.get('include_dividends', True)
+                            })
+                    
+                    # Sync global tickers to all portfolios
+                    sync_global_tickers_to_all_portfolios()
             else:
                 st.session_state.strategy_comparison_active_portfolio_index = None
                 st.session_state.strategy_comparison_portfolio_selector = ''
@@ -1842,31 +1944,7 @@ if 'strategy_comparison_add_stock_flag' in st.session_state and st.session_state
     sync_global_tickers_to_all_portfolios()
     st.session_state.strategy_comparison_add_stock_flag = False
 
-if 'strategy_comparison_remove_stock_flag' in st.session_state and st.session_state.strategy_comparison_remove_stock_flag is not None:
-    index = st.session_state.strategy_comparison_remove_stock_flag
-    try:
-        active_idx = st.session_state.strategy_comparison_active_portfolio_index
-        if (0 <= active_idx < len(st.session_state.strategy_comparison_portfolio_configs) and
-            'stocks' in st.session_state.strategy_comparison_portfolio_configs[active_idx] and
-            len(st.session_state.strategy_comparison_portfolio_configs[active_idx]['stocks']) > 1 and
-            0 <= index < len(st.session_state.strategy_comparison_portfolio_configs[active_idx]['stocks'])):
-            st.session_state.strategy_comparison_portfolio_configs[active_idx]['stocks'].pop(index)
-    except (IndexError, KeyError) as e:
-        # Handle rapid UI changes gracefully
-        pass
-    st.session_state.strategy_comparison_remove_stock_flag = None
 
-if 'strategy_comparison_remove_global_stock_flag' in st.session_state and st.session_state.strategy_comparison_remove_global_stock_flag is not None:
-    index = st.session_state.strategy_comparison_remove_global_stock_flag
-    try:
-        if (len(st.session_state.strategy_comparison_global_tickers) > 1 and 
-            0 <= index < len(st.session_state.strategy_comparison_global_tickers)):
-            st.session_state.strategy_comparison_global_tickers.pop(index)
-            sync_global_tickers_to_all_portfolios()
-    except (IndexError, KeyError) as e:
-        # Handle rapid UI changes gracefully
-        pass
-    st.session_state.strategy_comparison_remove_global_stock_flag = None
 
 # Handle seamless momentum window operations
 if 'strategy_comparison_add_momentum_window_flag' in st.session_state and st.session_state.strategy_comparison_add_momentum_window_flag:
@@ -1954,7 +2032,7 @@ for i in range(len(st.session_state.strategy_comparison_global_tickers)):
     
     with col4:
         # Remove button
-        if st.button("x", key=f"strategy_comparison_global_rem_{i}", on_click=remove_global_stock_callback, args=(i,), help="Remove this ticker"):
+        if st.button("x", key=f"strategy_comparison_global_rem_{i}_{stock['ticker']}_{id(stock)}", on_click=remove_global_stock_callback, args=(stock['ticker'],), help="Remove this ticker"):
             pass
 
 # Validation constants
@@ -2058,6 +2136,11 @@ with st.expander("Rebalancing and Added Frequency Explained", expanded=False):
     *Keeping a Rebalancing Frequency to "none" will mean no additional cash is invested, even if you have an `Added Frequency` specified.*
     """)
 
+# Sync cashflow button
+if len(st.session_state.strategy_comparison_portfolio_configs) > 1:
+    if st.button("Sync ALL Portfolios Cashflow from First Portfolio", on_click=sync_cashflow_from_first_portfolio_callback, use_container_width=True):
+        pass
+
 if "strategy_comparison_active_benchmark" not in st.session_state:
     st.session_state["strategy_comparison_active_benchmark"] = active_portfolio['benchmark_ticker']
 st.text_input("Benchmark Ticker", key="strategy_comparison_active_benchmark", on_change=update_benchmark)
@@ -2074,8 +2157,8 @@ if st.session_state.get('strategy_comparison_active_use_momentum', active_portfo
         st.markdown("**Momentum Strategy Options**")
         momentum_strategy = st.selectbox(
             "Momentum strategy when NOT all negative:",
-            ["Classic", "Relative"],
-            index=["Classic", "Relative"].index(active_portfolio.get('momentum_strategy', 'Classic')),
+            ["Classic", "Relative Momentum"],
+            index=["Classic", "Relative Momentum"].index(active_portfolio.get('momentum_strategy', 'Classic')),
             key=f"strategy_comparison_momentum_strategy_{st.session_state.strategy_comparison_active_portfolio_index}"
         )
         negative_momentum_strategy = st.selectbox(
