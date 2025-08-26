@@ -99,11 +99,17 @@ if 'multi_backtest_page_initialized' not in st.session_state:
     ]
     st.session_state.multi_backtest_active_portfolio_index = 0
     st.session_state.multi_backtest_rerun_flag = False
-    # Initialize portfolio selection persistence - default to first portfolio
-    if 'multi_backtest_detail_portfolio_selector' not in st.session_state:
-        if st.session_state.multi_backtest_portfolio_configs:
-            first_portfolio_name = st.session_state.multi_backtest_portfolio_configs[0].get('name', 'Portfolio 1')
-            st.session_state.multi_backtest_detail_portfolio_selector = f"0 - {first_portfolio_name}"
+    # Clean up any existing portfolio configs to remove unused settings
+if 'multi_backtest_portfolio_configs' in st.session_state:
+    for config in st.session_state.multi_backtest_portfolio_configs:
+        config.pop('use_relative_momentum', None)
+        config.pop('equal_if_all_negative', None)
+
+# Initialize portfolio selection persistence - default to first portfolio
+if 'multi_backtest_detail_portfolio_selector' not in st.session_state:
+    if st.session_state.multi_backtest_portfolio_configs:
+        first_portfolio_name = st.session_state.multi_backtest_portfolio_configs[0].get('name', 'Portfolio 1')
+        st.session_state.multi_backtest_detail_portfolio_selector = f"0 - {first_portfolio_name}"
 
 st.set_page_config(layout="wide", page_title="Multi-Portfolio Analysis", page_icon="📈")
 st.markdown("""
@@ -398,8 +404,6 @@ default_configs = [
         'end_date_user': None,
         'start_with': 'first',
         'use_momentum': True,
-        'use_relative_momentum': True,
-        'equal_if_all_negative': True,
         'momentum_strategy': 'Classic',
         'negative_momentum_strategy': 'Cash',
         'momentum_windows': [
@@ -432,8 +436,6 @@ default_configs = [
         'end_date_user': None,
         'start_with': 'first',
         'use_momentum': False,
-        'use_relative_momentum': False,
-        'equal_if_all_negative': False,
         'momentum_windows': [],
         'calc_beta': False,
         'calc_volatility': False,
@@ -592,8 +594,6 @@ def single_backtest(config, sim_index, reindexed_data):
     rebalancing_frequency = config.get('rebalancing_frequency', 'none')
     use_momentum = config.get('use_momentum', True)
     momentum_windows = config.get('momentum_windows', [])
-    use_relative_momentum = config.get('use_relative_momentum', False)
-    equal_if_all_negative = config.get('equal_if_all_negative', True)
     calc_beta = config.get('calc_beta', False)
     calc_volatility = config.get('calc_volatility', False)
     beta_window_days = config.get('beta_window_days', 365)
@@ -1303,8 +1303,6 @@ def paste_json_callback():
             'end_date_user': json_data.get('end_date_user'),
             'start_with': json_data.get('start_with', 'first'),
             'use_momentum': json_data.get('use_momentum', True),
-            'use_relative_momentum': json_data.get('use_relative_momentum', False),
-            'equal_if_all_negative': json_data.get('equal_if_all_negative', False),
             'momentum_strategy': momentum_strategy,
             'negative_momentum_strategy': negative_momentum_strategy,
             'momentum_windows': momentum_windows,
@@ -1376,8 +1374,6 @@ def update_use_momentum():
                 ])
                 portfolio['momentum_strategy'] = saved_settings.get('momentum_strategy', 'Classic')
                 portfolio['negative_momentum_strategy'] = saved_settings.get('negative_momentum_strategy', 'Cash')
-                portfolio['use_relative_momentum'] = saved_settings.get('use_relative_momentum', False)
-                portfolio['equal_if_all_negative'] = saved_settings.get('equal_if_all_negative', False)
                 portfolio['calc_beta'] = saved_settings.get('calc_beta', True)
                 portfolio['calc_volatility'] = saved_settings.get('calc_volatility', True)
                 portfolio['beta_window_days'] = saved_settings.get('beta_window_days', 365)
@@ -1388,8 +1384,6 @@ def update_use_momentum():
                 # Update UI widgets to reflect restored values
                 st.session_state['multi_backtest_active_momentum_strategy'] = portfolio['momentum_strategy']
                 st.session_state['multi_backtest_active_negative_momentum_strategy'] = portfolio['negative_momentum_strategy']
-                st.session_state['multi_backtest_active_rel_mom'] = portfolio['use_relative_momentum']
-                st.session_state['multi_backtest_active_equal_neg'] = portfolio['equal_if_all_negative']
                 st.session_state['multi_backtest_active_calc_beta'] = portfolio['calc_beta']
                 st.session_state['multi_backtest_active_calc_vol'] = portfolio['calc_volatility']
                 st.session_state['multi_backtest_active_beta_window'] = portfolio['beta_window_days']
@@ -1409,8 +1403,6 @@ def update_use_momentum():
                 'momentum_windows': portfolio.get('momentum_windows', []),
                 'momentum_strategy': portfolio.get('momentum_strategy', 'Classic'),
                 'negative_momentum_strategy': portfolio.get('negative_momentum_strategy', 'Cash'),
-                'use_relative_momentum': portfolio.get('use_relative_momentum', False),
-                'equal_if_all_negative': portfolio.get('equal_if_all_negative', False),
                 'calc_beta': portfolio.get('calc_beta', True),
                 'calc_volatility': portfolio.get('calc_volatility', True),
                 'beta_window_days': portfolio.get('beta_window_days', 365),
@@ -1424,11 +1416,7 @@ def update_use_momentum():
         portfolio['use_momentum'] = new_val
         st.session_state.multi_backtest_rerun_flag = True
 
-def update_rel_mom():
-    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['use_relative_momentum'] = st.session_state.multi_backtest_active_rel_mom
 
-def update_equal_neg():
-    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['equal_if_all_negative'] = st.session_state.multi_backtest_active_equal_neg
 
 def update_calc_beta():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['calc_beta'] = st.session_state.multi_backtest_active_calc_beta
@@ -1514,7 +1502,7 @@ if len(st.session_state.multi_backtest_portfolio_configs) > 1:
 
 if "multi_backtest_active_benchmark" not in st.session_state:
     st.session_state["multi_backtest_active_benchmark"] = active_portfolio['benchmark_ticker']
-st.text_input("Benchmark Ticker", key="multi_backtest_active_benchmark", on_change=update_benchmark)
+st.text_input("Benchmark Ticker (default: ^GSPC, used for beta calculation)", key="multi_backtest_active_benchmark", on_change=update_benchmark)
 
 st.subheader("Stocks")
 col_stock_buttons = st.columns([0.3, 0.3, 0.3, 0.1])
@@ -1742,27 +1730,30 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
                     weight_percentage = 10.0
                 st.session_state[weight_key] = int(weight_percentage)
             with col_mw1:
-                st.number_input(f"Lookback {j+1}", value=st.session_state[lookback_key], min_value=1, key=lookback_key, label_visibility="collapsed")
+                st.number_input(f"Lookback {j+1}", min_value=1, key=lookback_key, label_visibility="collapsed")
                 if st.session_state[lookback_key] != active_portfolio['momentum_windows'][j]['lookback']:
                     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['momentum_windows'][j]['lookback'] = st.session_state[lookback_key]
             with col_mw2:
-                st.number_input(f"Exclude {j+1}", value=st.session_state[exclude_key], min_value=0, key=exclude_key, label_visibility="collapsed")
+                st.number_input(f"Exclude {j+1}", min_value=0, key=exclude_key, label_visibility="collapsed")
                 if st.session_state[exclude_key] != active_portfolio['momentum_windows'][j]['exclude']:
                     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['momentum_windows'][j]['exclude'] = st.session_state[exclude_key]
             with col_mw3:
-                st.number_input(f"Weight {j+1}", value=st.session_state[weight_key], min_value=0, max_value=100, step=1, format="%d", key=weight_key, label_visibility="collapsed")
+                st.number_input(f"Weight {j+1}", min_value=0, max_value=100, step=1, format="%d", key=weight_key, label_visibility="collapsed")
                 # Update the portfolio weight when the widget value changes
                 if st.session_state[weight_key] != int(active_portfolio['momentum_windows'][j]['weight'] * 100.0):
                     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['momentum_windows'][j]['weight'] = st.session_state[weight_key] / 100.0
 else:
-    active_portfolio['use_relative_momentum'] = False
-    active_portfolio['equal_if_all_negative'] = False
+    
     active_portfolio['momentum_windows'] = []
     active_portfolio['calc_beta'] = False
     active_portfolio['calc_volatility'] = False
 
 with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
-    config_json = json.dumps(active_portfolio, indent=4)
+    # Clean portfolio config for export by removing unused settings
+    cleaned_config = active_portfolio.copy()
+    cleaned_config.pop('use_relative_momentum', None)
+    cleaned_config.pop('equal_if_all_negative', None)
+    config_json = json.dumps(cleaned_config, indent=4)
     st.code(config_json, language='json')
     # Fixed JSON copy button
     import streamlit.components.v1 as components
@@ -1805,7 +1796,7 @@ if st.sidebar.button("Run Backtests", type='primary'):
         pass
     else:
         progress_bar = st.empty()
-    progress_bar.progress(0, text="Starting mega backtest...")
+        progress_bar.progress(0, text="Initializing multi-portfolio backtest...")
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         all_tickers = sorted(list(set(s['ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs for s in cfg['stocks'] if s['ticker']) | set(cfg['benchmark_ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs if 'benchmark_ticker' in cfg)))
@@ -1883,7 +1874,7 @@ if st.sidebar.button("Run Backtests", type='primary'):
                 df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
                 data_reindexed[t] = df
             
-            progress_bar.progress(1.0, text="Running mega backtest for all strategies...")
+            progress_bar.progress(1.0, text="Executing multi-portfolio backtest analysis...")
             
             # Run mega backtest for all strategies simultaneously
             all_results = {}
@@ -2033,7 +2024,7 @@ if st.sidebar.button("Run Backtests", type='primary'):
                 }
                 all_stats[unique_name] = stats
                 all_drawdowns[unique_name] = pd.Series(drawdowns, index=stats_dates)
-            progress_bar.progress(100, text="Mega backtest complete!")
+            progress_bar.progress(100, text="Multi-portfolio backtest analysis complete!")
             progress_bar.empty()
             print("\n" + "="*80)
             print(" " * 25 + "FINAL PERFORMANCE STATISTICS")
@@ -2155,70 +2146,8 @@ def paste_all_json_callback():
         return
     try:
         obj = json.loads(txt)
-        if isinstance(obj, list) and len(obj) > 1:
-            # TSAR BOMBA APPROACH: Extract tickers from the first portfolio only
-            first_portfolio = obj[0]
-            stocks = first_portfolio['stocks']
-            tickers = [stock['ticker'] for stock in stocks if stock.get('ticker')]
-            
-            # TSAR BOMBA OPERATION 1: NUKE EVERYTHING
-            # Clear ALL session state keys
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            
-            # TSAR BOMBA OPERATION 2: RECREATE FROM ABSOLUTE SCRATCH
-            # Create default portfolio configs
-            st.session_state.multi_backtest_portfolio_configs = [
-                {
-                    'name': 'Portfolio 1',
-                    'stocks': [],
-                    'benchmark_ticker': '^GSPC',
-                    'initial_value': 10000,
-                    'added_amount': 1000,
-                    'added_frequency': 'Monthly',
-                    'rebalancing_frequency': 'Monthly',
-                    'start_date_user': None,
-                    'end_date_user': None,
-                    'start_with': 'all',
-                    'use_momentum': False,
-                    'use_relative_momentum': False,
-                    'equal_if_all_negative': False,
-                    'momentum_strategy': 'Classic',
-                    'negative_momentum_strategy': 'Cash',
-                    'momentum_windows': [],
-                    'calc_beta': False,
-                    'calc_volatility': False,
-                    'beta_window_days': 365,
-                    'exclude_days_beta': 30,
-                    'vol_window_days': 365,
-                    'exclude_days_vol': 30
-                }
-            ]
-            
-            # TSAR BOMBA OPERATION 3: SET NEW TICKERS
-            st.session_state.multi_backtest_active_portfolio_index = 0
-            
-            # Create new stocks with equal allocations
-            new_stocks = []
-            if tickers:
-                equal_allocation = 1.0 / len(tickers)
-                for ticker in tickers:
-                    new_stocks.append({
-                        'ticker': ticker,
-                        'allocation': equal_allocation,
-                        'include_dividends': True
-                    })
-            
-            # Update the portfolio
-            st.session_state.multi_backtest_portfolio_configs[0]['stocks'] = new_stocks
-            
-            # TSAR BOMBA OPERATION 4: FORCE HARD RESET
-            st.success(f"✅ TSAR BOMBA: Tickers changed to: {tickers}")
-            st.info(f"New stocks: {new_stocks}")
-            st.experimental_rerun()
-            return
-            
-            # Process each portfolio configuration for Multi-Backtest page (existing logic)
+        if isinstance(obj, list):
+            # Process each portfolio configuration for Multi-Backtest page
             processed_configs = []
             for cfg in obj:
                 if not isinstance(cfg, dict) or 'name' not in cfg:
@@ -2254,12 +2183,48 @@ def paste_all_json_callback():
                     if tickers and isinstance(tickers, list):
                         for i in range(len(tickers)):
                             if tickers[i] and tickers[i].strip():  # Check for non-empty ticker
+                                # Convert allocation from percentage (0-100) to decimal (0.0-1.0) format
+                                allocation = 0.0
+                                if i < len(allocs) and allocs[i] is not None:
+                                    alloc_value = float(allocs[i])
+                                    if alloc_value > 1.0:
+                                        # Already in percentage format, convert to decimal
+                                        allocation = alloc_value / 100.0
+                                    else:
+                                        # Already in decimal format, use as is
+                                        allocation = alloc_value
+                                
                                 stock = {
                                     'ticker': tickers[i].strip(),
-                                    'allocation': float(allocs[i]) if i < len(allocs) and allocs[i] is not None else 0.0,
+                                    'allocation': allocation,
                                     'include_dividends': bool(divs[i]) if i < len(divs) and divs[i] is not None else True
                                 }
                                 stocks.append(stock)
+            
+            # Process each portfolio configuration for Multi-Backtest page (existing logic)
+            processed_configs = []
+            for cfg in obj:
+                if not isinstance(cfg, dict) or 'name' not in cfg:
+                    st.error('Invalid portfolio configuration structure.')
+                    return
+                
+                # Handle momentum strategy value mapping from other pages
+                momentum_strategy = cfg.get('momentum_strategy', 'Classic')
+                if momentum_strategy == 'Classic momentum':
+                    momentum_strategy = 'Classic'
+                elif momentum_strategy == 'Relative momentum':
+                    momentum_strategy = 'Relative Momentum'
+                elif momentum_strategy not in ['Classic', 'Relative Momentum']:
+                    momentum_strategy = 'Classic'  # Default fallback
+                
+                # Handle negative momentum strategy value mapping from other pages
+                negative_momentum_strategy = cfg.get('negative_momentum_strategy', 'Cash')
+                if negative_momentum_strategy == 'Go to cash':
+                    negative_momentum_strategy = 'Cash'
+                elif negative_momentum_strategy not in ['Cash', 'Equal weight', 'Relative momentum']:
+                    negative_momentum_strategy = 'Cash'  # Default fallback
+                
+
                 
                 # Sanitize momentum window weights to prevent StreamlitValueAboveMaxError
                 momentum_windows = cfg.get('momentum_windows', [])
@@ -2314,15 +2279,13 @@ def paste_all_json_callback():
                     'stocks': stocks,
                     'benchmark_ticker': cfg.get('benchmark_ticker', '^GSPC'),
                     'initial_value': cfg.get('initial_value', 10000),
-                    'added_amount': cfg.get('added_amount', 1000),
-                    'added_frequency': map_frequency(cfg.get('added_frequency', 'Monthly')),
-                    'rebalancing_frequency': map_frequency(cfg.get('rebalancing_frequency', 'Monthly')),
-                    'start_date_user': cfg.get('start_date_user'),
-                    'end_date_user': cfg.get('end_date_user'),
-                    'start_with': cfg.get('start_with', 'first'),
-                    'use_momentum': cfg.get('use_momentum', True),
-                    'use_relative_momentum': cfg.get('use_relative_momentum', False),
-                    'equal_if_all_negative': cfg.get('equal_if_all_negative', False),
+                                          'added_amount': cfg.get('added_amount', 1000),
+                      'added_frequency': map_frequency(cfg.get('added_frequency', 'Monthly')),
+                      'rebalancing_frequency': map_frequency(cfg.get('rebalancing_frequency', 'Monthly')),
+                      'start_date_user': cfg.get('start_date_user'),
+                      'end_date_user': cfg.get('end_date_user'),
+                      'start_with': cfg.get('start_with', 'first'),
+                      'use_momentum': cfg.get('use_momentum', True),
                     'momentum_strategy': momentum_strategy,
                     'negative_momentum_strategy': negative_momentum_strategy,
                     'momentum_windows': momentum_windows,
@@ -2371,7 +2334,19 @@ def paste_all_json_callback():
 
 
 with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False):
-    all_json = json.dumps(st.session_state.get('multi_backtest_portfolio_configs', []), indent=2)
+    # Clean portfolio configs for export by removing unused settings
+    def clean_portfolio_configs_for_export(configs):
+        cleaned_configs = []
+        for config in configs:
+            cleaned_config = config.copy()
+            # Remove unused settings that were cleaned up
+            cleaned_config.pop('use_relative_momentum', None)
+            cleaned_config.pop('equal_if_all_negative', None)
+            cleaned_configs.append(cleaned_config)
+        return cleaned_configs
+    
+    cleaned_configs = clean_portfolio_configs_for_export(st.session_state.get('multi_backtest_portfolio_configs', []))
+    all_json = json.dumps(cleaned_configs, indent=2)
     st.code(all_json, language='json')
     import streamlit.components.v1 as components
     copy_html_all = f"""
