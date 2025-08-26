@@ -991,7 +991,7 @@ def _rebalance_portfolio(
     exclude_days_vol_val,
 ):
     """Rebalancing now uses the new, more robust momentum logic."""
-    global data, calc_beta, calc_volatility, beta_window_days, exclude_days_beta, benchmark_ticker, vol_window_days, exclude_days_vol, equal_if_all_negative, use_relative_momentum
+    global data, calc_beta, calc_volatility, beta_window_days, exclude_days_beta, benchmark_ticker, vol_window_days, exclude_days_vol, use_relative_momentum
     data = data_dict
     calc_beta = use_beta_flag
     calc_volatility = use_volatility_flag
@@ -1000,7 +1000,7 @@ def _rebalance_portfolio(
     benchmark_ticker = benchmark_ticker_val
     vol_window_days = vol_window_days_val
     exclude_days_vol = exclude_days_vol_val
-    equal_if_all_negative = (negative_momentum_strategy == "Equal weight")
+
     
     # The "Relative momentum" option for negative scores implies use_relative_momentum logic
     use_relative_momentum = use_relative_momentum_flag or (negative_momentum_strategy == "Relative momentum")
@@ -1781,7 +1781,7 @@ _ss_default("rebalance_metrics_table", None)
 # The JSON importer writes staging keys prefixed with `_import_` and sets
 # `_import_pending` to True then reruns; this block applies them safely
 # before any widgets instantiate (prevents StreamlitAPIException).
-if False:  # DISABLED: st.session_state.get("_import_pending", False):
+if st.session_state.get("_import_pending", False):
     try:
         # Map of staging key -> target session_state key or transformation
         if "_import_name" in st.session_state:
@@ -1902,7 +1902,7 @@ if False:  # DISABLED: st.session_state.get("_import_pending", False):
                     'start_with': portfolio_config.get('start_with', 'all'),
                     'use_momentum': portfolio_config.get('use_momentum', True),
                     'use_relative_momentum': portfolio_config.get('use_relative_momentum', False),
-                    'equal_if_all_negative': portfolio_config.get('equal_if_all_negative', False),
+            
                     'momentum_strategy': portfolio_config.get('momentum_strategy', 'Classic'),
                     'negative_momentum_strategy': portfolio_config.get('negative_momentum_strategy', 'Cash'),
                     'momentum_windows': portfolio_config.get('momentum_windows', []),
@@ -1921,17 +1921,17 @@ if False:  # DISABLED: st.session_state.get("_import_pending", False):
                     st.session_state["portfolio_name_input"] = main_app_config['name']
                 if 'stocks' in main_app_config and main_app_config['stocks']:
                     st.session_state["tickers"] = [stock.get('ticker', '') for stock in main_app_config['stocks']]
-                    # Convert allocations from decimal (0.0-1.0) to percentage (0-100) format for app.py UI
+                    # Keep allocations in decimal format (0.0-1.0) as Backtest Engine expects
                     allocations = []
                     for stock in main_app_config['stocks']:
                         allocation = stock.get('allocation', 0.0)
                         if isinstance(allocation, (int, float)):
-                            # If allocation is already in percentage format (>1.0), use it directly
+                            # If allocation is in percentage format (>1.0), convert to decimal
                             if allocation > 1.0:
-                                allocations.append(min(allocation, 100.0))
+                                allocations.append(allocation / 100.0)
                             else:
-                                # Convert decimal to percentage
-                                allocations.append(allocation * 100.0)
+                                # Already in decimal format, use as is
+                                allocations.append(allocation)
                         else:
                             allocations.append(0.0)
                     st.session_state["allocs"] = allocations
@@ -2963,7 +2963,7 @@ with st.sidebar:
         default_benchmark = st.session_state.pop("_import_benchmark_ticker")
     
     benchmark_ticker = st.text_input(
-        "Benchmark Ticker (for Beta)", value=default_benchmark
+                        "Benchmark Ticker (default: ^GSPC, used for beta calculation)", value=default_benchmark
     ).upper()
 
 
@@ -3097,9 +3097,28 @@ with st.sidebar:
                     if 'stocks' in first_portfolio and isinstance(first_portfolio['stocks'], list):
                         # NEW FUNCTIONALITY: If multiple portfolios, just update tickers from first portfolio
                         if len(imported_config) > 1:
-                            # Extract tickers from the first portfolio only
+                            # Extract tickers and allocations from the first portfolio
                             stocks = first_portfolio['stocks']
-                            tickers = [stock['ticker'] for stock in stocks if stock.get('ticker')]
+                            tickers = []
+                            allocations = []
+                            dividends = []
+                            
+                            for stock in stocks:
+                                if stock.get('ticker'):
+                                    tickers.append(stock['ticker'])
+                                    # Get allocation (convert from percentage to decimal if needed)
+                                    allocation = stock.get('allocation', 0.0)
+                                    if isinstance(allocation, (int, float)):
+                                        if allocation > 1.0:
+                                            # Convert percentage to decimal
+                                            allocations.append(allocation / 100.0)
+                                        else:
+                                            # Already in decimal format
+                                            allocations.append(allocation)
+                                    else:
+                                        allocations.append(0.0)
+                                    # Get dividend setting
+                                    dividends.append(stock.get('include_dividends', True))
                             
                             # OPERATION 1: CLEAR EXISTING TICKERS AND WIDGET KEYS
                             st.session_state.tickers = []
@@ -3111,16 +3130,13 @@ with st.sidebar:
                                 if key.startswith("ticker_") or key.startswith("alloc_input_") or key.startswith("divs_checkbox_"):
                                     del st.session_state[key]
                             
-                            # OPERATION 2: UPDATE WITH NEW TICKERS ONLY
+                            # OPERATION 2: UPDATE WITH NEW TICKERS AND THEIR ALLOCATIONS
                             st.session_state.tickers = tickers
+                            st.session_state.allocs = allocations
+                            st.session_state.divs = dividends
                             
-                            # Set equal allocations for the new tickers
-                            if tickers:
-                                equal_allocation = 1.0 / len(tickers)
-                                st.session_state.allocs = [equal_allocation] * len(tickers)
-                                st.session_state.divs = [True] * len(tickers)
-                            
-                            st.success(f"✅ Updated tickers from multiple portfolios: {tickers}")
+                            st.success(f"✅ Updated tickers and allocations from multiple portfolios: {tickers}")
+                            st.info(f"Allocations: {[f'{alloc*100:.1f}%' for alloc in allocations]}")
                             st.rerun()
                         else:
                             # Single portfolio - use existing logic
@@ -3154,7 +3170,12 @@ with st.sidebar:
                     if 'tickers' in imported_config:
                         st.session_state.tickers = imported_config['tickers'].copy()
                     if 'allocs' in imported_config:
-                        st.session_state.allocs = imported_config['allocs'].copy()
+                        # Convert allocations to decimal format if they're in percentage format
+                        allocs = imported_config['allocs'].copy()
+                        for i, alloc in enumerate(allocs):
+                            if isinstance(alloc, (int, float)) and alloc > 1.0:
+                                allocs[i] = alloc / 100.0
+                        st.session_state.allocs = allocs
                     if 'divs' in imported_config:
                         st.session_state.divs = imported_config['divs'].copy()
                     if 'initial_value' in imported_config:
