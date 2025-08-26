@@ -129,7 +129,7 @@ if 'strategy_comparison_active_portfolio_index' not in st.session_state:
 if 'strategy_comparison_rerun_flag' not in st.session_state:
     st.session_state.strategy_comparison_rerun_flag = False
 
-st.set_page_config(layout="wide", page_title="Strategy Comparison", page_icon="📈")
+st.set_page_config(layout="wide", page_title="Strategy Performance Comparison", page_icon="📈")
 st.markdown("""
 <style>
     /* Global Styles for the App */
@@ -368,7 +368,7 @@ st.markdown("""
 </script>
 """, unsafe_allow_html=True)
 
-st.set_page_config(layout="wide", page_title="Strategy Comparison")
+st.set_page_config(layout="wide", page_title="Strategy Performance Comparison")
 
 st.title("Strategy Comparison")
 st.markdown("Use the forms below to configure and run backtests for multiple portfolios.")
@@ -2350,7 +2350,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
         st.stop()
 
     progress_bar = st.empty()
-    progress_bar.progress(0, text="Starting backtest...")
+    progress_bar.progress(0, text="Starting mega backtest...")
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         all_tickers = sorted(list(set(s['ticker'] for cfg in st.session_state.strategy_comparison_portfolio_configs for s in cfg['stocks'] if s['ticker']) | set(cfg['benchmark_ticker'] for cfg in st.session_state.strategy_comparison_portfolio_configs if 'benchmark_ticker' in cfg)))
@@ -2360,7 +2360,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
         for i, t in enumerate(all_tickers):
             try:
                 progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
-                progress_bar.progress((i + 1) / (len(all_tickers) + len(st.session_state.strategy_comparison_portfolio_configs)), text=progress_text)
+                progress_bar.progress((i + 1) / (len(all_tickers) + 1), text=progress_text)
                 ticker = yf.Ticker(t)
                 hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
                 if hist.empty:
@@ -2387,15 +2387,71 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             print()
             all_results = {}
             all_drawdowns = {}
+            # Determine common date range for all portfolios
+            common_start = max(df.first_valid_index() for df in data.values())
+            common_end = min(df.last_valid_index() for df in data.values())
+            print(f"Common date range: {common_start.date()} to {common_end.date()}")
+            
+            # Override with global start_with selection
+            global_start_with = st.session_state.get('strategy_comparison_start_with', 'all')
+            print(f"Using global start_with: {global_start_with}")
+            
+            # Get all portfolio tickers (excluding benchmarks)
+            all_portfolio_tickers = set()
+            for cfg in configs_to_run:
+                portfolio_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
+                all_portfolio_tickers.update(portfolio_tickers)
+            
+            # Determine final start date based on global setting
+            if global_start_with == 'all':
+                final_start = max(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
+                print(f"All portfolio assets start date: {final_start.date()}")
+            else:  # global_start_with == 'oldest'
+                final_start = min(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
+                print(f"Oldest portfolio asset start date: {final_start.date()}")
+            
+            # Initialize final_end with the common end date
+            final_end = common_end
+            
+            # Apply user date constraints if any
+            for cfg in configs_to_run:
+                if cfg.get('start_date_user'):
+                    user_start = pd.to_datetime(cfg['start_date_user'])
+                    final_start = max(final_start, user_start)
+                if cfg.get('end_date_user'):
+                    user_end = pd.to_datetime(cfg['end_date_user'])
+                    final_end = min(final_end, user_end)
+            
+            if final_start > final_end:
+                st.error(f"Start date {final_start.date()} is after end date {final_end.date()}. Cannot proceed.")
+                st.stop()
+            
+            # Create simulation index for the entire period
+            simulation_index = pd.date_range(start=final_start, end=final_end, freq='D')
+            print(f"Simulation period: {final_start.date()} to {final_end.date()}")
+            
+            # Reindex all data to the simulation period
+            data_reindexed = {}
+            for t in all_tickers:
+                df = data[t].reindex(simulation_index)
+                df["Close"] = df["Close"].ffill()
+                df["Dividends"] = df["Dividends"].fillna(0)
+                df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
+                data_reindexed[t] = df
+            
+            progress_bar.progress(1.0, text="Running mega backtest for all strategies...")
+            
+            # Run mega backtest for all strategies simultaneously
             all_stats = {}
             all_allocations = {}
             all_metrics = {}
             # Map portfolio index (0-based) to the unique key used in the result dicts
             portfolio_key_map = {}
+            
             for i, cfg in enumerate(st.session_state.strategy_comparison_portfolio_configs, start=1):
-                progress_text = f"Running backtest for {cfg.get('name', f'Backtest {i}')} ({i}/{len(st.session_state.strategy_comparison_portfolio_configs)})..."
-                progress_bar.progress((len(all_tickers) + i) / (len(all_tickers) + len(st.session_state.strategy_comparison_portfolio_configs)), text=progress_text)
                 name = cfg.get('name', f'Backtest {i}')
+                print(f"\nProcessing strategy {i}/{len(st.session_state.strategy_comparison_portfolio_configs)}: {name}")
+                
                 # Ensure unique key for storage to avoid overwriting when duplicate names exist
                 base_name = name
                 unique_name = base_name
@@ -2403,49 +2459,9 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 while unique_name in all_results or unique_name in all_allocations:
                     unique_name = f"{base_name} ({suffix})"
                     suffix += 1
-                print(f"\nRunning backtest {i}/{len(st.session_state.strategy_comparison_portfolio_configs)}: {name}")
                 
-                # Tickers for config includes all assets for which data is needed (portfolio stocks + benchmark)
-                tickers_for_config = [s['ticker'] for s in cfg['stocks'] if s['ticker']] + ([cfg['benchmark_ticker']] if cfg['benchmark_ticker'] else [])
-                tickers_for_config = [t for t in tickers_for_config if t in data and t is not None]
-                
-                # Portfolio stocks only (excluding benchmark) for start date calculation
-                portfolio_stocks_only = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
-                portfolio_stocks_only = [t for t in portfolio_stocks_only if t in data and t is not None]
-                
-                if not portfolio_stocks_only:
-                    print(f"  No valid portfolio stocks for {name}; skipping backtest for this portfolio.")
-                    continue
-                
-                # Override the portfolio's start_with with the global selection from sidebar
-                global_start_with = st.session_state.get('strategy_comparison_start_with', 'all')
-                print(f"  Using global start_with: {global_start_with}")
-                if global_start_with == 'all':
-                    final_start = max(data[t].first_valid_index() for t in portfolio_stocks_only)
-                    print(f"  All portfolio assets start date: {final_start.date()}")
-                else: # global_start_with == 'oldest'
-                    final_start = min(data[t].first_valid_index() for t in portfolio_stocks_only)
-                    print(f"  Oldest portfolio asset start date: {final_start.date()}")
-                if cfg.get('start_date_user'):
-                    user_start = pd.to_datetime(cfg['start_date_user'])
-                    final_start = max(final_start, user_start)
-                if cfg.get('end_date_user'):
-                    final_end = min(pd.to_datetime(cfg['end_date_user']), min(data[t].last_valid_index() for t in tickers_for_config))
-                else:
-                    final_end = min(data[t].last_valid_index() for t in tickers_for_config)
-                if final_start > final_end:
-                    print(f"  Start date {final_start.date()} is after end date {final_end.date()}. Skipping {name}.")
-                    continue
-                simulation_index = pd.date_range(start=final_start, end=final_end, freq='D')
-                print(f"  Simulation period for {name}: {final_start.date()} to {final_end.date()}\n")
-                data_reindexed_for_config = {}
-                for t in tickers_for_config:
-                    df = data[t].reindex(simulation_index)
-                    df["Close"] = df["Close"].ffill()
-                    df["Dividends"] = df["Dividends"].fillna(0)
-                    df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
-                    data_reindexed_for_config[t] = df
-                total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed_for_config)
+                # Run single backtest for this strategy
+                total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
                 # Store both series under the unique key for later use
                 # compute today_weights_map (target weights as-if rebalanced at final snapshot date)
                 today_weights_map = {}
@@ -2535,8 +2551,8 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                     cash_flows.iloc[-1] += total_series.iloc[-1]
                 # Get benchmark returns for stats calculation
                 benchmark_returns = None
-                if cfg['benchmark_ticker'] and cfg['benchmark_ticker'] in data_reindexed_for_config:
-                    benchmark_returns = data_reindexed_for_config[cfg['benchmark_ticker']]['Price_change']
+                if cfg['benchmark_ticker'] and cfg['benchmark_ticker'] in data_reindexed:
+                    benchmark_returns = data_reindexed[cfg['benchmark_ticker']]['Price_change']
                 # Ensure benchmark_returns is a pandas Series aligned to total_series
                 if benchmark_returns is not None:
                     benchmark_returns = pd.Series(benchmark_returns, index=total_series.index).dropna()
@@ -2635,7 +2651,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 }
                 all_stats[unique_name] = stats
                 all_drawdowns[unique_name] = pd.Series(drawdowns, index=stats_dates)
-            progress_bar.progress(100, text="Backtests complete!")
+            progress_bar.progress(100, text="Mega backtest complete!")
             progress_bar.empty()
             print("\n" + "="*80)
             print(" " * 25 + "FINAL PERFORMANCE STATISTICS")
