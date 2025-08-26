@@ -105,7 +105,7 @@ if 'multi_backtest_page_initialized' not in st.session_state:
             first_portfolio_name = st.session_state.multi_backtest_portfolio_configs[0].get('name', 'Portfolio 1')
             st.session_state.multi_backtest_detail_portfolio_selector = f"0 - {first_portfolio_name}"
 
-st.set_page_config(layout="wide", page_title="Multi-Portfolio Backtest", page_icon="📈")
+st.set_page_config(layout="wide", page_title="Multi-Portfolio Analysis", page_icon="📈")
 st.markdown("""
 <style>
     /* Global Styles for the App */
@@ -344,7 +344,7 @@ st.markdown("""
 </script>
 """, unsafe_allow_html=True)
 
-st.set_page_config(layout="wide", page_title="Multi-Portfolio Backtest")
+st.set_page_config(layout="wide", page_title="Multi-Portfolio Analysis")
 
 st.title("Multi-Portfolio Backtest")
 st.markdown("Use the forms below to configure and run backtests for multiple portfolios.")
@@ -1805,7 +1805,7 @@ if st.sidebar.button("Run Backtests", type='primary'):
         pass
     else:
         progress_bar = st.empty()
-    progress_bar.progress(0, text="Starting backtest...")
+    progress_bar.progress(0, text="Starting mega backtest...")
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         all_tickers = sorted(list(set(s['ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs for s in cfg['stocks'] if s['ticker']) | set(cfg['benchmark_ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs if 'benchmark_ticker' in cfg)))
@@ -1815,7 +1815,7 @@ if st.sidebar.button("Run Backtests", type='primary'):
         for i, t in enumerate(all_tickers):
             try:
                 progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
-                progress_bar.progress((i + 1) / (len(all_tickers) + len(st.session_state.multi_backtest_portfolio_configs)), text=progress_text)
+                progress_bar.progress((i + 1) / (len(all_tickers) + 1), text=progress_text)
                 ticker = yf.Ticker(t)
                 hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
                 if hist.empty:
@@ -1837,9 +1837,55 @@ if st.sidebar.button("Run Backtests", type='primary'):
         else:
             # Persist raw downloaded price data so later recomputations can access benchmark series
             st.session_state.multi_backtest_raw_data = data
+            # Determine common date range for all portfolios
             common_start = max(df.first_valid_index() for df in data.values())
             common_end = min(df.last_valid_index() for df in data.values())
-            print()
+            print(f"Common date range: {common_start.date()} to {common_end.date()}")
+            
+            # Get all portfolio tickers (excluding benchmarks)
+            all_portfolio_tickers = set()
+            for cfg in st.session_state.multi_backtest_portfolio_configs:
+                portfolio_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
+                all_portfolio_tickers.update(portfolio_tickers)
+            
+            # Determine final start date based on start_with setting (all portfolios use the same setting)
+            first_cfg = st.session_state.multi_backtest_portfolio_configs[0]
+            if first_cfg.get('start_with') == 'all':
+                final_start = max(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
+                print(f"All portfolio assets start date: {final_start.date()}")
+            else:
+                final_start = min(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
+                print(f"Oldest portfolio asset start date: {final_start.date()}")
+            
+            # Apply user date constraints if any
+            for cfg in st.session_state.multi_backtest_portfolio_configs:
+                if cfg.get('start_date_user'):
+                    user_start = pd.to_datetime(cfg['start_date_user'])
+                    final_start = max(final_start, user_start)
+                if cfg.get('end_date_user'):
+                    user_end = pd.to_datetime(cfg['end_date_user'])
+                    common_end = min(common_end, user_end)
+            
+            if final_start > common_end:
+                st.error(f"Start date {final_start.date()} is after end date {common_end.date()}. Cannot proceed.")
+                st.stop()
+            
+            # Create simulation index for the entire period
+            simulation_index = pd.date_range(start=final_start, end=common_end, freq='D')
+            print(f"Simulation period: {final_start.date()} to {common_end.date()}")
+            
+            # Reindex all data to the simulation period
+            data_reindexed = {}
+            for t in all_tickers:
+                df = data[t].reindex(simulation_index)
+                df["Close"] = df["Close"].ffill()
+                df["Dividends"] = df["Dividends"].fillna(0)
+                df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
+                data_reindexed[t] = df
+            
+            progress_bar.progress(1.0, text="Running mega backtest for all strategies...")
+            
+            # Run mega backtest for all strategies simultaneously
             all_results = {}
             all_drawdowns = {}
             all_stats = {}
@@ -1847,10 +1893,11 @@ if st.sidebar.button("Run Backtests", type='primary'):
             all_metrics = {}
             # Map portfolio index (0-based) to the unique key used in the result dicts
             portfolio_key_map = {}
+            
             for i, cfg in enumerate(st.session_state.multi_backtest_portfolio_configs, start=1):
-                progress_text = f"Running backtest for {cfg.get('name', f'Backtest {i}')} ({i}/{len(st.session_state.multi_backtest_portfolio_configs)})..."
-                progress_bar.progress((len(all_tickers) + i) / (len(all_tickers) + len(st.session_state.multi_backtest_portfolio_configs)), text=progress_text)
                 name = cfg.get('name', f'Backtest {i}')
+                print(f"\nProcessing strategy {i}/{len(st.session_state.multi_backtest_portfolio_configs)}: {name}")
+                
                 # Ensure unique key for storage to avoid overwriting when duplicate names exist
                 base_name = name
                 unique_name = base_name
@@ -1858,37 +1905,9 @@ if st.sidebar.button("Run Backtests", type='primary'):
                 while unique_name in all_results or unique_name in all_allocations:
                     unique_name = f"{base_name} ({suffix})"
                     suffix += 1
-                print(f"\nRunning backtest {i}/{len(st.session_state.multi_backtest_portfolio_configs)}: {name}")
-                tickers_for_config = [s['ticker'] for s in cfg['stocks'] if s['ticker']] + [cfg['benchmark_ticker']]
-                tickers_for_config = [t for t in tickers_for_config if t in data and t is not None]
-                if not tickers_for_config:
-                    print(f"  No available tickers for {name}; skipping.")
-                    continue
-                if cfg.get('start_with') == 'all':
-                    final_start = max(data[t].first_valid_index() for t in tickers_for_config)
-                else:
-                    final_start = min(data[t].first_valid_index() for t in tickers_for_config)
-                if cfg.get('start_date_user'):
-                    user_start = pd.to_datetime(cfg['start_date_user'])
-                    final_start = max(final_start, user_start)
-                final_start = max(final_start, common_start)
-                if cfg.get('end_date_user'):
-                    final_end = min(pd.to_datetime(cfg['end_date_user']), min(data[t].last_valid_index() for t in tickers_for_config))
-                else:
-                    final_end = min(data[t].last_valid_index() for t in tickers_for_config)
-                if final_start > final_end:
-                    print(f"  Start date {final_start.date()} is after end date {final_end.date()}. Skipping {name}.")
-                    continue
-                simulation_index = pd.date_range(start=final_start, end=final_end, freq='D')
-                print(f"  Simulation period for {name}: {final_start.date()} to {final_end.date()}\n")
-                data_reindexed_for_config = {}
-                for t in tickers_for_config:
-                    df = data[t].reindex(simulation_index)
-                    df["Close"] = df["Close"].ffill()
-                    df["Dividends"] = df["Dividends"].fillna(0)
-                    df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
-                    data_reindexed_for_config[t] = df
-                total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed_for_config)
+                
+                # Run single backtest for this strategy
+                total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
                 # Store both series under the unique key for later use
                 all_results[unique_name] = {
                     'no_additions': total_series_no_additions,
@@ -1914,8 +1933,8 @@ if st.sidebar.button("Run Backtests", type='primary'):
                     cash_flows.iloc[-1] += total_series.iloc[-1]
                 # Get benchmark returns for stats calculation
                 benchmark_returns = None
-                if cfg['benchmark_ticker'] and cfg['benchmark_ticker'] in data_reindexed_for_config:
-                    benchmark_returns = data_reindexed_for_config[cfg['benchmark_ticker']]['Price_change']
+                if cfg['benchmark_ticker'] and cfg['benchmark_ticker'] in data_reindexed:
+                    benchmark_returns = data_reindexed[cfg['benchmark_ticker']]['Price_change']
                 # Ensure benchmark_returns is a pandas Series aligned to total_series
                 if benchmark_returns is not None:
                     benchmark_returns = pd.Series(benchmark_returns, index=total_series.index).dropna()
@@ -2014,7 +2033,7 @@ if st.sidebar.button("Run Backtests", type='primary'):
                 }
                 all_stats[unique_name] = stats
                 all_drawdowns[unique_name] = pd.Series(drawdowns, index=stats_dates)
-            progress_bar.progress(100, text="Backtests complete!")
+            progress_bar.progress(100, text="Mega backtest complete!")
             progress_bar.empty()
             print("\n" + "="*80)
             print(" " * 25 + "FINAL PERFORMANCE STATISTICS")
