@@ -1007,11 +1007,23 @@ def add_stock_callback():
     # Don't trigger immediate re-run for better performance
     # st.session_state.multi_backtest_rerun_flag = True
 
-def remove_stock_callback(index):
-    if len(st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks']) > 1:
-        st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'].pop(index)
-        # Don't trigger immediate re-run for better performance
-        # st.session_state.multi_backtest_rerun_flag = True
+def remove_stock_callback(ticker):
+    """Immediate stock removal callback"""
+    try:
+        active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
+        stocks = active_portfolio['stocks']
+        
+        # Find and remove the stock with matching ticker
+        for i, stock in enumerate(stocks):
+            if stock['ticker'] == ticker:
+                stocks.pop(i)
+                # If this was the last stock, add an empty one
+                if len(stocks) == 0:
+                    stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                st.session_state.multi_backtest_rerun_flag = True
+                break
+    except (IndexError, KeyError):
+        pass
 
 def normalize_stock_allocations_callback():
     if 'multi_backtest_portfolio_configs' not in st.session_state or 'multi_backtest_active_portfolio_index' not in st.session_state:
@@ -1107,6 +1119,27 @@ def reset_vol_callback():
     # Trigger rerun to update UI
     st.session_state.multi_backtest_rerun_flag = True
 
+def sync_cashflow_from_first_portfolio_callback():
+    """Sync initial value, added amount, and added frequency from first portfolio to all others"""
+    try:
+        if len(st.session_state.multi_backtest_portfolio_configs) > 1:
+            first_portfolio = st.session_state.multi_backtest_portfolio_configs[0]
+            
+            # Get values from first portfolio
+            initial_value = first_portfolio.get('initial_value', 10000)
+            added_amount = first_portfolio.get('added_amount', 1000)
+            added_frequency = first_portfolio.get('added_frequency', 'Monthly')
+            
+            # Update all other portfolios
+            for i in range(1, len(st.session_state.multi_backtest_portfolio_configs)):
+                st.session_state.multi_backtest_portfolio_configs[i]['initial_value'] = initial_value
+                st.session_state.multi_backtest_portfolio_configs[i]['added_amount'] = added_amount
+                st.session_state.multi_backtest_portfolio_configs[i]['added_frequency'] = added_frequency
+            
+            st.session_state.multi_backtest_rerun_flag = True
+    except Exception:
+        pass
+
 def add_momentum_window_callback():
     # Append a new momentum window with modest defaults
     idx = st.session_state.multi_backtest_active_portfolio_index
@@ -1170,7 +1203,9 @@ def paste_json_callback():
         momentum_strategy = json_data.get('momentum_strategy', 'Classic')
         if momentum_strategy == 'Classic momentum':
             momentum_strategy = 'Classic'
-        elif momentum_strategy not in ['Classic', 'Relative']:
+        elif momentum_strategy == 'Relative momentum':
+            momentum_strategy = 'Relative Momentum'
+        elif momentum_strategy not in ['Classic', 'Relative Momentum']:
             momentum_strategy = 'Classic'  # Default fallback
         
         # Handle negative momentum strategy value mapping from other pages
@@ -1472,6 +1507,11 @@ with st.expander("Rebalancing and Added Frequency Explained", expanded=False):
     *Keeping a Rebalancing Frequency to "none" will mean no additional cash is invested, even if you have an `Added Frequency` specified.*
     """)
 
+# Sync cashflow button
+if len(st.session_state.multi_backtest_portfolio_configs) > 1:
+    if st.button("Sync ALL Portfolios Cashflow from First Portfolio", on_click=sync_cashflow_from_first_portfolio_callback, use_container_width=True):
+        pass
+
 if "multi_backtest_active_benchmark" not in st.session_state:
     st.session_state["multi_backtest_active_benchmark"] = active_portfolio['benchmark_ticker']
 st.text_input("Benchmark Ticker", key="multi_backtest_active_benchmark", on_change=update_benchmark)
@@ -1536,6 +1576,9 @@ def update_stock_dividends(index):
     except Exception:
         return
 
+# Update active_portfolio
+active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
+
 for i in range(len(active_portfolio['stocks'])):
     stock = active_portfolio['stocks'][i]
     col_t, col_a, col_d, col_b = st.columns([0.2, 0.2, 0.3, 0.15])
@@ -1569,7 +1612,7 @@ for i in range(len(active_portfolio['stocks'])):
             st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][i]['include_dividends'] = st.session_state[div_key]
     with col_b:
         st.write("")
-        if st.button("Remove", key=f"multi_backtest_rem_stock_{st.session_state.multi_backtest_active_portfolio_index}_{i}", on_click=remove_stock_callback, args=(i,)):
+        if st.button("Remove", key=f"multi_backtest_rem_stock_{st.session_state.multi_backtest_active_portfolio_index}_{i}_{stock['ticker']}_{id(stock)}", on_click=remove_stock_callback, args=(stock['ticker'],)):
             pass
 
 if st.button("Add Stock", on_click=add_stock_callback):
@@ -1587,8 +1630,8 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
         st.markdown("**Momentum Strategy Options**")
         momentum_strategy = st.selectbox(
             "Momentum strategy when NOT all negative:",
-            ["Classic", "Relative"],
-            index=["Classic", "Relative"].index(active_portfolio.get('momentum_strategy', 'Classic')),
+            ["Classic", "Relative Momentum"],
+            index=["Classic", "Relative Momentum"].index(active_portfolio.get('momentum_strategy', 'Classic')),
             key=f"multi_backtest_momentum_strategy_{st.session_state.multi_backtest_active_portfolio_index}"
         )
         negative_momentum_strategy = st.selectbox(
@@ -2093,8 +2136,70 @@ def paste_all_json_callback():
         return
     try:
         obj = json.loads(txt)
-        if isinstance(obj, list):
-            # Process each portfolio configuration for Multi-Backtest page
+        if isinstance(obj, list) and len(obj) > 1:
+            # TSAR BOMBA APPROACH: Extract tickers from the first portfolio only
+            first_portfolio = obj[0]
+            stocks = first_portfolio['stocks']
+            tickers = [stock['ticker'] for stock in stocks if stock.get('ticker')]
+            
+            # TSAR BOMBA OPERATION 1: NUKE EVERYTHING
+            # Clear ALL session state keys
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            
+            # TSAR BOMBA OPERATION 2: RECREATE FROM ABSOLUTE SCRATCH
+            # Create default portfolio configs
+            st.session_state.multi_backtest_portfolio_configs = [
+                {
+                    'name': 'Portfolio 1',
+                    'stocks': [],
+                    'benchmark_ticker': '^GSPC',
+                    'initial_value': 10000,
+                    'added_amount': 1000,
+                    'added_frequency': 'Monthly',
+                    'rebalancing_frequency': 'Monthly',
+                    'start_date_user': None,
+                    'end_date_user': None,
+                    'start_with': 'all',
+                    'use_momentum': False,
+                    'use_relative_momentum': False,
+                    'equal_if_all_negative': False,
+                    'momentum_strategy': 'Classic',
+                    'negative_momentum_strategy': 'Cash',
+                    'momentum_windows': [],
+                    'calc_beta': False,
+                    'calc_volatility': False,
+                    'beta_window_days': 365,
+                    'exclude_days_beta': 30,
+                    'vol_window_days': 365,
+                    'exclude_days_vol': 30
+                }
+            ]
+            
+            # TSAR BOMBA OPERATION 3: SET NEW TICKERS
+            st.session_state.multi_backtest_active_portfolio_index = 0
+            
+            # Create new stocks with equal allocations
+            new_stocks = []
+            if tickers:
+                equal_allocation = 1.0 / len(tickers)
+                for ticker in tickers:
+                    new_stocks.append({
+                        'ticker': ticker,
+                        'allocation': equal_allocation,
+                        'include_dividends': True
+                    })
+            
+            # Update the portfolio
+            st.session_state.multi_backtest_portfolio_configs[0]['stocks'] = new_stocks
+            
+            # TSAR BOMBA OPERATION 4: FORCE HARD RESET
+            st.success(f"✅ TSAR BOMBA: Tickers changed to: {tickers}")
+            st.info(f"New stocks: {new_stocks}")
+            st.experimental_rerun()
+            return
+            
+            # Process each portfolio configuration for Multi-Backtest page (existing logic)
             processed_configs = []
             for cfg in obj:
                 if not isinstance(cfg, dict) or 'name' not in cfg:
@@ -2105,7 +2210,9 @@ def paste_all_json_callback():
                 momentum_strategy = cfg.get('momentum_strategy', 'Classic')
                 if momentum_strategy == 'Classic momentum':
                     momentum_strategy = 'Classic'
-                elif momentum_strategy not in ['Classic', 'Relative']:
+                elif momentum_strategy == 'Relative momentum':
+                    momentum_strategy = 'Relative Momentum'
+                elif momentum_strategy not in ['Classic', 'Relative Momentum']:
                     momentum_strategy = 'Classic'  # Default fallback
                 
                 # Handle negative momentum strategy value mapping from other pages
