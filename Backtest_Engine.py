@@ -1603,7 +1603,7 @@ def run_backtest(
 # ==============================================================================
 # Streamlit App Logic
 # ==============================================================================
-st.set_page_config(page_title="Ultimate Momentum Backtest", layout="wide")
+st.set_page_config(page_title="Quantitative Portfolio Momentum Backtest & Analytics", layout="wide")
 
 # Custom CSS for a better layout, a distinct primary button, and the fixed 'Back to Top' button
 st.markdown("""
