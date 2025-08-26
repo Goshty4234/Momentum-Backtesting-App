@@ -42,8 +42,6 @@ if 'strategy_comparison_portfolio_configs' not in st.session_state:
             'end_date_user': None,
             'start_with': 'all',
             'use_momentum': False,
-            'use_relative_momentum': False,
-            'equal_if_all_negative': False,
             'momentum_strategy': 'Classic',
             'negative_momentum_strategy': 'Cash',
             'momentum_windows': [],
@@ -54,9 +52,9 @@ if 'strategy_comparison_portfolio_configs' not in st.session_state:
             'vol_window_days': 365,
             'exclude_days_vol': 30,
         },
-        # 2) Momentum-based portfolio using SPY, QQQ, GLD, TLT
+        # 2) Momentum-based portfolio with Beta + Volatility adjustments
         {
-            'name': 'Momentum Strategy',
+            'name': 'Momentum Strategy + Beta + Volatility',
             'stocks': [
                 {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True},
                 {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True},
@@ -72,8 +70,6 @@ if 'strategy_comparison_portfolio_configs' not in st.session_state:
             'end_date_user': None,
             'start_with': 'all',
             'use_momentum': True,
-            'use_relative_momentum': True,
-            'equal_if_all_negative': True,
             'momentum_strategy': 'Classic',
             'negative_momentum_strategy': 'Cash',
             'momentum_windows': [
@@ -88,9 +84,9 @@ if 'strategy_comparison_portfolio_configs' not in st.session_state:
             'vol_window_days': 365,
             'exclude_days_vol': 30,
         },
-        # 3) Conservative portfolio (no momentum, no beta/volatility)
+        # 3) Pure momentum strategy (no beta/volatility adjustments)
         {
-            'name': 'Conservative (No Momentum)',
+            'name': 'Pure Momentum Strategy',
             'stocks': [
                 {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True},
                 {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True},
@@ -105,12 +101,14 @@ if 'strategy_comparison_portfolio_configs' not in st.session_state:
             'start_date_user': None,
             'end_date_user': None,
             'start_with': 'all',
-            'use_momentum': False,
-            'use_relative_momentum': False,
-            'equal_if_all_negative': False,
+            'use_momentum': True,
             'momentum_strategy': 'Classic',
             'negative_momentum_strategy': 'Cash',
-            'momentum_windows': [],
+            'momentum_windows': [
+                {'lookback': 365, 'exclude': 30, 'weight': 0.5},
+                {'lookback': 180, 'exclude': 30, 'weight': 0.3},
+                {'lookback': 120, 'exclude': 30, 'weight': 0.2},
+            ],
             'calc_beta': False,
             'calc_volatility': False,
             'beta_window_days': 365,
@@ -120,8 +118,15 @@ if 'strategy_comparison_portfolio_configs' not in st.session_state:
         },
     ]
     st.session_state.strategy_comparison_active_portfolio_index = 0
-    st.session_state.strategy_comparison_rerun_flag = False
-    # Portfolio selection will be initialized when the selector is first rendered
+st.session_state.strategy_comparison_rerun_flag = False
+
+# Clean up any existing portfolio configs to remove unused settings
+if 'strategy_comparison_portfolio_configs' in st.session_state:
+    for config in st.session_state.strategy_comparison_portfolio_configs:
+        config.pop('use_relative_momentum', None)
+        config.pop('equal_if_all_negative', None)
+
+# Portfolio selection will be initialized when the selector is first rendered
 
 # Initialize other session state variables if they don't exist
 if 'strategy_comparison_active_portfolio_index' not in st.session_state:
@@ -213,9 +218,7 @@ st.markdown("""
 active_portfolio = st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index] if 'strategy_comparison_portfolio_configs' in st.session_state and 'strategy_comparison_active_portfolio_index' in st.session_state else None
 if active_portfolio:
     ## Removed duplicate Portfolio Name input field
-    if st.session_state.get('strategy_comparison_rerun_flag', False):
-        st.session_state.strategy_comparison_rerun_flag = False
-        st.rerun()
+    pass  # Removed rerun logic to prevent full page refresh
 import numpy as np
 import pandas as pd
 def calculate_mwrr(values, cash_flows, dates):
@@ -646,8 +649,6 @@ def single_backtest(config, sim_index, reindexed_data):
     rebalancing_frequency = config.get('rebalancing_frequency', 'none')
     use_momentum = config.get('use_momentum', True)
     momentum_windows = config.get('momentum_windows', [])
-    use_relative_momentum = config.get('use_relative_momentum', False)
-    equal_if_all_negative = config.get('equal_if_all_negative', True)
     calc_beta = config.get('calc_beta', False)
     calc_volatility = config.get('calc_volatility', False)
     beta_window_days = config.get('beta_window_days', 365)
@@ -1160,13 +1161,11 @@ def add_portfolio_callback():
     new_portfolio['name'] = f"New Portfolio {len(st.session_state.strategy_comparison_portfolio_configs) + 1}"
     st.session_state.strategy_comparison_portfolio_configs.append(new_portfolio)
     st.session_state.strategy_comparison_active_portfolio_index = len(st.session_state.strategy_comparison_portfolio_configs) - 1
-    st.session_state.strategy_comparison_rerun_flag = True
 
 def remove_portfolio_callback():
     if len(st.session_state.strategy_comparison_portfolio_configs) > 1:
         st.session_state.strategy_comparison_portfolio_configs.pop(st.session_state.strategy_comparison_active_portfolio_index)
         st.session_state.strategy_comparison_active_portfolio_index = max(0, st.session_state.strategy_comparison_active_portfolio_index - 1)
-        st.session_state.strategy_comparison_rerun_flag = True
 
 def add_stock_callback():
     st.session_state.strategy_comparison_add_stock_flag = True
@@ -1186,7 +1185,6 @@ def remove_stock_callback(ticker):
                     # If this was the last stock, add an empty one
                     if len(stocks) == 0:
                         stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
-                    st.session_state.strategy_comparison_rerun_flag = True
                     break
     except (ValueError, IndexError):
         pass
@@ -1210,7 +1208,6 @@ def normalize_stock_allocations_callback():
     st.session_state.strategy_comparison_global_tickers = stocks
     # Sync to all portfolios
     sync_global_tickers_to_all_portfolios()
-    st.session_state.strategy_comparison_rerun_flag = True
 
 def equal_stock_allocation_callback():
     if 'strategy_comparison_global_tickers' not in st.session_state:
@@ -1231,7 +1228,6 @@ def equal_stock_allocation_callback():
     st.session_state.strategy_comparison_global_tickers = stocks
     # Sync to all portfolios
     sync_global_tickers_to_all_portfolios()
-    st.session_state.strategy_comparison_rerun_flag = True
     
 def reset_portfolio_callback():
     current_name = st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['name']
@@ -1243,7 +1239,6 @@ def reset_portfolio_callback():
     if 'saved_momentum_settings' in default_cfg_found:
         del default_cfg_found['saved_momentum_settings']
     st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index] = default_cfg_found
-    st.session_state.strategy_comparison_rerun_flag = True
 
 def reset_stock_selection_callback():
     # Reset global tickers to default
@@ -1255,7 +1250,6 @@ def reset_stock_selection_callback():
     ]
     # Sync to all portfolios
     sync_global_tickers_to_all_portfolios()
-    st.session_state.strategy_comparison_rerun_flag = True
 
 def reset_momentum_windows_callback():
     st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['momentum_windows'] = [
@@ -1351,19 +1345,20 @@ def update_global_stock_dividends(index):
         return
 
 def remove_global_stock_callback(ticker):
-    """Immediate global stock removal callback"""
+    """Immediate stock removal callback - EXACT COPY FROM MULTI_BACKTEST"""
     try:
+        global_tickers = st.session_state.strategy_comparison_global_tickers
+        
         # Find and remove the stock with matching ticker
-        for i, stock in enumerate(st.session_state.strategy_comparison_global_tickers):
+        for i, stock in enumerate(global_tickers):
             if stock['ticker'] == ticker:
-                st.session_state.strategy_comparison_global_tickers.pop(i)
+                global_tickers.pop(i)
                 # If this was the last stock, add an empty one
-                if len(st.session_state.strategy_comparison_global_tickers) == 0:
-                    st.session_state.strategy_comparison_global_tickers.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                if len(global_tickers) == 0:
+                    global_tickers.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
                 sync_global_tickers_to_all_portfolios()
-                st.session_state.strategy_comparison_rerun_flag = True
                 break
-    except (ValueError, IndexError):
+    except (IndexError, KeyError):
         pass
 
 def reset_beta_callback():
@@ -1377,8 +1372,6 @@ def reset_beta_callback():
     # Update UI widget values to reflect reset
     st.session_state['strategy_comparison_active_beta_window'] = 365
     st.session_state['strategy_comparison_active_beta_exclude'] = 30
-    # Trigger rerun to update UI
-    st.session_state.strategy_comparison_rerun_flag = True
 
 def reset_vol_callback():
     # Reset volatility lookback/exclude to defaults and enable volatility calculation
@@ -1390,8 +1383,6 @@ def reset_vol_callback():
     # Update UI widget values to reflect reset
     st.session_state['strategy_comparison_active_vol_window'] = 365
     st.session_state['strategy_comparison_active_vol_exclude'] = 30
-    # Trigger rerun to update UI
-    st.session_state.strategy_comparison_rerun_flag = True
 
 def sync_cashflow_from_first_portfolio_callback():
     """Sync initial value, added amount, and added frequency from first portfolio to all others"""
@@ -1409,8 +1400,6 @@ def sync_cashflow_from_first_portfolio_callback():
                 st.session_state.strategy_comparison_portfolio_configs[i]['initial_value'] = initial_value
                 st.session_state.strategy_comparison_portfolio_configs[i]['added_amount'] = added_amount
                 st.session_state.strategy_comparison_portfolio_configs[i]['added_frequency'] = added_frequency
-            
-            st.session_state.strategy_comparison_rerun_flag = True
     except Exception:
         pass
 
@@ -1421,7 +1410,7 @@ def remove_momentum_window_callback():
     st.session_state.strategy_comparison_remove_momentum_window_flag = True
 
 def normalize_momentum_weights_callback():
-    if 'strategy_comparison_portfolio_configs' not in st.session_state or 'strategy_comparison_active_portfolio_index' not in st.session_state:
+    if 'strategy_comparison_portfolio_configs' not in st.session_state or 'strategy_comparison_portfolio_index' not in st.session_state:
         return
     active_portfolio = st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]
     total_weight = sum(w['weight'] for w in active_portfolio['momentum_windows'])
@@ -1439,22 +1428,12 @@ def normalize_momentum_weights_callback():
                 weight_percentage = 10.0
             st.session_state[weight_key] = int(weight_percentage)
     st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['momentum_windows'] = active_portfolio['momentum_windows']
-    st.session_state.strategy_comparison_rerun_flag = True
 
 def paste_json_callback():
     try:
         json_data = json.loads(st.session_state.strategy_comparison_paste_json_text)
         
-        # Debug: Show what we received
-        st.info(f"Received JSON keys: {list(json_data.keys())}")
-        if 'tickers' in json_data:
-            st.info(f"Tickers in JSON: {json_data['tickers']}")
-        if 'stocks' in json_data:
-            st.info(f"Stocks in JSON: {json_data['stocks']}")
-        if 'momentum_windows' in json_data:
-            st.info(f"Momentum windows in JSON: {json_data['momentum_windows']}")
-        if 'use_momentum' in json_data:
-            st.info(f"Use momentum in JSON: {json_data['use_momentum']}")
+
         
         # Handle momentum strategy value mapping from other pages
         momentum_strategy = json_data.get('momentum_strategy', 'Classic')
@@ -1503,8 +1482,7 @@ def paste_json_callback():
                         }
                         stocks.append(stock)
             
-            # Debug output
-            st.info(f"Converted {len(stocks)} stocks from legacy format: {[s['ticker'] for s in stocks]}")
+
         
         # Sanitize momentum window weights to prevent StreamlitValueAboveMaxError
         momentum_windows = json_data.get('momentum_windows', [])
@@ -1558,10 +1536,8 @@ def paste_json_callback():
             'rebalancing_frequency': map_frequency(json_data.get('rebalancing_frequency', 'Monthly')),
             'start_date_user': json_data.get('start_date_user'),
             'end_date_user': json_data.get('end_date_user'),
-                            'start_with': json_data.get('start_with', 'all'),
+            'start_with': json_data.get('start_with', 'all'),
             'use_momentum': json_data.get('use_momentum', True),
-            'use_relative_momentum': json_data.get('use_relative_momentum', False),
-            'equal_if_all_negative': json_data.get('equal_if_all_negative', False),
             'momentum_strategy': momentum_strategy,
             'negative_momentum_strategy': negative_momentum_strategy,
             'momentum_windows': momentum_windows,
@@ -1571,9 +1547,39 @@ def paste_json_callback():
             'exclude_days_beta': json_data.get('exclude_days_beta', 30),
             'vol_window_days': json_data.get('vol_window_days', 365),
             'exclude_days_vol': json_data.get('exclude_days_vol', 30),
+            # Add missing fields that might be in Backtest Engine JSON
+            'use_custom_dates': json_data.get('use_custom_dates', False),
+            'portfolio_drag_pct': json_data.get('portfolio_drag_pct', 0.0),
+            'saved_momentum_settings': json_data.get('saved_momentum_settings', {}),
         }
         
         st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index] = strategy_comparison_config
+        
+        # UPDATE UI WIDGET STATES TO REFLECT IMPORTED SETTINGS
+        # Update portfolio name
+        st.session_state['strategy_comparison_active_name'] = strategy_comparison_config['name']
+        
+        # Update basic portfolio settings
+        st.session_state['strategy_comparison_active_initial'] = int(strategy_comparison_config['initial_value'])
+        st.session_state['strategy_comparison_active_added_amount'] = int(strategy_comparison_config['added_amount'])
+        st.session_state['strategy_comparison_active_rebal_freq'] = strategy_comparison_config['rebalancing_frequency']
+        st.session_state['strategy_comparison_active_add_freq'] = strategy_comparison_config['added_frequency']
+        st.session_state['strategy_comparison_active_benchmark'] = strategy_comparison_config['benchmark_ticker']
+        
+        # Update momentum settings
+        st.session_state['strategy_comparison_active_use_momentum'] = strategy_comparison_config['use_momentum']
+        st.session_state['strategy_comparison_active_momentum_strategy'] = strategy_comparison_config['momentum_strategy']
+        st.session_state['strategy_comparison_active_negative_momentum_strategy'] = strategy_comparison_config['negative_momentum_strategy']
+        
+        # Update beta settings
+        st.session_state['strategy_comparison_active_calc_beta'] = strategy_comparison_config['calc_beta']
+        st.session_state['strategy_comparison_active_beta_window'] = strategy_comparison_config['beta_window_days']
+        st.session_state['strategy_comparison_active_beta_exclude'] = strategy_comparison_config['exclude_days_beta']
+        
+        # Update volatility settings
+        st.session_state['strategy_comparison_active_calc_vol'] = strategy_comparison_config['calc_volatility']
+        st.session_state['strategy_comparison_active_vol_window'] = strategy_comparison_config['vol_window_days']
+        st.session_state['strategy_comparison_active_vol_exclude'] = strategy_comparison_config['exclude_days_vol']
         
         # UPDATE GLOBAL TICKERS FROM IMPORTED JSON
         if stocks:
@@ -1594,14 +1600,9 @@ def paste_json_callback():
                         'include_dividends': stock.get('include_dividends', True)
                     })
             
-            # Sync global tickers to all portfolios
-            sync_global_tickers_to_all_portfolios()
-        
-        st.success("Portfolio configuration updated from JSON (Strategy Comparison page).")
-        st.info(f"Final stocks list: {[s['ticker'] for s in strategy_comparison_config['stocks']]}")
-        st.info(f"Final momentum windows: {strategy_comparison_config['momentum_windows']}")
-        st.info(f"Final use_momentum: {strategy_comparison_config['use_momentum']}")
-        st.info(f"Global tickers updated: {[s['ticker'] for s in st.session_state.strategy_comparison_global_tickers]}")
+            # DON'T sync global tickers to all portfolios - this would overwrite the imported settings
+            # Instead, just update the current portfolio's stocks to match global tickers
+            st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['stocks'] = st.session_state.strategy_comparison_global_tickers.copy()
     except json.JSONDecodeError:
         st.error("Invalid JSON format. Please check the text and try again.")
     except Exception as e:
@@ -1677,11 +1678,7 @@ def paste_all_json_callback():
                             weight = 0.1
                         window['weight'] = weight
                 
-                # Debug: Show what we received for this portfolio
-                if 'momentum_windows' in cfg:
-                    st.info(f"Momentum windows for {cfg.get('name', 'Unknown')}: {cfg['momentum_windows']}")
-                if 'use_momentum' in cfg:
-                    st.info(f"Use momentum for {cfg.get('name', 'Unknown')}: {cfg['use_momentum']}")
+
                 
                 # Map frequency values from app.py format to Strategy Comparison format
                 def map_frequency(freq):
@@ -1720,8 +1717,6 @@ def paste_all_json_callback():
                     'end_date_user': cfg.get('end_date_user'),
                     'start_with': cfg.get('start_with', 'all'),
                     'use_momentum': cfg.get('use_momentum', True),
-                    'use_relative_momentum': cfg.get('use_relative_momentum', False),
-                    'equal_if_all_negative': cfg.get('equal_if_all_negative', False),
                     'momentum_strategy': momentum_strategy,
                     'negative_momentum_strategy': negative_momentum_strategy,
                     'momentum_windows': momentum_windows,
@@ -1731,6 +1726,10 @@ def paste_all_json_callback():
                     'exclude_days_beta': cfg.get('exclude_days_beta', 30),
                     'vol_window_days': cfg.get('vol_window_days', 365),
                     'exclude_days_vol': cfg.get('exclude_days_vol', 30),
+                    # Add missing fields that might be in Backtest Engine JSON
+                    'use_custom_dates': cfg.get('use_custom_dates', False),
+                    'portfolio_drag_pct': cfg.get('portfolio_drag_pct', 0.0),
+                    'saved_momentum_settings': cfg.get('saved_momentum_settings', {}),
                 }
                 processed_configs.append(strategy_comparison_config)
             
@@ -1775,11 +1774,7 @@ def paste_all_json_callback():
                 st.session_state.strategy_comparison_portfolio_selector = ''
             st.session_state.strategy_comparison_portfolio_key_map = {}
             st.session_state.strategy_comparison_ran = False
-            st.success('All portfolio configurations updated from JSON (Strategy Comparison page).')
-            # Debug: Show final momentum windows for first portfolio
-            if processed_configs:
-                st.info(f"Final momentum windows for first portfolio: {processed_configs[0]['momentum_windows']}")
-                st.info(f"Final use_momentum for first portfolio: {processed_configs[0]['use_momentum']}")
+            st.success('All portfolio configurations updated from JSON.')
             # Force a rerun so widgets rebuild with the new configs
             try:
                 st.experimental_rerun()
@@ -1801,7 +1796,33 @@ def update_active_portfolio_index():
     else:
         # default to first portfolio if selector is missing or value not found
         st.session_state.strategy_comparison_active_portfolio_index = 0 if portfolio_names else None
-    st.session_state.strategy_comparison_rerun_flag = True
+    
+    # Update UI widget states to reflect the newly selected portfolio
+    if st.session_state.strategy_comparison_active_portfolio_index is not None:
+        active_portfolio = portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]
+        
+        # Update basic portfolio settings
+        st.session_state['strategy_comparison_active_name'] = active_portfolio['name']
+        st.session_state['strategy_comparison_active_initial'] = int(active_portfolio['initial_value'])
+        st.session_state['strategy_comparison_active_added_amount'] = int(active_portfolio['added_amount'])
+        st.session_state['strategy_comparison_active_rebal_freq'] = active_portfolio['rebalancing_frequency']
+        st.session_state['strategy_comparison_active_add_freq'] = active_portfolio['added_frequency']
+        st.session_state['strategy_comparison_active_benchmark'] = active_portfolio['benchmark_ticker']
+        
+        # Update momentum settings
+        st.session_state['strategy_comparison_active_use_momentum'] = active_portfolio['use_momentum']
+        st.session_state['strategy_comparison_active_momentum_strategy'] = active_portfolio['momentum_strategy']
+        st.session_state['strategy_comparison_active_negative_momentum_strategy'] = active_portfolio['negative_momentum_strategy']
+        
+        # Update beta settings
+        st.session_state['strategy_comparison_active_calc_beta'] = active_portfolio['calc_beta']
+        st.session_state['strategy_comparison_active_beta_window'] = active_portfolio['beta_window_days']
+        st.session_state['strategy_comparison_active_beta_exclude'] = active_portfolio['exclude_days_beta']
+        
+        # Update volatility settings
+        st.session_state['strategy_comparison_active_calc_vol'] = active_portfolio['calc_volatility']
+        st.session_state['strategy_comparison_active_vol_window'] = active_portfolio['vol_window_days']
+        st.session_state['strategy_comparison_active_vol_exclude'] = active_portfolio['exclude_days_vol']
 
 def update_name():
     st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['name'] = st.session_state.strategy_comparison_active_name
@@ -1840,8 +1861,6 @@ def update_use_momentum():
                 ])
                 portfolio['momentum_strategy'] = saved_settings.get('momentum_strategy', 'Classic')
                 portfolio['negative_momentum_strategy'] = saved_settings.get('negative_momentum_strategy', 'Cash')
-                portfolio['use_relative_momentum'] = saved_settings.get('use_relative_momentum', False)
-                portfolio['equal_if_all_negative'] = saved_settings.get('equal_if_all_negative', False)
                 portfolio['calc_beta'] = saved_settings.get('calc_beta', True)
                 portfolio['calc_volatility'] = saved_settings.get('calc_volatility', True)
                 portfolio['beta_window_days'] = saved_settings.get('beta_window_days', 365)
@@ -1852,8 +1871,6 @@ def update_use_momentum():
                 # Update UI widgets to reflect restored values
                 st.session_state['strategy_comparison_active_momentum_strategy'] = portfolio['momentum_strategy']
                 st.session_state['strategy_comparison_active_negative_momentum_strategy'] = portfolio['negative_momentum_strategy']
-                st.session_state['strategy_comparison_active_rel_mom'] = portfolio['use_relative_momentum']
-                st.session_state['strategy_comparison_active_equal_neg'] = portfolio['equal_if_all_negative']
                 st.session_state['strategy_comparison_active_calc_beta'] = portfolio['calc_beta']
                 st.session_state['strategy_comparison_active_calc_vol'] = portfolio['calc_volatility']
                 st.session_state['strategy_comparison_active_beta_window'] = portfolio['beta_window_days']
@@ -1873,8 +1890,6 @@ def update_use_momentum():
                 'momentum_windows': portfolio.get('momentum_windows', []),
                 'momentum_strategy': portfolio.get('momentum_strategy', 'Classic'),
                 'negative_momentum_strategy': portfolio.get('negative_momentum_strategy', 'Cash'),
-                'use_relative_momentum': portfolio.get('use_relative_momentum', False),
-                'equal_if_all_negative': portfolio.get('equal_if_all_negative', False),
                 'calc_beta': portfolio.get('calc_beta', True),
                 'calc_volatility': portfolio.get('calc_volatility', True),
                 'beta_window_days': portfolio.get('beta_window_days', 365),
@@ -1888,11 +1903,7 @@ def update_use_momentum():
         portfolio['use_momentum'] = new_val
         st.session_state.strategy_comparison_rerun_flag = True
 
-def update_rel_mom():
-    st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['use_relative_momentum'] = st.session_state.strategy_comparison_active_rel_mom
 
-def update_equal_neg():
-    st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['equal_if_all_negative'] = st.session_state.strategy_comparison_active_equal_neg
 
 def update_calc_beta():
     st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['calc_beta'] = st.session_state.strategy_comparison_active_calc_beta
@@ -2010,29 +2021,26 @@ for i in range(len(st.session_state.strategy_comparison_global_tickers)):
     col1, col2, col3, col4 = st.sidebar.columns([1, 1, 1, 0.2])
     
     with col1:
-        # Ticker input
+        # Ticker input - always use current value from global tickers
         ticker_key = f"strategy_comparison_global_ticker_{i}"
-        if ticker_key not in st.session_state:
-            st.session_state[ticker_key] = stock['ticker']
+        st.session_state[ticker_key] = stock['ticker']  # Always update to current value
         ticker_val = st.text_input(f"Ticker {i+1}", key=ticker_key, on_change=update_global_stock_ticker, args=(i,))
     
     with col2:
-        # Allocation input (always visible)
+        # Allocation input - always use current value from global tickers
         alloc_key = f"strategy_comparison_global_alloc_{i}"
-        if alloc_key not in st.session_state:
-            st.session_state[alloc_key] = int(stock['allocation'] * 100)
+        st.session_state[alloc_key] = int(stock['allocation'] * 100)  # Always update to current value
         alloc_val = st.number_input(f"Alloc % {i+1}", min_value=0, step=1, format="%d", key=alloc_key, on_change=update_global_stock_allocation, args=(i,))
     
     with col3:
-        # Dividends checkbox
+        # Dividends checkbox - always use current value from global tickers
         div_key = f"strategy_comparison_global_div_{i}"
-        if div_key not in st.session_state:
-            st.session_state[div_key] = stock['include_dividends']
+        st.session_state[div_key] = stock['include_dividends']  # Always update to current value
         div_val = st.checkbox("Dividends", key=div_key, on_change=update_global_stock_dividends, args=(i,))
     
     with col4:
         # Remove button
-        if st.button("x", key=f"strategy_comparison_global_rem_{i}_{stock['ticker']}_{id(stock)}", on_click=remove_global_stock_callback, args=(stock['ticker'],), help="Remove this ticker"):
+        if st.button("x", key=f"remove_global_{i}_{stock['ticker']}_{id(stock)}", help="Remove this ticker", on_click=remove_global_stock_callback, args=(stock['ticker'],)):
             pass
 
 # Validation constants
@@ -2088,7 +2096,19 @@ st.sidebar.radio(
 # JSON section for all portfolios
 st.sidebar.markdown("---")
 with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False):
-    all_json = json.dumps(st.session_state.get('strategy_comparison_portfolio_configs', []), indent=2)
+    # Clean portfolio configs for export by removing unused settings
+    def clean_portfolio_configs_for_export(configs):
+        cleaned_configs = []
+        for config in configs:
+            cleaned_config = config.copy()
+            # Remove unused settings that were cleaned up
+            cleaned_config.pop('use_relative_momentum', None)
+            cleaned_config.pop('equal_if_all_negative', None)
+            cleaned_configs.append(cleaned_config)
+        return cleaned_configs
+    
+    cleaned_configs = clean_portfolio_configs_for_export(st.session_state.get('strategy_comparison_portfolio_configs', []))
+    all_json = json.dumps(cleaned_configs, indent=2)
     st.code(all_json, language='json')
     import streamlit.components.v1 as components
     copy_html_all = f"""
@@ -2143,7 +2163,7 @@ if len(st.session_state.strategy_comparison_portfolio_configs) > 1:
 
 if "strategy_comparison_active_benchmark" not in st.session_state:
     st.session_state["strategy_comparison_active_benchmark"] = active_portfolio['benchmark_ticker']
-st.text_input("Benchmark Ticker", key="strategy_comparison_active_benchmark", on_change=update_benchmark)
+st.text_input("Benchmark Ticker (default: ^GSPC, used for beta calculation)", key="strategy_comparison_active_benchmark", on_change=update_benchmark)
 
 st.subheader("Strategy")
 if "strategy_comparison_active_use_momentum" not in st.session_state:
@@ -2281,6 +2301,7 @@ if st.session_state.get('strategy_comparison_active_use_momentum', active_portfo
             lookback_key = f"strategy_comparison_lookback_active_{j}"
             exclude_key = f"strategy_comparison_exclude_active_{j}"
             weight_key = f"strategy_comparison_weight_input_active_{j}"
+            # Initialize session state values if not present
             if lookback_key not in st.session_state:
                 # Convert lookback to integer to match min_value type
                 st.session_state[lookback_key] = int(active_portfolio['momentum_windows'][j]['lookback'])
@@ -2302,21 +2323,30 @@ if st.session_state.get('strategy_comparison_active_use_momentum', active_portfo
                     # Invalid weight, set to default
                     weight_percentage = 10.0
                 st.session_state[weight_key] = int(weight_percentage)
+            
+            # Get current values from session state
+            current_lookback = st.session_state[lookback_key]
+            current_exclude = st.session_state[exclude_key]
+            current_weight = st.session_state[weight_key]
+            
             with col_mw1:
-                st.number_input(f"Lookback {j+1}", value=st.session_state[lookback_key], min_value=1, key=lookback_key, on_change=create_momentum_lookback_callback(j), label_visibility="collapsed")
+                st.number_input(f"Lookback {j+1}", min_value=1, key=lookback_key, on_change=create_momentum_lookback_callback(j), label_visibility="collapsed")
             with col_mw2:
-                st.number_input(f"Exclude {j+1}", value=st.session_state[exclude_key], min_value=0, key=exclude_key, on_change=create_momentum_exclude_callback(j), label_visibility="collapsed")
+                st.number_input(f"Exclude {j+1}", min_value=0, key=exclude_key, on_change=create_momentum_exclude_callback(j), label_visibility="collapsed")
             with col_mw3:
-                st.number_input(f"Weight {j+1}", value=st.session_state[weight_key], min_value=0, max_value=100, step=1, format="%d", key=weight_key, on_change=create_momentum_weight_callback(j), label_visibility="collapsed")
+                st.number_input(f"Weight {j+1}", min_value=0, max_value=100, step=1, format="%d", key=weight_key, on_change=create_momentum_weight_callback(j), label_visibility="collapsed")
 else:
-    active_portfolio['use_relative_momentum'] = False
-    active_portfolio['equal_if_all_negative'] = False
+    
     active_portfolio['momentum_windows'] = []
     active_portfolio['calc_beta'] = False
     active_portfolio['calc_volatility'] = False
 
 with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
-    config_json = json.dumps(active_portfolio, indent=4)
+    # Clean portfolio config for export by removing unused settings
+    cleaned_config = active_portfolio.copy()
+    cleaned_config.pop('use_relative_momentum', None)
+    cleaned_config.pop('equal_if_all_negative', None)
+    config_json = json.dumps(cleaned_config, indent=4)
     st.code(config_json, language='json')
     # Fixed JSON copy button
     import streamlit.components.v1 as components
@@ -2350,7 +2380,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
         st.stop()
 
     progress_bar = st.empty()
-    progress_bar.progress(0, text="Starting mega backtest...")
+    progress_bar.progress(0, text="Initializing multi-strategy backtest...")
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         all_tickers = sorted(list(set(s['ticker'] for cfg in st.session_state.strategy_comparison_portfolio_configs for s in cfg['stocks'] if s['ticker']) | set(cfg['benchmark_ticker'] for cfg in st.session_state.strategy_comparison_portfolio_configs if 'benchmark_ticker' in cfg)))
@@ -2439,7 +2469,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
                 data_reindexed[t] = df
             
-            progress_bar.progress(1.0, text="Running mega backtest for all strategies...")
+            progress_bar.progress(1.0, text="Executing multi-strategy backtest analysis...")
             
             # Run mega backtest for all strategies simultaneously
             all_stats = {}
@@ -2651,7 +2681,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 }
                 all_stats[unique_name] = stats
                 all_drawdowns[unique_name] = pd.Series(drawdowns, index=stats_dates)
-            progress_bar.progress(100, text="Mega backtest complete!")
+            progress_bar.progress(100, text="Multi-strategy backtest analysis complete!")
             progress_bar.empty()
             print("\n" + "="*80)
             print(" " * 25 + "FINAL PERFORMANCE STATISTICS")
@@ -3708,7 +3738,29 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                                         portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
                                         
                                         if portfolio_cfg:
-                                            portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)
+                                            # Use current portfolio value from backtest results instead of initial value
+                                            portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)  # fallback to initial value
+                                            
+                                            # Get current portfolio value from backtest results
+                                            if 'strategy_comparison_all_results' in st.session_state and st.session_state.strategy_comparison_all_results:
+                                                portfolio_results = st.session_state.strategy_comparison_all_results.get(selected_portfolio_detail)
+                                                if portfolio_results:
+                                                    # Use the Final Value (with additions) for Strategy Comparison - total portfolio value including all cash additions and compounding
+                                                    if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
+                                                        # Get the final value from the with_additions series (includes all cash additions and compounding)
+                                                        final_value = portfolio_results['with_additions'].iloc[-1]
+                                                        if not pd.isna(final_value) and final_value > 0:
+                                                            portfolio_value = float(final_value)
+                                                    elif isinstance(portfolio_results, dict) and 'no_additions' in portfolio_results:
+                                                        # Fallback to no_additions if with_additions not available
+                                                        final_value = portfolio_results['no_additions'].iloc[-1]
+                                                        if not pd.isna(final_value) and final_value > 0:
+                                                            portfolio_value = float(final_value)
+                                                    elif isinstance(portfolio_results, pd.Series):
+                                                        # Get the latest value from the series
+                                                        latest_value = portfolio_results.iloc[-1]
+                                                        if not pd.isna(latest_value) and latest_value > 0:
+                                                            portfolio_value = float(latest_value)
                                             
                                             # Get raw data for price calculations
                                             raw_data = st.session_state.get('strategy_comparison_raw_data', {})
@@ -3835,7 +3887,29 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                                     portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
                                     
                                     if portfolio_cfg:
-                                        portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)
+                                        # Use current portfolio value from backtest results instead of initial value
+                                        portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)  # fallback to initial value
+                                        
+                                        # Get current portfolio value from backtest results
+                                        if 'strategy_comparison_all_results' in st.session_state and st.session_state.strategy_comparison_all_results:
+                                            portfolio_results = st.session_state.strategy_comparison_all_results.get(selected_portfolio_detail)
+                                            if portfolio_results:
+                                                # Use the Final Value (with additions) for Strategy Comparison - total portfolio value including all cash additions and compounding
+                                                if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
+                                                    # Get the final value from the with_additions series (includes all cash additions and compounding)
+                                                    final_value = portfolio_results['with_additions'].iloc[-1]
+                                                    if not pd.isna(final_value) and final_value > 0:
+                                                        portfolio_value = float(final_value)
+                                                elif isinstance(portfolio_results, dict) and 'no_additions' in portfolio_results:
+                                                    # Fallback to no_additions if with_additions not available
+                                                    final_value = portfolio_results['no_additions'].iloc[-1]
+                                                    if not pd.isna(final_value) and final_value > 0:
+                                                        portfolio_value = float(final_value)
+                                                elif isinstance(portfolio_results, pd.Series):
+                                                    # Get the latest value from the series
+                                                    latest_value = portfolio_results.iloc[-1]
+                                                    if not pd.isna(latest_value) and latest_value > 0:
+                                                        portfolio_value = float(latest_value)
                                         
                                         # Get raw data for price calculations
                                         raw_data = st.session_state.get('strategy_comparison_raw_data', {})
@@ -4125,7 +4199,29 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                                 portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
                                 
                                 if portfolio_cfg:
-                                    portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)
+                                    # Use current portfolio value from backtest results instead of initial value
+                                    portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)  # fallback to initial value
+                                    
+                                    # Get current portfolio value from backtest results
+                                    if 'strategy_comparison_all_results' in st.session_state and st.session_state.strategy_comparison_all_results:
+                                        portfolio_results = st.session_state.strategy_comparison_all_results.get(selected_portfolio_detail)
+                                        if portfolio_results:
+                                            # Use the Final Value (with additions) for Strategy Comparison - total portfolio value including all cash additions and compounding
+                                            if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
+                                                # Get the final value from the with_additions series (includes all cash additions and compounding)
+                                                final_value = portfolio_results['with_additions'].iloc[-1]
+                                                if not pd.isna(final_value) and final_value > 0:
+                                                    portfolio_value = float(final_value)
+                                            elif isinstance(portfolio_results, dict) and 'no_additions' in portfolio_results:
+                                                # Fallback to no_additions if with_additions not available
+                                                final_value = portfolio_results['no_additions'].iloc[-1]
+                                                if not pd.isna(final_value) and final_value > 0:
+                                                    portfolio_value = float(final_value)
+                                            elif isinstance(portfolio_results, pd.Series):
+                                                # Get the latest value from the series
+                                                latest_value = portfolio_results.iloc[-1]
+                                                if not pd.isna(latest_value) and latest_value > 0:
+                                                    portfolio_value = float(latest_value)
                                     
                                     # Get raw data for price calculations
                                     raw_data = st.session_state.get('strategy_comparison_raw_data', {})
@@ -4252,7 +4348,29 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                                 portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
                                 
                                 if portfolio_cfg:
-                                    portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)
+                                    # Use current portfolio value from backtest results instead of initial value
+                                    portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)  # fallback to initial value
+                                    
+                                    # Get current portfolio value from backtest results
+                                    if 'strategy_comparison_all_results' in st.session_state and st.session_state.strategy_comparison_all_results:
+                                        portfolio_results = st.session_state.strategy_comparison_all_results.get(selected_portfolio_detail)
+                                        if portfolio_results:
+                                            # Use the Final Value (with additions) for Strategy Comparison - total portfolio value including all cash additions and compounding
+                                            if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
+                                                # Get the final value from the with_additions series (includes all cash additions and compounding)
+                                                final_value = portfolio_results['with_additions'].iloc[-1]
+                                                if not pd.isna(final_value) and final_value > 0:
+                                                    portfolio_value = float(final_value)
+                                            elif isinstance(portfolio_results, dict) and 'no_additions' in portfolio_results:
+                                                # Fallback to no_additions if with_additions not available
+                                                final_value = portfolio_results['no_additions'].iloc[-1]
+                                                if not pd.isna(final_value) and final_value > 0:
+                                                    portfolio_value = float(final_value)
+                                            elif isinstance(portfolio_results, pd.Series):
+                                                # Get the latest value from the series
+                                                latest_value = portfolio_results.iloc[-1]
+                                                if not pd.isna(latest_value) and latest_value > 0:
+                                                    portfolio_value = float(latest_value)
                                     
                                     # Get raw data for price calculations
                                     raw_data = st.session_state.get('strategy_comparison_raw_data', {})
