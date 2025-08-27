@@ -10,6 +10,22 @@ import yfinance as yf
 import warnings
 import json
 
+def check_currency_warning(tickers):
+    """
+    Check if any tickers are non-USD and display a warning.
+    """
+    non_usd_suffixes = ['.TO', '.V', '.CN', '.AX', '.L', '.PA', '.AS', '.SW', '.T', '.HK', '.KS', '.TW', '.JP']
+    non_usd_tickers = []
+    
+    for ticker in tickers:
+        if any(ticker.endswith(suffix) for suffix in non_usd_suffixes):
+            non_usd_tickers.append(ticker)
+    
+    if non_usd_tickers:
+        st.warning(f"⚠️ **Currency Warning**: The following tickers are not in USD: {', '.join(non_usd_tickers)}. "
+                  f"Currency conversion is not taken into account, which may affect allocation accuracy. "
+                  f"Consider using USD equivalents for more accurate results.")
+
 # Initialize page-specific session state for Strategy Comparison page
 if 'strategy_comparison_page_initialized' not in st.session_state:
     st.session_state.strategy_comparison_page_initialized = True
@@ -1355,7 +1371,11 @@ def update_stock_ticker(index):
             key = f"strategy_comparison_ticker_{active_index}_{index}"
             val = st.session_state.get(key, None)
             if val is not None:
-                portfolio_configs[active_index]['stocks'][index]['ticker'] = val
+                # Convert the input value to uppercase
+                upper_val = val.upper()
+                portfolio_configs[active_index]['stocks'][index]['ticker'] = upper_val
+                # Update the text box's state to show the uppercase value
+                st.session_state[key] = upper_val
     except Exception:
         # Defensive: if portfolio index or structure changed, skip silently
         return
@@ -1382,7 +1402,11 @@ def update_global_stock_ticker(index):
             key = f"strategy_comparison_global_ticker_{index}"
             val = st.session_state.get(key, None)
             if val is not None:
-                global_tickers[index]['ticker'] = val
+                # Convert the input value to uppercase
+                upper_val = val.upper()
+                global_tickers[index]['ticker'] = upper_val
+                # Update the text box's state to show the uppercase value
+                st.session_state[key] = upper_val
                 # Sync to all portfolios
                 sync_global_tickers_to_all_portfolios()
     except Exception:
@@ -1960,7 +1984,11 @@ def update_rebal_freq():
     st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['rebalancing_frequency'] = st.session_state.strategy_comparison_active_rebal_freq
 
 def update_benchmark():
-    st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['benchmark_ticker'] = st.session_state.strategy_comparison_active_benchmark
+    # Convert benchmark ticker to uppercase
+    upper_benchmark = st.session_state.strategy_comparison_active_benchmark.upper()
+    st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['benchmark_ticker'] = upper_benchmark
+    # Update the widget to show uppercase value
+    st.session_state.strategy_comparison_active_benchmark = upper_benchmark
 
 def update_use_momentum():
     current_val = st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['use_momentum']
@@ -2554,6 +2582,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
         all_tickers = [t for t in all_tickers if t]
         print("Downloading data for all tickers...")
         data = {}
+        invalid_tickers = []
         for i, t in enumerate(all_tickers):
             try:
                 progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
@@ -2562,20 +2591,44 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
                 if hist.empty:
                     print(f"No data available for {t}")
+                    invalid_tickers.append(t)
                     continue
-                hist.index = pd.to_datetime(hist.index)
+                
+                # Force tz-naive for hist (like Backtest_Engine.py)
+                hist = hist.copy()
+                hist.index = hist.index.tz_localize(None)
+                
                 hist["Price_change"] = hist["Close"].pct_change(fill_method=None).fillna(0)
                 data[t] = hist
                 print(f"Data loaded for {t} from {data[t].index[0].date()}")
             except Exception as e:
                 print(f"Error loading {t}: {e}")
+                invalid_tickers.append(t)
+        # Display invalid ticker warnings in Streamlit UI
+        if invalid_tickers:
+            # Separate portfolio tickers from benchmark tickers
+            portfolio_tickers = set(s['ticker'] for cfg in configs_to_run for s in cfg['stocks'] if s['ticker'])
+            benchmark_tickers = set(cfg.get('benchmark_ticker') for cfg in configs_to_run if 'benchmark_ticker' in cfg)
+            
+            portfolio_invalid = [t for t in invalid_tickers if t in portfolio_tickers]
+            benchmark_invalid = [t for t in invalid_tickers if t in benchmark_tickers]
+            
+            if portfolio_invalid:
+                st.warning(f"The following portfolio tickers are invalid and will be skipped: {', '.join(portfolio_invalid)}")
+            if benchmark_invalid:
+                st.warning(f"The following benchmark tickers are invalid and will be skipped: {', '.join(benchmark_invalid)}")
+        
+        # BULLETPROOF VALIDATION: Check for valid tickers and stop gracefully if none
         if not data:
-            print("No data downloaded; aborting.")
-            st.warning("No data downloaded; aborting.")
+            if invalid_tickers and len(invalid_tickers) == len(all_tickers):
+                st.error(f"❌ **No valid tickers found!** All tickers are invalid: {', '.join(invalid_tickers)}. Please check your ticker symbols and try again.")
+            else:
+                st.error("❌ **No valid tickers found!** No data downloaded; aborting.")
             progress_bar.empty()
             st.session_state.strategy_comparison_all_results = None
             st.session_state.strategy_comparison_all_allocations = None
             st.session_state.strategy_comparison_all_metrics = None
+            st.stop()
         else:
             # Persist raw downloaded price data so later recomputations can access benchmark series
             st.session_state.strategy_comparison_raw_data = data
@@ -2599,12 +2652,26 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 portfolio_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
                 all_portfolio_tickers.update(portfolio_tickers)
             
+            # Check for non-USD tickers and display currency warning
+            check_currency_warning(list(all_portfolio_tickers))
+            
             # Determine final start date based on global setting
+            # Filter to only valid tickers that exist in data
+            valid_portfolio_tickers = [t for t in all_portfolio_tickers if t in data]
+            
+            if not valid_portfolio_tickers:
+                st.error("❌ **No valid tickers found!** None of your portfolio tickers have data available. Please check your ticker symbols and try again.")
+                progress_bar.empty()
+                st.session_state.strategy_comparison_all_results = None
+                st.session_state.strategy_comparison_all_allocations = None
+                st.session_state.strategy_comparison_all_metrics = None
+                st.stop()
+            
             if global_start_with == 'all':
-                final_start = max(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
+                final_start = max(data[t].first_valid_index() for t in valid_portfolio_tickers)
                 print(f"All portfolio assets start date: {final_start.date()}")
             else:  # global_start_with == 'oldest'
-                final_start = min(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
+                final_start = min(data[t].first_valid_index() for t in valid_portfolio_tickers)
                 print(f"Oldest portfolio asset start date: {final_start.date()}")
             
             # Initialize final_end with the common end date
@@ -2627,14 +2694,15 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             simulation_index = pd.date_range(start=final_start, end=final_end, freq='D')
             print(f"Simulation period: {final_start.date()} to {final_end.date()}")
             
-            # Reindex all data to the simulation period
+            # Reindex all data to the simulation period (only valid tickers)
             data_reindexed = {}
             for t in all_tickers:
-                df = data[t].reindex(simulation_index)
-                df["Close"] = df["Close"].ffill()
-                df["Dividends"] = df["Dividends"].fillna(0)
-                df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
-                data_reindexed[t] = df
+                if t in data:  # Only process tickers that have data
+                    df = data[t].reindex(simulation_index)
+                    df["Close"] = df["Close"].ffill()
+                    df["Dividends"] = df["Dividends"].fillna(0)
+                    df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
+                    data_reindexed[t] = df
             
             progress_bar.progress(1.0, text="Executing multi-strategy backtest analysis...")
             
