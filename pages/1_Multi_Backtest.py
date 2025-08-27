@@ -1,4 +1,32 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import json
+import io
+import contextlib
+from datetime import datetime, timedelta
+import warnings
+warnings.filterwarnings('ignore')
+
+def check_currency_warning(tickers):
+    """
+    Check if any tickers are non-USD and display a warning.
+    """
+    non_usd_suffixes = ['.TO', '.V', '.CN', '.AX', '.L', '.PA', '.AS', '.SW', '.T', '.HK', '.KS', '.TW', '.JP']
+    non_usd_tickers = []
+    
+    for ticker in tickers:
+        if any(ticker.endswith(suffix) for suffix in non_usd_suffixes):
+            non_usd_tickers.append(ticker)
+    
+    if non_usd_tickers:
+        st.warning(f"⚠️ **Currency Warning**: The following tickers are not in USD: {', '.join(non_usd_tickers)}. "
+                  f"Currency conversion is not taken into account, which may affect allocation accuracy. "
+                  f"Consider using USD equivalents for more accurate results.")
 
 # Initialize page-specific session state for Multi-Backtest page
 if 'multi_backtest_page_initialized' not in st.session_state:
@@ -104,12 +132,6 @@ if 'multi_backtest_portfolio_configs' in st.session_state:
     for config in st.session_state.multi_backtest_portfolio_configs:
         config.pop('use_relative_momentum', None)
         config.pop('equal_if_all_negative', None)
-
-# Initialize portfolio selection persistence - default to first portfolio
-if 'multi_backtest_detail_portfolio_selector' not in st.session_state:
-    if st.session_state.multi_backtest_portfolio_configs:
-        first_portfolio_name = st.session_state.multi_backtest_portfolio_configs[0].get('name', 'Portfolio 1')
-        st.session_state.multi_backtest_detail_portfolio_selector = f"0 - {first_portfolio_name}"
 
 st.set_page_config(layout="wide", page_title="Multi-Portfolio Analysis", page_icon="📈")
 
@@ -1588,7 +1610,11 @@ def update_rebal_freq():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['rebalancing_frequency'] = st.session_state.multi_backtest_active_rebal_freq
 
 def update_benchmark():
-    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['benchmark_ticker'] = st.session_state.multi_backtest_active_benchmark
+    # Convert benchmark ticker to uppercase
+    upper_benchmark = st.session_state.multi_backtest_active_benchmark.upper()
+    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['benchmark_ticker'] = upper_benchmark
+    # Update the widget to show uppercase value
+    st.session_state.multi_backtest_active_benchmark = upper_benchmark
 
 def update_use_momentum():
     current_val = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['use_momentum']
@@ -1842,7 +1868,15 @@ def update_stock_ticker(index):
         if val is None:
             # key not yet initialized (race condition). Skip update; the widget's key will be present on next rerender.
             return
-        st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['ticker'] = val
+        
+        # Convert the input value to uppercase
+        upper_val = val.upper()
+
+        # Update the portfolio configuration with the uppercase value
+        st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['ticker'] = upper_val
+        
+        # Update the text box's state to show the uppercase value
+        st.session_state[key] = upper_val
     except Exception:
         # Defensive: if portfolio index or structure changed, skip silently
         return
@@ -2089,301 +2123,354 @@ if st.sidebar.button("Run Backtests", type='primary'):
     else:
         progress_bar = st.empty()
         progress_bar.progress(0, text="Initializing multi-portfolio backtest...")
-    buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer):
+        
+        # Get all tickers first
         all_tickers = sorted(list(set(s['ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs for s in cfg['stocks'] if s['ticker']) | set(cfg['benchmark_ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs if 'benchmark_ticker' in cfg)))
         all_tickers = [t for t in all_tickers if t]
-        print("Downloading data for all tickers...")
-        data = {}
-        for i, t in enumerate(all_tickers):
-            try:
-                progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
-                progress_bar.progress((i + 1) / (len(all_tickers) + 1), text=progress_text)
-                ticker = yf.Ticker(t)
-                hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
-                if hist.empty:
-                    print(f"No data available for {t}")
-                    continue
-                hist.index = pd.to_datetime(hist.index)
-                hist["Price_change"] = hist["Close"].pct_change(fill_method=None).fillna(0)
-                data[t] = hist
-                print(f"Data loaded for {t} from {data[t].index[0].date()}")
-            except Exception as e:
-                print(f"Error loading {t}: {e}")
-        if not data:
-            print("No data downloaded; aborting.")
-            st.warning("No data downloaded; aborting.")
+        
+        # BULLETPROOF VALIDATION: Check for empty ticker list first
+        if not all_tickers:
+            st.error("❌ **No valid tickers found!** Please add at least one ticker to your portfolios before running the backtest.")
             progress_bar.empty()
             st.session_state.multi_all_results = None
             st.session_state.multi_all_allocations = None
             st.session_state.multi_all_metrics = None
-        else:
-            # Persist raw downloaded price data so later recomputations can access benchmark series
-            st.session_state.multi_backtest_raw_data = data
-            # Determine common date range for all portfolios
-            common_start = max(df.first_valid_index() for df in data.values())
-            common_end = min(df.last_valid_index() for df in data.values())
-            print(f"Common date range: {common_start.date()} to {common_end.date()}")
-            
-            # Get all portfolio tickers (excluding benchmarks)
-            all_portfolio_tickers = set()
-            for cfg in st.session_state.multi_backtest_portfolio_configs:
-                portfolio_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
-                all_portfolio_tickers.update(portfolio_tickers)
-            
-            # Determine final start date based on global start_with setting
-            global_start_with = st.session_state.get('multi_backtest_start_with', 'all')
-            print(f"Using global start_with: {global_start_with}")
-            if global_start_with == 'all':
-                final_start = max(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
-                print(f"All portfolio assets start date: {final_start.date()}")
-            else:  # global_start_with == 'oldest'
-                # For 'oldest', we need to find the portfolio that starts the LATEST
-                # (has the most recent earliest asset), then use that portfolio's earliest asset
-                portfolio_earliest_dates = {}
-                for cfg in st.session_state.multi_backtest_portfolio_configs:
-                    portfolio_tickers = [stock['ticker'] for stock in cfg.get('stocks', []) if stock['ticker']]
-                    if portfolio_tickers:
-                        # Find the earliest asset in this portfolio
-                        portfolio_earliest = min(data[t].first_valid_index() for t in portfolio_tickers if t in data)
-                        portfolio_earliest_dates[cfg['name']] = portfolio_earliest
-                
-                if portfolio_earliest_dates:
-                    # Find the portfolio with the LATEST earliest asset
-                    latest_starting_portfolio = max(portfolio_earliest_dates.items(), key=lambda x: x[1])
-                    final_start = latest_starting_portfolio[1]
-                    print(f"Portfolio '{latest_starting_portfolio[0]}' starts latest at: {final_start.date()}")
-                    print(f"Using this portfolio's earliest asset date: {final_start.date()}")
-                else:
-                    # Fallback to original logic
-                    final_start = min(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
-                    print(f"Fallback - Oldest portfolio asset start date: {final_start.date()}")
-            
-            # Apply user date constraints if any
-            for cfg in st.session_state.multi_backtest_portfolio_configs:
-                if cfg.get('start_date_user'):
-                    user_start = pd.to_datetime(cfg['start_date_user'])
-                    final_start = max(final_start, user_start)
-                if cfg.get('end_date_user'):
-                    user_end = pd.to_datetime(cfg['end_date_user'])
-                    common_end = min(common_end, user_end)
-            
-            if final_start > common_end:
-                st.error(f"Start date {final_start.date()} is after end date {common_end.date()}. Cannot proceed.")
-                st.stop()
-            
-            # Create simulation index for the entire period
-            simulation_index = pd.date_range(start=final_start, end=common_end, freq='D')
-            print(f"Simulation period: {final_start.date()} to {common_end.date()}")
-            
-            # Reindex all data to the simulation period
-            data_reindexed = {}
-            for t in all_tickers:
-                df = data[t].reindex(simulation_index)
-                df["Close"] = df["Close"].ffill()
-                df["Dividends"] = df["Dividends"].fillna(0)
-                df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
-                data_reindexed[t] = df
-            
-            progress_bar.progress(1.0, text="Executing multi-portfolio backtest analysis...")
-            
-            # Run mega backtest for all strategies simultaneously
-            all_results = {}
-            all_drawdowns = {}
-            all_stats = {}
-            all_allocations = {}
-            all_metrics = {}
-            # Map portfolio index (0-based) to the unique key used in the result dicts
-            portfolio_key_map = {}
-            
-            for i, cfg in enumerate(st.session_state.multi_backtest_portfolio_configs, start=1):
-                name = cfg.get('name', f'Backtest {i}')
-                print(f"\nProcessing strategy {i}/{len(st.session_state.multi_backtest_portfolio_configs)}: {name}")
-                
-                # Ensure unique key for storage to avoid overwriting when duplicate names exist
-                base_name = name
-                unique_name = base_name
-                suffix = 1
-                while unique_name in all_results or unique_name in all_allocations:
-                    unique_name = f"{base_name} ({suffix})"
-                    suffix += 1
-                
-                # Run single backtest for this strategy
-                total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
-                
-                # compute today_weights_map (target weights as-if rebalanced at final snapshot date)
-                today_weights_map = {}
+            st.stop()
+        
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            print("Downloading data for all tickers...")
+            data = {}
+            invalid_tickers = []
+            for i, t in enumerate(all_tickers):
                 try:
-                    alloc_dates = sorted(list(historical_allocations.keys()))
-                    final_d = alloc_dates[-1]
-                    metrics_local = historical_metrics
+                    progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
+                    progress_bar.progress((i + 1) / (len(all_tickers) + 1), text=progress_text)
+                    ticker = yf.Ticker(t)
+                    hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
+                    if hist.empty:
+                        print(f"No data available for {t}")
+                        invalid_tickers.append(t)
+                        continue
                     
-                    # Check if momentum is used for this portfolio
-                    use_momentum = cfg.get('use_momentum', True)
+                    # Force tz-naive for hist (like Backtest_Engine.py)
+                    hist = hist.copy()
+                    hist.index = hist.index.tz_localize(None)
                     
-                    if final_d in metrics_local:
-                        if use_momentum:
-                            # extract Calculated_Weight if present (momentum-based)
-                            weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
-                            # normalize (ensure sums to 1 excluding CASH)
-                            sumw = sum(w for k, w in weights.items() if k != 'CASH')
-                            if sumw > 0:
-                                norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
-                            else:
-                                norm = weights
-                            today_weights_map = norm
-                        else:
-                            # When momentum is not used, use user-defined allocations from portfolio config
-                            today_weights_map = {}
-                            for stock in cfg.get('stocks', []):
-                                ticker = stock.get('ticker', '').strip()
-                                if ticker:
-                                    today_weights_map[ticker] = stock.get('allocation', 0)
-                            # Add CASH if needed
-                            total_alloc = sum(today_weights_map.values())
-                            if total_alloc < 1.0:
-                                today_weights_map['CASH'] = 1.0 - total_alloc
-                            else:
-                                today_weights_map['CASH'] = 0
-                    else:
-                        # fallback: use allocation snapshot at final date but convert market-value alloc to target weights (exclude CASH then renormalize)
-                        final_alloc = historical_allocations.get(final_d, {})
-                        noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
-                        s = sum(noncash.values())
-                        if s > 0:
-                            norm = {k: (v / s) for k, v in noncash.items()}
-                            norm['CASH'] = final_alloc.get('CASH', 0)
-                        else:
-                            norm = final_alloc
-                        today_weights_map = norm
+                    hist["Price_change"] = hist["Close"].pct_change(fill_method=None).fillna(0)
+                    data[t] = hist
+                    print(f"Data loaded for {t} from {data[t].index[0].date()}")
                 except Exception as e:
-                    # If computation fails, use user-defined allocations as fallback
-                    today_weights_map = {}
-                    for stock in cfg.get('stocks', []):
-                        ticker = stock.get('ticker', '').strip()
-                        if ticker:
-                            today_weights_map[ticker] = stock.get('allocation', 0)
-                    # Add CASH if needed
-                    total_alloc = sum(today_weights_map.values())
-                    if total_alloc < 1.0:
-                        today_weights_map['CASH'] = 1.0 - total_alloc
-                    else:
-                        today_weights_map['CASH'] = 0
+                    print(f"Error loading {t}: {e}")
+                    invalid_tickers.append(t)
+            # Display invalid ticker warnings in Streamlit UI
+            if invalid_tickers:
+                # Separate portfolio tickers from benchmark tickers
+                portfolio_tickers = set(s['ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs for s in cfg['stocks'] if s['ticker'])
+                benchmark_tickers = set(cfg.get('benchmark_ticker') for cfg in st.session_state.multi_backtest_portfolio_configs if 'benchmark_ticker' in cfg)
                 
-                # Store both series under the unique key for later use
-                all_results[unique_name] = {
-                    'no_additions': total_series_no_additions,
-                    'with_additions': total_series,
-                    'today_weights_map': today_weights_map
-                }
-                all_allocations[unique_name] = historical_allocations
-                all_metrics[unique_name] = historical_metrics
-                # Remember mapping from portfolio index (0-based) to unique key
-                portfolio_key_map[i-1] = unique_name
-                # --- PATCHED CASH FLOW LOGIC ---
-                # Track cash flows as pandas Series indexed by date
-                cash_flows = pd.Series(0.0, index=total_series.index)
-                # Initial investment: negative cash flow on first date
-                if len(total_series.index) > 0:
-                    cash_flows.iloc[0] = -cfg.get('initial_value', 0)
-                # Periodic additions: negative cash flow on their respective dates
-                dates_added = get_dates_by_freq(cfg.get('added_frequency'), total_series.index[0], total_series.index[-1], total_series.index)
-                for d in dates_added:
-                    if d in cash_flows.index and d != cash_flows.index[0]:
-                        cash_flows.loc[d] -= cfg.get('added_amount', 0)
-                # Final value: positive cash flow on last date for MWRR
-                if len(total_series.index) > 0:
-                    cash_flows.iloc[-1] += total_series.iloc[-1]
-                # Get benchmark returns for stats calculation
-                benchmark_returns = None
-                if cfg['benchmark_ticker'] and cfg['benchmark_ticker'] in data_reindexed:
-                    benchmark_returns = data_reindexed[cfg['benchmark_ticker']]['Price_change']
-                # Ensure benchmark_returns is a pandas Series aligned to total_series
-                if benchmark_returns is not None:
-                    benchmark_returns = pd.Series(benchmark_returns, index=total_series.index).dropna()
-                # Ensure cash_flows is a pandas Series indexed by date, with initial investment and additions
-                cash_flows = pd.Series(cash_flows, index=total_series.index)
-                # Align for stats calculation
-                # Track cash flows for MWRR exactly as in app.py
-                # Initial investment: negative cash flow on first date
-                mwrr_cash_flows = pd.Series(0.0, index=total_series.index)
-                if len(total_series.index) > 0:
-                    mwrr_cash_flows.iloc[0] = -cfg.get('initial_value', 0)
-                # Periodic additions: negative cash flow on their respective dates
-                dates_added = get_dates_by_freq(cfg.get('added_frequency'), total_series.index[0], total_series.index[-1], total_series.index)
-                for d in dates_added:
-                    if d in mwrr_cash_flows.index and d != mwrr_cash_flows.index[0]:
-                        mwrr_cash_flows.loc[d] -= cfg.get('added_amount', 0)
-                # Final value: positive cash flow on last date for MWRR
-                if len(total_series.index) > 0:
-                    mwrr_cash_flows.iloc[-1] += total_series.iloc[-1]
+                portfolio_invalid = [t for t in invalid_tickers if t in portfolio_tickers]
+                benchmark_invalid = [t for t in invalid_tickers if t in benchmark_tickers]
+                
+                if portfolio_invalid:
+                    st.warning(f"The following portfolio tickers are invalid and will be skipped: {', '.join(portfolio_invalid)}")
+                if benchmark_invalid:
+                    st.warning(f"The following benchmark tickers are invalid and will be skipped: {', '.join(benchmark_invalid)}")
+            
+            # BULLETPROOF VALIDATION: Check for valid tickers and stop gracefully if none
+            if not data:
+                if invalid_tickers and len(invalid_tickers) == len(all_tickers):
+                    st.error(f"❌ **No valid tickers found!** All tickers are invalid: {', '.join(invalid_tickers)}. Please check your ticker symbols and try again.")
+                else:
+                    st.error("❌ **No valid tickers found!** No data downloaded; aborting.")
+                progress_bar.empty()
+                st.session_state.multi_all_results = None
+                st.session_state.multi_all_allocations = None
+                st.session_state.multi_all_metrics = None
+                st.stop()
+            else:
+                # Persist raw downloaded price data so later recomputations can access benchmark series
+                st.session_state.multi_backtest_raw_data = data
+                # Determine common date range for all portfolios
+                common_start = max(df.first_valid_index() for df in data.values())
+                common_end = min(df.last_valid_index() for df in data.values())
+                print(f"Common date range: {common_start.date()} to {common_end.date()}")
+                
+                # Get all portfolio tickers (excluding benchmarks)
+                all_portfolio_tickers = set()
+                for cfg in st.session_state.multi_backtest_portfolio_configs:
+                    portfolio_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
+                    all_portfolio_tickers.update(portfolio_tickers)
+                
+                # Check for non-USD tickers and display currency warning
+                check_currency_warning(list(all_portfolio_tickers))
+                
+                # Determine final start date based on global start_with setting
+                # Filter to only valid tickers that exist in data
+                valid_portfolio_tickers = [t for t in all_portfolio_tickers if t in data]
+                
+                if not valid_portfolio_tickers:
+                    st.error("❌ **No valid tickers found!** None of your portfolio tickers have data available. Please check your ticker symbols and try again.")
+                    progress_bar.empty()
+                    st.session_state.multi_all_results = None
+                    st.session_state.multi_all_allocations = None
+                    st.session_state.multi_all_metrics = None
+                    st.stop()
+                
+                global_start_with = st.session_state.get('multi_backtest_start_with', 'all')
+                print(f"Using global start_with: {global_start_with}")
+                if global_start_with == 'all':
+                    final_start = max(data[t].first_valid_index() for t in valid_portfolio_tickers)
+                    print(f"All portfolio assets start date: {final_start.date()}")
+                else:  # global_start_with == 'oldest'
+                    # For 'oldest', we need to find the portfolio that starts the LATEST
+                    # (has the most recent earliest asset), then use that portfolio's earliest asset
+                    portfolio_earliest_dates = {}
+                    for cfg in st.session_state.multi_backtest_portfolio_configs:
+                        portfolio_tickers = [stock['ticker'] for stock in cfg.get('stocks', []) if stock['ticker']]
+                        valid_portfolio_tickers_for_cfg = [t for t in portfolio_tickers if t in data]
+                        if valid_portfolio_tickers_for_cfg:
+                            # Find the earliest asset in this portfolio
+                            portfolio_earliest = min(data[t].first_valid_index() for t in valid_portfolio_tickers_for_cfg)
+                            portfolio_earliest_dates[cfg['name']] = portfolio_earliest
+                    
+                    if portfolio_earliest_dates:
+                        # Find the portfolio with the LATEST earliest asset
+                        latest_starting_portfolio = max(portfolio_earliest_dates.items(), key=lambda x: x[1])
+                        final_start = latest_starting_portfolio[1]
+                        print(f"Portfolio '{latest_starting_portfolio[0]}' starts latest at: {final_start.date()}")
+                        print(f"Using this portfolio's earliest asset date: {final_start.date()}")
+                    else:
+                        # Fallback to original logic
+                        final_start = min(data[t].first_valid_index() for t in valid_portfolio_tickers)
+                        print(f"Fallback - Oldest portfolio asset start date: {final_start.date()}")
+                
+                # Apply user date constraints if any
+                for cfg in st.session_state.multi_backtest_portfolio_configs:
+                    if cfg.get('start_date_user'):
+                        user_start = pd.to_datetime(cfg['start_date_user'])
+                        final_start = max(final_start, user_start)
+                    if cfg.get('end_date_user'):
+                        user_end = pd.to_datetime(cfg['end_date_user'])
+                        common_end = min(common_end, user_end)
+                
+                if final_start > common_end:
+                    st.error(f"Start date {final_start.date()} is after end date {common_end.date()}. Cannot proceed.")
+                    st.stop()
+                
+                # Create simulation index for the entire period
+                simulation_index = pd.date_range(start=final_start, end=common_end, freq='D')
+                print(f"Simulation period: {final_start.date()} to {common_end.date()}")
+                
+                # Reindex all data to the simulation period (only valid tickers)
+                data_reindexed = {}
+                for t in all_tickers:
+                    if t in data:  # Only process tickers that have data
+                        df = data[t].reindex(simulation_index)
+                        df["Close"] = df["Close"].ffill()
+                        df["Dividends"] = df["Dividends"].fillna(0)
+                        df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
+                        data_reindexed[t] = df
+                
+                progress_bar.progress(1.0, text="Executing multi-portfolio backtest analysis...")
+                
+                # Run mega backtest for all strategies simultaneously
+                all_results = {}
+                all_drawdowns = {}
+                all_stats = {}
+                all_allocations = {}
+                all_metrics = {}
+                # Map portfolio index (0-based) to the unique key used in the result dicts
+                portfolio_key_map = {}
+                
+                for i, cfg in enumerate(st.session_state.multi_backtest_portfolio_configs, start=1):
+                    name = cfg.get('name', f'Backtest {i}')
+                    print(f"\nProcessing strategy {i}/{len(st.session_state.multi_backtest_portfolio_configs)}: {name}")
+                    
+                    # Ensure unique key for storage to avoid overwriting when duplicate names exist
+                    base_name = name
+                    unique_name = base_name
+                    suffix = 1
+                    while unique_name in all_results or unique_name in all_allocations:
+                        unique_name = f"{base_name} ({suffix})"
+                        suffix += 1
+                    
+                    # Run single backtest for this strategy
+                    total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
+                
+                    # compute today_weights_map (target weights as-if rebalanced at final snapshot date)
+                    today_weights_map = {}
+                    try:
+                        alloc_dates = sorted(list(historical_allocations.keys()))
+                        final_d = alloc_dates[-1]
+                        metrics_local = historical_metrics
+                        
+                        # Check if momentum is used for this portfolio
+                        use_momentum = cfg.get('use_momentum', True)
+                        
+                        if final_d in metrics_local:
+                            if use_momentum:
+                                # extract Calculated_Weight if present (momentum-based)
+                                weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
+                                # normalize (ensure sums to 1 excluding CASH)
+                                sumw = sum(w for k, w in weights.items() if k != 'CASH')
+                                if sumw > 0:
+                                    norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
+                                else:
+                                    norm = weights
+                                today_weights_map = norm
+                            else:
+                                # When momentum is not used, use user-defined allocations from portfolio config
+                                today_weights_map = {}
+                                for stock in cfg.get('stocks', []):
+                                    ticker = stock.get('ticker', '').strip()
+                                    if ticker:
+                                        today_weights_map[ticker] = stock.get('allocation', 0)
+                                # Add CASH if needed
+                                total_alloc = sum(today_weights_map.values())
+                                if total_alloc < 1.0:
+                                    today_weights_map['CASH'] = 1.0 - total_alloc
+                                else:
+                                    today_weights_map['CASH'] = 0
+                        else:
+                            # fallback: use allocation snapshot at final date but convert market-value alloc to target weights (exclude CASH then renormalize)
+                            final_alloc = historical_allocations.get(final_d, {})
+                            noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
+                            s = sum(noncash.values())
+                            if s > 0:
+                                norm = {k: (v / s) for k, v in noncash.items()}
+                                norm['CASH'] = final_alloc.get('CASH', 0)
+                            else:
+                                norm = final_alloc
+                            today_weights_map = norm
+                    except Exception as e:
+                        # If computation fails, use user-defined allocations as fallback
+                        today_weights_map = {}
+                        for stock in cfg.get('stocks', []):
+                            ticker = stock.get('ticker', '').strip()
+                            if ticker:
+                                today_weights_map[ticker] = stock.get('allocation', 0)
+                        # Add CASH if needed
+                        total_alloc = sum(today_weights_map.values())
+                        if total_alloc < 1.0:
+                            today_weights_map['CASH'] = 1.0 - total_alloc
+                        else:
+                            today_weights_map['CASH'] = 0
+                    
+                    # Store both series under the unique key for later use
+                    all_results[unique_name] = {
+                        'no_additions': total_series_no_additions,
+                        'with_additions': total_series,
+                        'today_weights_map': today_weights_map
+                    }
+                    all_allocations[unique_name] = historical_allocations
+                    all_metrics[unique_name] = historical_metrics
+                    # Remember mapping from portfolio index (0-based) to unique key
+                    portfolio_key_map[i-1] = unique_name
+                    # --- PATCHED CASH FLOW LOGIC ---
+                    # Track cash flows as pandas Series indexed by date
+                    cash_flows = pd.Series(0.0, index=total_series.index)
+                    # Initial investment: negative cash flow on first date
+                    if len(total_series.index) > 0:
+                        cash_flows.iloc[0] = -cfg.get('initial_value', 0)
+                    # Periodic additions: negative cash flow on their respective dates
+                    dates_added = get_dates_by_freq(cfg.get('added_frequency'), total_series.index[0], total_series.index[-1], total_series.index)
+                    for d in dates_added:
+                        if d in cash_flows.index and d != cash_flows.index[0]:
+                            cash_flows.loc[d] -= cfg.get('added_amount', 0)
+                    # Final value: positive cash flow on last date for MWRR
+                    if len(total_series.index) > 0:
+                        cash_flows.iloc[-1] += total_series.iloc[-1]
+                    # Get benchmark returns for stats calculation
+                    benchmark_returns = None
+                    if cfg['benchmark_ticker'] and cfg['benchmark_ticker'] in data_reindexed:
+                        benchmark_returns = data_reindexed[cfg['benchmark_ticker']]['Price_change']
+                    # Ensure benchmark_returns is a pandas Series aligned to total_series
+                    if benchmark_returns is not None:
+                        benchmark_returns = pd.Series(benchmark_returns, index=total_series.index).dropna()
+                    # Ensure cash_flows is a pandas Series indexed by date, with initial investment and additions
+                    cash_flows = pd.Series(cash_flows, index=total_series.index)
+                    # Align for stats calculation
+                    # Track cash flows for MWRR exactly as in app.py
+                    # Initial investment: negative cash flow on first date
+                    mwrr_cash_flows = pd.Series(0.0, index=total_series.index)
+                    if len(total_series.index) > 0:
+                        mwrr_cash_flows.iloc[0] = -cfg.get('initial_value', 0)
+                    # Periodic additions: negative cash flow on their respective dates
+                    dates_added = get_dates_by_freq(cfg.get('added_frequency'), total_series.index[0], total_series.index[-1], total_series.index)
+                    for d in dates_added:
+                        if d in mwrr_cash_flows.index and d != mwrr_cash_flows.index[0]:
+                            mwrr_cash_flows.loc[d] -= cfg.get('added_amount', 0)
+                    # Final value: positive cash flow on last date for MWRR
+                    if len(total_series.index) > 0:
+                        mwrr_cash_flows.iloc[-1] += total_series.iloc[-1]
 
-                # Use the no-additions series returned by single_backtest (do NOT reconstruct it here)
-                # total_series_no_additions is returned by single_backtest and already represents the portfolio value without added cash.
+                    # Use the no-additions series returned by single_backtest (do NOT reconstruct it here)
+                    # total_series_no_additions is returned by single_backtest and already represents the portfolio value without added cash.
 
-                # Calculate statistics
-                # Use total_series_no_additions for all stats except MWRR
-                stats_values = total_series_no_additions.values
-                stats_dates = total_series_no_additions.index
-                stats_returns = pd.Series(stats_values, index=stats_dates).pct_change().fillna(0)
-                cagr = calculate_cagr(stats_values, stats_dates)
-                max_dd, drawdowns = calculate_max_drawdown(stats_values)
-                vol = calculate_volatility(stats_returns)
-                # Avoid division by zero; if std is zero set Sharpe to NaN
-                try:
-                    sharpe = np.nan if stats_returns.std() == 0 else (stats_returns.mean() * 252 / (stats_returns.std() * np.sqrt(252)))
-                except Exception:
-                    sharpe = np.nan
-                sortino = calculate_sortino(stats_returns)
-                ulcer = calculate_ulcer_index(stats_values)
-                upi = calculate_upi(cagr, ulcer)
-                # --- Beta calculation (copied from app.py) ---
-                beta = np.nan
-                if benchmark_returns is not None:
-                    portfolio_returns = stats_returns.copy()
-                    benchmark_returns_series = pd.Series(benchmark_returns, index=stats_dates).dropna()
-                    common_idx = portfolio_returns.index.intersection(benchmark_returns_series.index)
-                    if len(common_idx) >= 2:
-                        pr = portfolio_returns.reindex(common_idx).dropna()
-                        br = benchmark_returns_series.reindex(common_idx).dropna()
-                        common_idx2 = pr.index.intersection(br.index)
-                        if len(common_idx2) >= 2 and br.loc[common_idx2].var() != 0:
-                            cov = pr.loc[common_idx2].cov(br.loc[common_idx2])
-                            var = br.loc[common_idx2].var()
-                            beta = cov / var
-                # MWRR uses the full backtest with additions
-                mwrr = calculate_mwrr(total_series, mwrr_cash_flows, total_series.index)
-                def scale_pct(val):
-                    if val is None or np.isnan(val):
-                        return np.nan
-                    # Only scale if value is between -1 and 1 (decimal)
-                    if -1.5 < val < 1.5:
-                        return val * 100
-                    return val
+                    # Calculate statistics
+                    # Use total_series_no_additions for all stats except MWRR
+                    stats_values = total_series_no_additions.values
+                    stats_dates = total_series_no_additions.index
+                    stats_returns = pd.Series(stats_values, index=stats_dates).pct_change().fillna(0)
+                    cagr = calculate_cagr(stats_values, stats_dates)
+                    max_dd, drawdowns = calculate_max_drawdown(stats_values)
+                    vol = calculate_volatility(stats_returns)
+                    # Avoid division by zero; if std is zero set Sharpe to NaN
+                    try:
+                        sharpe = np.nan if stats_returns.std() == 0 else (stats_returns.mean() * 252 / (stats_returns.std() * np.sqrt(252)))
+                    except Exception:
+                        sharpe = np.nan
+                    sortino = calculate_sortino(stats_returns)
+                    ulcer = calculate_ulcer_index(stats_values)
+                    upi = calculate_upi(cagr, ulcer)
+                    # --- Beta calculation (copied from app.py) ---
+                    beta = np.nan
+                    if benchmark_returns is not None:
+                        portfolio_returns = stats_returns.copy()
+                        benchmark_returns_series = pd.Series(benchmark_returns, index=stats_dates).dropna()
+                        common_idx = portfolio_returns.index.intersection(benchmark_returns_series.index)
+                        if len(common_idx) >= 2:
+                            pr = portfolio_returns.reindex(common_idx).dropna()
+                            br = benchmark_returns_series.reindex(common_idx).dropna()
+                            common_idx2 = pr.index.intersection(br.index)
+                            if len(common_idx2) >= 2 and br.loc[common_idx2].var() != 0:
+                                cov = pr.loc[common_idx2].cov(br.loc[common_idx2])
+                                var = br.loc[common_idx2].var()
+                                beta = cov / var
+                    # MWRR uses the full backtest with additions
+                    mwrr = calculate_mwrr(total_series, mwrr_cash_flows, total_series.index)
+                    def scale_pct(val):
+                        if val is None or np.isnan(val):
+                            return np.nan
+                        # Only scale if value is between -1 and 1 (decimal)
+                        if -1.5 < val < 1.5:
+                            return val * 100
+                        return val
 
-                def clamp_stat(val, stat_type):
-                    if val is None or np.isnan(val):
-                        return "N/A"
-                    v = scale_pct(val)
-                    # Clamp ranges for each stat type
-                    if stat_type in ["CAGR", "Volatility", "MWRR", "Total Return"]:
-                        if v < 0 or v > 100:
+                    def clamp_stat(val, stat_type):
+                        if val is None or np.isnan(val):
                             return "N/A"
-                    if stat_type == "MaxDrawdown":
-                        if v < -100 or v > 0:
-                            return "N/A"
-                    return f"{v:.2f}%" if stat_type in ["CAGR", "MaxDrawdown", "Volatility", "MWRR", "Total Return"] else f"{v:.3f}" if isinstance(v, float) else v
+                        v = scale_pct(val)
+                        # Clamp ranges for each stat type
+                        if stat_type in ["CAGR", "Volatility", "MWRR", "Total Return"]:
+                            if v < 0 or v > 100:
+                                return "N/A"
+                        if stat_type == "MaxDrawdown":
+                            if v < -100 or v > 0:
+                                return "N/A"
+                        return f"{v:.2f}%" if stat_type in ["CAGR", "MaxDrawdown", "Volatility", "MWRR", "Total Return"] else f"{v:.3f}" if isinstance(v, float) else v
 
-                # Calculate total return (no additions)
-                total_return = None
-                if len(stats_values) > 0:
-                    initial_val = stats_values[0]
-                    final_val = stats_values[-1]
-                    if initial_val > 0:
-                        total_return = (final_val / initial_val - 1)  # Return as decimal, not percentage
+                    # Calculate total return (no additions)
+                    total_return = None
+                    if len(stats_values) > 0:
+                        initial_val = stats_values[0]
+                        final_val = stats_values[-1]
+                        if initial_val > 0:
+                            total_return = (final_val / initial_val - 1)  # Return as decimal, not percentage
 
-                stats = {
-                    "Total Return": clamp_stat(total_return, "Total Return"),
+                    stats = {
+                        "Total Return": clamp_stat(total_return, "Total Return"),
                     "CAGR": clamp_stat(cagr, "CAGR"),
                     "MaxDrawdown": clamp_stat(max_dd, "MaxDrawdown"),
                     "Volatility": clamp_stat(vol, "Volatility"),
@@ -2598,31 +2685,6 @@ def paste_all_json_callback():
                                     'include_dividends': bool(divs[i]) if i < len(divs) and divs[i] is not None else True
                                 }
                                 stocks.append(stock)
-            
-            # Process each portfolio configuration for Multi-Backtest page (existing logic)
-            processed_configs = []
-            for cfg in obj:
-                if not isinstance(cfg, dict) or 'name' not in cfg:
-                    st.error('Invalid portfolio configuration structure.')
-                    return
-                
-                # Handle momentum strategy value mapping from other pages
-                momentum_strategy = cfg.get('momentum_strategy', 'Classic')
-                if momentum_strategy == 'Classic momentum':
-                    momentum_strategy = 'Classic'
-                elif momentum_strategy == 'Relative momentum':
-                    momentum_strategy = 'Relative Momentum'
-                elif momentum_strategy not in ['Classic', 'Relative Momentum']:
-                    momentum_strategy = 'Classic'  # Default fallback
-                
-                # Handle negative momentum strategy value mapping from other pages
-                negative_momentum_strategy = cfg.get('negative_momentum_strategy', 'Cash')
-                if negative_momentum_strategy == 'Go to cash':
-                    negative_momentum_strategy = 'Cash'
-                elif negative_momentum_strategy not in ['Cash', 'Equal weight', 'Relative momentum']:
-                    negative_momentum_strategy = 'Cash'  # Default fallback
-                
-
                 
                 # Sanitize momentum window weights to prevent StreamlitValueAboveMaxError
                 momentum_windows = cfg.get('momentum_windows', [])
