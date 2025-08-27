@@ -112,6 +112,14 @@ if 'multi_backtest_detail_portfolio_selector' not in st.session_state:
         st.session_state.multi_backtest_detail_portfolio_selector = f"0 - {first_portfolio_name}"
 
 st.set_page_config(layout="wide", page_title="Multi-Portfolio Analysis", page_icon="📈")
+
+# Handle imported values from JSON - MUST BE AT THE VERY BEGINNING
+if "_import_start_with" in st.session_state:
+    st.session_state["multi_backtest_start_with"] = st.session_state.pop("_import_start_with")
+    st.session_state["multi_backtest_start_with_radio"] = st.session_state["multi_backtest_start_with"]
+if "_import_first_rebalance_strategy" in st.session_state:
+    st.session_state["multi_backtest_first_rebalance_strategy"] = st.session_state.pop("_import_first_rebalance_strategy")
+    st.session_state["multi_backtest_first_rebalance_strategy_radio"] = st.session_state["multi_backtest_first_rebalance_strategy"]
 st.markdown("""
 <style>
     /* Global Styles for the App */
@@ -191,13 +199,14 @@ st.markdown("""
 
 # ...existing code...
 
+# Handle rerun flag for smooth UI updates - must be at the very top
+if st.session_state.get('multi_backtest_rerun_flag', False):
+    st.session_state.multi_backtest_rerun_flag = False
+    st.rerun()
+
 # Place rerun logic after first portfolio input widget
 active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index] if 'multi_backtest_portfolio_configs' in st.session_state and 'multi_backtest_active_portfolio_index' in st.session_state else None
-if active_portfolio:
-    ## Removed duplicate Portfolio Name input field
-    if st.session_state.get('multi_backtest_rerun_flag', False):
-        st.session_state.multi_backtest_rerun_flag = False
-        st.rerun()
+
 import numpy as np
 import pandas as pd
 def calculate_mwrr(values, cash_flows, dates):
@@ -277,7 +286,7 @@ import yfinance as yf
 import io
 import contextlib
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from warnings import warn
 from scipy.optimize import newton, brentq, root_scalar
 import plotly.graph_objects as go
@@ -398,8 +407,8 @@ default_configs = [
         'benchmark_ticker': '^GSPC',
         'initial_value': 10000,
         'added_amount': 10000,
-        'added_frequency': 'year',
-    'rebalancing_frequency': 'year',
+        'added_frequency': 'Annually',
+        'rebalancing_frequency': 'Annually',
         'start_date_user': None,
         'end_date_user': None,
         'start_with': 'first',
@@ -430,8 +439,8 @@ default_configs = [
         'benchmark_ticker': '^GSPC',
         'initial_value': 10000,
         'added_amount': 10000,
-        'added_frequency': 'year',
-    'rebalancing_frequency': 'year',
+        'added_frequency': 'Annually',
+        'rebalancing_frequency': 'Annually',
         'start_date_user': None,
         'end_date_user': None,
         'start_with': 'first',
@@ -476,6 +485,9 @@ def get_dates_by_freq(freq, start, end, market_days):
     elif freq == "Annually" or freq == "year":
         base = pd.date_range(start=start, end=end, freq='YS')
     elif freq == "Never" or freq == "none" or freq is None:
+        return set()
+    elif freq == "Buy & Hold" or freq == "Buy & Hold (Target)":
+        # Buy & Hold options don't have specific rebalancing dates - they rebalance immediately when cash is available
         return set()
     else:
         raise ValueError(f"Unknown frequency: {freq}")
@@ -538,6 +550,102 @@ def calculate_sortino(returns, risk_free_rate=0):
         return np.nan
     expected_return = returns.mean() * 252
     return (expected_return - risk_free_rate) / downside_std
+
+# -----------------------
+# Timer function for next rebalance date
+# -----------------------
+def calculate_next_rebalance_date(rebalancing_frequency, last_rebalance_date):
+    """
+    Calculate the next rebalance date based on rebalancing frequency and last rebalance date.
+    Excludes today and yesterday as mentioned in the requirements.
+    """
+    if not last_rebalance_date or rebalancing_frequency == 'none':
+        return None, None, None
+    
+    # Convert to datetime if it's a pandas Timestamp
+    if hasattr(last_rebalance_date, 'to_pydatetime'):
+        last_rebalance_date = last_rebalance_date.to_pydatetime()
+    
+    today = datetime.now().date()
+    yesterday = today - timedelta(days=1)
+    
+    # If last rebalance was today or yesterday, use the day before yesterday as base
+    if last_rebalance_date.date() >= yesterday:
+        base_date = yesterday - timedelta(days=1)
+    else:
+        base_date = last_rebalance_date.date()
+    
+    # Calculate next rebalance date based on frequency
+    if rebalancing_frequency == 'market_day':
+        # Next market day (simplified - just next day for now)
+        next_date = base_date + timedelta(days=1)
+    elif rebalancing_frequency == 'calendar_day':
+        next_date = base_date + timedelta(days=1)
+    elif rebalancing_frequency == 'week':
+        next_date = base_date + timedelta(weeks=1)
+    elif rebalancing_frequency == '2weeks':
+        next_date = base_date + timedelta(weeks=2)
+    elif rebalancing_frequency == 'month':
+        # Add one month
+        if base_date.month == 12:
+            next_date = base_date.replace(year=base_date.year + 1, month=1)
+        else:
+            next_date = base_date.replace(month=base_date.month + 1)
+    elif rebalancing_frequency == '3months':
+        # Add three months
+        new_month = base_date.month + 3
+        new_year = base_date.year + (new_month - 1) // 12
+        new_month = ((new_month - 1) % 12) + 1
+        next_date = base_date.replace(year=new_year, month=new_month)
+    elif rebalancing_frequency == '6months':
+        # Add six months
+        new_month = base_date.month + 6
+        new_year = base_date.year + (new_month - 1) // 12
+        new_month = ((new_month - 1) % 12) + 1
+        next_date = base_date.replace(year=new_year, month=new_month)
+    elif rebalancing_frequency == 'year':
+        next_date = base_date.replace(year=base_date.year + 1)
+    else:
+        return None, None, None
+    
+    # Calculate time until next rebalance
+    now = datetime.now()
+    # Ensure both datetimes are offset-naive for comparison and subtraction
+    if hasattr(next_date, 'tzinfo') and next_date.tzinfo is not None:
+        next_date = next_date.replace(tzinfo=None)
+    next_rebalance_datetime = datetime.combine(next_date, time(9, 30))  # Assume 9:30 AM market open
+    if hasattr(next_rebalance_datetime, 'tzinfo') and next_rebalance_datetime.tzinfo is not None:
+        next_rebalance_datetime = next_rebalance_datetime.replace(tzinfo=None)
+    if hasattr(now, 'tzinfo') and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+    if next_rebalance_datetime <= now:
+        # If next rebalance is in the past, calculate the next one
+        if rebalancing_frequency == 'market_day' or rebalancing_frequency == 'calendar_day':
+            next_rebalance_datetime = now + timedelta(days=1)
+            next_date = next_rebalance_datetime.date()
+        else:
+            # For other frequencies, recalculate from the next date
+            return calculate_next_rebalance_date(rebalancing_frequency, next_rebalance_datetime)
+    time_until = next_rebalance_datetime - now
+    
+    return next_date, time_until, next_rebalance_datetime
+
+def format_time_until(time_until):
+    """Format the time until next rebalance in a human-readable format."""
+    if not time_until:
+        return "Unknown"
+    
+    total_seconds = int(time_until.total_seconds())
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+    
+    if days > 0:
+        return f"{days} days, {hours} hours, {minutes} minutes"
+    elif hours > 0:
+        return f"{hours} hours, {minutes} minutes"
+    else:
+        return f"{minutes} minutes"
 
 # FIXED: Correct Ulcer Index calculation
 def calculate_ulcer_index(values):
@@ -602,7 +710,30 @@ def single_backtest(config, sim_index, reindexed_data):
     exclude_days_vol = config.get('exclude_days_vol', 30)
     current_data = {t: reindexed_data[t] for t in tickers + [benchmark_ticker] if t in reindexed_data}
     dates_added = get_dates_by_freq(added_frequency, sim_index[0], sim_index[-1], sim_index)
+    
+    # Get regular rebalancing dates
     dates_rebal = sorted(get_dates_by_freq(rebalancing_frequency, sim_index[0], sim_index[-1], sim_index))
+    
+    # Handle first rebalance strategy - replace first rebalance date if needed
+    first_rebalance_strategy = st.session_state.get('multi_backtest_first_rebalance_strategy', 'rebalancing_date')
+    if first_rebalance_strategy == "momentum_window_complete" and use_momentum and momentum_windows:
+        try:
+            # Calculate when momentum window completes
+            window_sizes = [int(w.get('lookback', 0)) for w in momentum_windows if w is not None]
+            max_window_days = max(window_sizes) if window_sizes else 0
+            momentum_completion_date = sim_index[0] + pd.Timedelta(days=max_window_days)
+            
+            # Find the closest trading day to momentum completion
+            momentum_completion_trading_day = sim_index[sim_index >= momentum_completion_date][0] if len(sim_index[sim_index >= momentum_completion_date]) > 0 else sim_index[-1]
+            
+            # Replace the first rebalancing date with momentum completion date
+            if len(dates_rebal) > 0:
+                # Remove the first rebalancing date and add momentum completion date
+                dates_rebal = dates_rebal[1:] if len(dates_rebal) > 1 else []
+                dates_rebal.insert(0, momentum_completion_trading_day)
+                dates_rebal = sorted(dates_rebal)
+        except Exception:
+            pass  # Fall back to regular rebalancing dates
 
     # Dictionaries to store historical data for new tables
     historical_allocations = {}
@@ -819,8 +950,20 @@ def single_backtest(config, sim_index, reindexed_data):
                             div = df.loc[future_dates[0], "Dividends"]
                 var = df.loc[date, "Price_change"] if date in df.index else 0.0
                 if include_dividends.get(t, False):
-                    rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
-                    val_new = val_prev * (1 + rate_of_return)
+                    # Check if dividends should be collected as cash instead of reinvested
+                    collect_as_cash = config.get('collect_dividends_as_cash', False)
+                    if collect_as_cash and div > 0:
+                        # Calculate dividend cash and add to unreinvested cash
+                        nb_shares = val_prev / price_prev if price_prev > 0 else 0
+                        dividend_cash = nb_shares * div
+                        total_unreinvested_dividends += dividend_cash
+                        # Don't include dividend in rate of return
+                        rate_of_return = var
+                        val_new = val_prev * (1 + rate_of_return)
+                    else:
+                        # Reinvest dividends (original behavior)
+                        rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                        val_new = val_prev * (1 + rate_of_return)
                 else:
                     val_new = val_prev * (1 + var)
                     # If dividends are not included, do NOT add to unreinvested cash or anywhere else
@@ -842,8 +985,20 @@ def single_backtest(config, sim_index, reindexed_data):
                         div = df.loc[future_dates[0], "Dividends"]
             var = df.loc[date, "Price_change"] if date in df.index else 0.0
             if include_dividends.get(t, False):
-                rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
-                val_new = val_prev * (1 + rate_of_return)
+                # Check if dividends should be collected as cash instead of reinvested
+                collect_as_cash = config.get('collect_dividends_as_cash', False)
+                if collect_as_cash and div > 0:
+                    # Calculate dividend cash and add to unreinvested cash
+                    nb_shares = val_prev / price_prev if price_prev > 0 else 0
+                    dividend_cash = nb_shares * div
+                    total_unreinvested_dividends += dividend_cash
+                    # Don't include dividend in rate of return
+                    rate_of_return = var
+                    val_new = val_prev * (1 + rate_of_return)
+                else:
+                    # Reinvest dividends (original behavior)
+                    rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                    val_new = val_prev * (1 + rate_of_return)
             else:
                 val_new = val_prev * (1 + var)
             values[t].append(val_new)
@@ -854,7 +1009,18 @@ def single_backtest(config, sim_index, reindexed_data):
         portfolio_no_additions.append(portfolio_no_additions[-1] * daily_growth_factor)
         
         current_total = sum(values[t][-1] for t in tickers) + unallocated_cash[-1] + unreinvested_cash[-1]
+        
+        # Check if we should rebalance
+        should_rebalance = False
         if date in dates_rebal and set(tickers):
+            should_rebalance = True
+        elif rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"] and set(tickers):
+            # Buy & Hold: rebalance whenever there's cash available
+            total_cash = unallocated_cash[-1] + unreinvested_cash[-1]
+            if total_cash > 0:
+                should_rebalance = True
+        
+        if should_rebalance:
             if use_momentum:
                 returns, valid_assets = calculate_momentum(date, set(tickers), momentum_windows)
                 if valid_assets:
@@ -1004,8 +1170,7 @@ def remove_portfolio_callback():
 
 def add_stock_callback():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'].append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
-    # Don't trigger immediate re-run for better performance
-    # st.session_state.multi_backtest_rerun_flag = True
+    st.session_state.multi_backtest_rerun_flag = True
 
 def remove_stock_callback(ticker):
     """Immediate stock removal callback"""
@@ -1045,7 +1210,7 @@ def normalize_stock_allocations_callback():
     st.session_state.multi_backtest_rerun_flag = True
 
 def equal_stock_allocation_callback():
-    if 'multi_backtest_portfolio_configs' not in st.session_state or 'multi_backtest_active_portfolio_index' not in st.session_state:
+    if 'multi_backtest_portfolio_configs' not in st.session_state or 'multi_backtest_portfolio_configs' not in st.session_state or 'multi_backtest_active_portfolio_index' not in st.session_state:
         return
     stocks = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks']
     valid_stocks = [s for s in stocks if s['ticker']]
@@ -1089,8 +1254,7 @@ def reset_momentum_windows_callback():
         {"lookback": 180, "exclude": 30, "weight": 0.3},
         {"lookback": 120, "exclude": 30, "weight": 0.2},
     ]
-    # Don't trigger immediate re-run for better performance
-    # st.session_state.multi_backtest_rerun_flag = True
+    st.session_state.multi_backtest_rerun_flag = True
 
 def reset_beta_callback():
     # Reset beta lookback/exclude to defaults and enable beta calculation
@@ -1297,6 +1461,8 @@ def paste_json_callback():
                 return 'Never'
             freq_map = {
                 'Never': 'Never',
+                'Buy & Hold': 'Buy & Hold',
+                'Buy & Hold (Target)': 'Buy & Hold (Target)',
                 'Weekly': 'Weekly',
                 'Biweekly': 'Biweekly',
                 'Monthly': 'Monthly',
@@ -1337,9 +1503,29 @@ def paste_json_callback():
             'exclude_days_beta': json_data.get('exclude_days_beta', 30),
             'vol_window_days': json_data.get('vol_window_days', 365),
             'exclude_days_vol': json_data.get('exclude_days_vol', 30),
+            'collect_dividends_as_cash': json_data.get('collect_dividends_as_cash', False),
         }
         
         st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index] = multi_backtest_config
+        
+        # Handle global start_with setting from imported JSON
+        if 'start_with' in json_data:
+            # Handle start_with value mapping from other pages
+            start_with = json_data['start_with']
+            if start_with == 'first':
+                start_with = 'oldest'  # Map 'first' to 'oldest' (closest equivalent)
+            elif start_with not in ['all', 'oldest']:
+                start_with = 'all'  # Default fallback
+            st.session_state['multi_backtest_start_with'] = start_with
+            # Update the radio button widget key
+            st.session_state['multi_backtest_start_with_radio'] = start_with
+        
+        # Handle first rebalance strategy from imported JSON
+        if 'first_rebalance_strategy' in json_data:
+            st.session_state['multi_backtest_first_rebalance_strategy'] = json_data['first_rebalance_strategy']
+            # Update the radio button widget key
+            st.session_state['multi_backtest_first_rebalance_strategy_radio'] = json_data['first_rebalance_strategy']
+        
         st.success("Portfolio configuration updated from JSON (Multi-Backtest page).")
         st.info(f"Final stocks list: {[s['ticker'] for s in multi_backtest_config['stocks']]}")
         st.info(f"Final momentum windows: {multi_backtest_config['momentum_windows']}")
@@ -1461,6 +1647,15 @@ def update_vol_window():
 def update_vol_exclude():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['exclude_days_vol'] = st.session_state.multi_backtest_active_vol_exclude
 
+def update_start_with():
+    st.session_state.multi_backtest_start_with = st.session_state.multi_backtest_start_with_radio
+
+def update_first_rebalance_strategy():
+    st.session_state.multi_backtest_first_rebalance_strategy = st.session_state.multi_backtest_first_rebalance_strategy_radio
+
+def update_collect_dividends_as_cash():
+    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['collect_dividends_as_cash'] = st.session_state.multi_backtest_active_collect_dividends_as_cash
+
 # Sidebar for portfolio selection
 st.sidebar.title("Manage Portfolios")
 portfolio_names = [cfg['name'] for cfg in st.session_state.multi_backtest_portfolio_configs]
@@ -1482,6 +1677,39 @@ if len(st.session_state.multi_backtest_portfolio_configs) > 1:
 if st.sidebar.button("Reset Selected Portfolio", on_click=reset_portfolio_callback):
     pass
 
+# Start with option
+st.sidebar.markdown("---")
+st.sidebar.subheader("Data Options")
+if "multi_backtest_start_with_radio" not in st.session_state:
+    st.session_state["multi_backtest_start_with_radio"] = st.session_state.get("multi_backtest_start_with", "all")
+st.sidebar.radio(
+    "How to handle assets with different start dates?",
+    ["all", "oldest"],
+    index=0 if st.session_state["multi_backtest_start_with_radio"] == "all" else 1,
+    format_func=lambda x: "Start when ALL assets are available" if x == "all" else "Start with OLDEST asset",
+    help="""
+    **All:** Starts the backtest when all selected assets are available.
+    **Oldest:** Starts at the oldest date of any asset and adds assets as they become available.
+    """,
+    key="multi_backtest_start_with_radio",
+    on_change=update_start_with
+)
+
+# First rebalance strategy option
+if "multi_backtest_first_rebalance_strategy_radio" not in st.session_state:
+    st.session_state["multi_backtest_first_rebalance_strategy_radio"] = st.session_state.get("multi_backtest_first_rebalance_strategy", "rebalancing_date")
+st.sidebar.radio(
+    "When should the first rebalancing occur?",
+    ["rebalancing_date", "momentum_window_complete"],
+    format_func=lambda x: "First rebalance on rebalancing date" if x == "rebalancing_date" else "First rebalance when momentum window complete",
+    help="""
+    **First rebalance on rebalancing date:** Start rebalancing immediately when possible.
+    **First rebalance when momentum window complete:** Wait for the largest momentum window to complete before first rebalance.
+    """,
+    key="multi_backtest_first_rebalance_strategy_radio",
+    on_change=update_first_rebalance_strategy
+)
+
 st.header(f"Editing Portfolio: {active_portfolio['name']}")
 # Ensure session-state key exists before creating widgets to avoid duplicate-default warnings
 if "multi_backtest_active_name" not in st.session_state:
@@ -1501,15 +1729,24 @@ with col_right:
 # Swap positions: show Rebalancing Frequency first, then Added Frequency.
 # Use two equal-width columns and make selectboxes use the container width so they match visually.
 col_freq_rebal, col_freq_add = st.columns([1, 1])
-freq_options = ["Never", "Weekly", "Biweekly", "Monthly", "Quarterly", "Semiannually", "Annually"]
+freq_options = ["Never", "Buy & Hold", "Buy & Hold (Target)", "Weekly", "Biweekly", "Monthly", "Quarterly", "Semiannually", "Annually"]
 with col_freq_rebal:
     if "multi_backtest_active_rebal_freq" not in st.session_state:
         st.session_state["multi_backtest_active_rebal_freq"] = active_portfolio['rebalancing_frequency']
-    st.selectbox("Rebalancing Frequency", freq_options, key="multi_backtest_active_rebal_freq", on_change=update_rebal_freq, help="How often the portfolio is rebalanced.", )
+    st.selectbox("Rebalancing Frequency", freq_options, key="multi_backtest_active_rebal_freq", on_change=update_rebal_freq, help="How often the portfolio is rebalanced. 'Buy & Hold' reinvests cash immediately using current proportions. 'Buy & Hold (Target)' reinvests cash immediately using target allocations. Cash from dividends (if 'Collect Dividends as Cash' is enabled) will be available for rebalancing.", )
 with col_freq_add:
     if "multi_backtest_active_add_freq" not in st.session_state:
         st.session_state["multi_backtest_active_add_freq"] = active_portfolio['added_frequency']
-    st.selectbox("Added Frequency", freq_options, key="multi_backtest_active_add_freq", on_change=update_add_freq, help="How often cash is added to the portfolio.")
+    st.selectbox("Added Frequency", freq_options, key="multi_backtest_active_add_freq", on_change=update_add_freq, help="How often cash is added to the portfolio. 'Buy & Hold' reinvests cash immediately using current proportions. 'Buy & Hold (Target)' reinvests cash immediately using target allocations.")
+
+# Dividend handling option
+st.session_state["multi_backtest_active_collect_dividends_as_cash"] = active_portfolio.get('collect_dividends_as_cash', False)
+st.checkbox(
+    "Collect Dividends as Cash", 
+    key="multi_backtest_active_collect_dividends_as_cash",
+    help="When enabled, dividends are collected as cash instead of being automatically reinvested in the stock. This cash will be available for rebalancing.",
+    on_change=update_collect_dividends_as_cash
+)
 
 with st.expander("Rebalancing and Added Frequency Explained", expanded=False):
     st.markdown("""
@@ -1517,7 +1754,13 @@ with st.expander("Rebalancing and Added Frequency Explained", expanded=False):
     
     **Rebalancing Frequency** is the frequency at which the portfolio is rebalanced to the specified allocations. It is also at this date that any additional cash from the `Added Frequency` is invested into the portfolio.
     
-    *Keeping a Rebalancing Frequency to "none" will mean no additional cash is invested, even if you have an `Added Frequency` specified.*
+    **Buy & Hold Options:**
+    - **Buy & Hold**: When cash is available (from additions or dividends), it's immediately reinvested using the current portfolio proportions
+    - **Buy & Hold (Target)**: When cash is available (from additions or dividends), it's immediately reinvested using the target allocations
+    
+    **Collect Dividends as Cash**: When enabled, dividends are collected as cash instead of being automatically reinvested. This cash becomes available for rebalancing.
+    
+    *Keeping a Rebalancing Frequency to "Never" will mean no additional cash is invested, even if you have an `Added Frequency` specified.*
     """)
 
 # Sync buttons
@@ -1599,29 +1842,24 @@ for i in range(len(active_portfolio['stocks'])):
     col_t, col_a, col_d, col_b = st.columns([0.2, 0.2, 0.3, 0.15])
     with col_t:
         ticker_key = f"multi_backtest_ticker_{st.session_state.multi_backtest_active_portfolio_index}_{i}"
-        # Ensure a default exists in session state, then create widget using only key to avoid duplicate-default warning
         if ticker_key not in st.session_state:
             st.session_state[ticker_key] = stock['ticker']
-        # Create text_input using the key only to avoid Streamlit warning about setting both
-        # a default value and session_state simultaneously. The session_state default was
-        # already set above when the key was missing.
         st.text_input("Ticker", key=ticker_key, label_visibility="visible", on_change=update_stock_ticker, args=(i,))
     with col_a:
-        # If momentum is enabled allocations are not used; hide inputs to avoid confusion
-        if active_portfolio.get('use_momentum'):
-            st.write("— (allocations computed by momentum) —")
-        else:
+        use_mom = st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.get('use_momentum', True))
+        if not use_mom:
             alloc_key = f"multi_backtest_alloc_input_{st.session_state.multi_backtest_active_portfolio_index}_{i}"
             if alloc_key not in st.session_state:
                 st.session_state[alloc_key] = int(stock['allocation'] * 100)
             st.number_input("Allocation %", min_value=0, step=1, format="%d", key=alloc_key, label_visibility="visible", on_change=update_stock_allocation, args=(i,))
             if st.session_state[alloc_key] != int(stock['allocation'] * 100):
                 st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][i]['allocation'] = st.session_state[alloc_key] / 100.0
+        else:
+            st.write("")
     with col_d:
         div_key = f"multi_backtest_div_{st.session_state.multi_backtest_active_portfolio_index}_{i}"
         if div_key not in st.session_state:
             st.session_state[div_key] = stock['include_dividends']
-        # create checkbox using key only; update handler/sync will pick up changes
         st.checkbox("Include Dividends", key=div_key)
         if st.session_state[div_key] != stock['include_dividends']:
             st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][i]['include_dividends'] = st.session_state[div_key]
@@ -1780,6 +2018,9 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     cleaned_config = active_portfolio.copy()
     cleaned_config.pop('use_relative_momentum', None)
     cleaned_config.pop('equal_if_all_negative', None)
+    # Update global settings from session state
+    cleaned_config['start_with'] = st.session_state.get('multi_backtest_start_with', 'all')
+    cleaned_config['first_rebalance_strategy'] = st.session_state.get('multi_backtest_first_rebalance_strategy', 'rebalancing_date')
     config_json = json.dumps(cleaned_config, indent=4)
     st.code(config_json, language='json')
     # Fixed JSON copy button
@@ -1866,14 +2107,33 @@ if st.sidebar.button("Run Backtests", type='primary'):
                 portfolio_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
                 all_portfolio_tickers.update(portfolio_tickers)
             
-            # Determine final start date based on start_with setting (all portfolios use the same setting)
-            first_cfg = st.session_state.multi_backtest_portfolio_configs[0]
-            if first_cfg.get('start_with') == 'all':
+            # Determine final start date based on global start_with setting
+            global_start_with = st.session_state.get('multi_backtest_start_with', 'all')
+            print(f"Using global start_with: {global_start_with}")
+            if global_start_with == 'all':
                 final_start = max(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
                 print(f"All portfolio assets start date: {final_start.date()}")
-            else:
-                final_start = min(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
-                print(f"Oldest portfolio asset start date: {final_start.date()}")
+            else:  # global_start_with == 'oldest'
+                # For 'oldest', we need to find the portfolio that starts the LATEST
+                # (has the most recent earliest asset), then use that portfolio's earliest asset
+                portfolio_earliest_dates = {}
+                for cfg in st.session_state.multi_backtest_portfolio_configs:
+                    portfolio_tickers = [stock['ticker'] for stock in cfg.get('stocks', []) if stock['ticker']]
+                    if portfolio_tickers:
+                        # Find the earliest asset in this portfolio
+                        portfolio_earliest = min(data[t].first_valid_index() for t in portfolio_tickers if t in data)
+                        portfolio_earliest_dates[cfg['name']] = portfolio_earliest
+                
+                if portfolio_earliest_dates:
+                    # Find the portfolio with the LATEST earliest asset
+                    latest_starting_portfolio = max(portfolio_earliest_dates.items(), key=lambda x: x[1])
+                    final_start = latest_starting_portfolio[1]
+                    print(f"Portfolio '{latest_starting_portfolio[0]}' starts latest at: {final_start.date()}")
+                    print(f"Using this portfolio's earliest asset date: {final_start.date()}")
+                else:
+                    # Fallback to original logic
+                    final_start = min(data[t].first_valid_index() for t in all_portfolio_tickers if t in data)
+                    print(f"Fallback - Oldest portfolio asset start date: {final_start.date()}")
             
             # Apply user date constraints if any
             for cfg in st.session_state.multi_backtest_portfolio_configs:
@@ -1926,10 +2186,71 @@ if st.sidebar.button("Run Backtests", type='primary'):
                 
                 # Run single backtest for this strategy
                 total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
+                
+                # compute today_weights_map (target weights as-if rebalanced at final snapshot date)
+                today_weights_map = {}
+                try:
+                    alloc_dates = sorted(list(historical_allocations.keys()))
+                    final_d = alloc_dates[-1]
+                    metrics_local = historical_metrics
+                    
+                    # Check if momentum is used for this portfolio
+                    use_momentum = cfg.get('use_momentum', True)
+                    
+                    if final_d in metrics_local:
+                        if use_momentum:
+                            # extract Calculated_Weight if present (momentum-based)
+                            weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
+                            # normalize (ensure sums to 1 excluding CASH)
+                            sumw = sum(w for k, w in weights.items() if k != 'CASH')
+                            if sumw > 0:
+                                norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
+                            else:
+                                norm = weights
+                            today_weights_map = norm
+                        else:
+                            # When momentum is not used, use user-defined allocations from portfolio config
+                            today_weights_map = {}
+                            for stock in cfg.get('stocks', []):
+                                ticker = stock.get('ticker', '').strip()
+                                if ticker:
+                                    today_weights_map[ticker] = stock.get('allocation', 0)
+                            # Add CASH if needed
+                            total_alloc = sum(today_weights_map.values())
+                            if total_alloc < 1.0:
+                                today_weights_map['CASH'] = 1.0 - total_alloc
+                            else:
+                                today_weights_map['CASH'] = 0
+                    else:
+                        # fallback: use allocation snapshot at final date but convert market-value alloc to target weights (exclude CASH then renormalize)
+                        final_alloc = historical_allocations.get(final_d, {})
+                        noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
+                        s = sum(noncash.values())
+                        if s > 0:
+                            norm = {k: (v / s) for k, v in noncash.items()}
+                            norm['CASH'] = final_alloc.get('CASH', 0)
+                        else:
+                            norm = final_alloc
+                        today_weights_map = norm
+                except Exception as e:
+                    # If computation fails, use user-defined allocations as fallback
+                    today_weights_map = {}
+                    for stock in cfg.get('stocks', []):
+                        ticker = stock.get('ticker', '').strip()
+                        if ticker:
+                            today_weights_map[ticker] = stock.get('allocation', 0)
+                    # Add CASH if needed
+                    total_alloc = sum(today_weights_map.values())
+                    if total_alloc < 1.0:
+                        today_weights_map['CASH'] = 1.0 - total_alloc
+                    else:
+                        today_weights_map['CASH'] = 0
+                
                 # Store both series under the unique key for later use
                 all_results[unique_name] = {
                     'no_additions': total_series_no_additions,
-                    'with_additions': total_series
+                    'with_additions': total_series,
+                    'today_weights_map': today_weights_map
                 }
                 all_allocations[unique_name] = historical_allocations
                 all_metrics[unique_name] = historical_metrics
@@ -2154,6 +2475,21 @@ if st.sidebar.button("Run Backtests", type='primary'):
             print("\n" + "="*80)
     
             # console output captured previously is no longer shown on the page
+            # Create today_weights_map for all portfolios
+            today_weights_map = {}
+            for unique_name, results in all_results.items():
+                if isinstance(results, dict):
+                    if 'today_weights_map' in results:
+                        today_weights_map[unique_name] = results['today_weights_map']
+            
+            st.session_state.multi_backtest_snapshot_data = {
+                'raw_data': data_reindexed,
+                'portfolio_configs': st.session_state.multi_backtest_portfolio_configs,
+                'all_allocations': all_allocations,
+                'all_metrics': all_metrics,
+                'today_weights_map': today_weights_map
+            }
+            
             st.session_state.multi_all_results = all_results
             st.session_state.multi_backtest_all_drawdowns = all_drawdowns
             if 'stats_df_display' in locals():
@@ -2174,6 +2510,17 @@ def paste_all_json_callback():
     try:
         obj = json.loads(txt)
         if isinstance(obj, list):
+            # Clear widget keys to force re-initialization
+            widget_keys_to_clear = [
+                "multi_backtest_active_name", "multi_backtest_active_initial", 
+                "multi_backtest_active_added_amount", "multi_backtest_active_rebal_freq",
+                "multi_backtest_active_add_freq", "multi_backtest_active_benchmark",
+                "multi_backtest_active_use_momentum", "multi_backtest_active_collect_dividends_as_cash",
+                "multi_backtest_start_with_radio", "multi_backtest_first_rebalance_strategy_radio"
+            ]
+            for key in widget_keys_to_clear:
+                if key in st.session_state:
+                    del st.session_state[key]
             # Process each portfolio configuration for Multi-Backtest page
             processed_configs = []
             for cfg in obj:
@@ -2282,6 +2629,8 @@ def paste_all_json_callback():
                         return 'Never'
                     freq_map = {
                         'Never': 'Never',
+                        'Buy & Hold': 'Buy & Hold',
+                        'Buy & Hold (Target)': 'Buy & Hold (Target)',
                         'Weekly': 'Weekly',
                         'Biweekly': 'Biweekly',
                         'Monthly': 'Monthly',
@@ -2311,7 +2660,8 @@ def paste_all_json_callback():
                       'rebalancing_frequency': map_frequency(cfg.get('rebalancing_frequency', 'Monthly')),
                       'start_date_user': cfg.get('start_date_user'),
                       'end_date_user': cfg.get('end_date_user'),
-                      'start_with': cfg.get('start_with', 'first'),
+                      'start_with': cfg.get('start_with', 'all'),
+                      'first_rebalance_strategy': cfg.get('first_rebalance_strategy', 'rebalancing_date'),
                       'use_momentum': cfg.get('use_momentum', True),
                     'momentum_strategy': momentum_strategy,
                     'negative_momentum_strategy': negative_momentum_strategy,
@@ -2322,10 +2672,27 @@ def paste_all_json_callback():
                     'exclude_days_beta': cfg.get('exclude_days_beta', 30),
                     'vol_window_days': cfg.get('vol_window_days', 365),
                     'exclude_days_vol': cfg.get('exclude_days_vol', 30),
+                    'collect_dividends_as_cash': cfg.get('collect_dividends_as_cash', False),
+                    # Note: Ignoring Backtest Engine specific fields like 'portfolio_drag_pct', 'use_custom_dates', etc.
                 }
                 processed_configs.append(multi_backtest_config)
             
             st.session_state.multi_backtest_portfolio_configs = processed_configs
+            
+            # Handle global start_with setting from imported JSON
+            if processed_configs and 'start_with' in processed_configs[0]:
+                # Handle start_with value mapping from other pages
+                start_with = processed_configs[0]['start_with']
+                if start_with == 'first':
+                    start_with = 'oldest'  # Map 'first' to 'oldest' (closest equivalent)
+                elif start_with not in ['all', 'oldest']:
+                    start_with = 'all'  # Default fallback
+                st.session_state['_import_start_with'] = start_with
+            
+            # Handle global first_rebalance_strategy setting from imported JSON
+            if processed_configs and 'first_rebalance_strategy' in processed_configs[0]:
+                st.session_state['_import_first_rebalance_strategy'] = processed_configs[0]['first_rebalance_strategy']
+            
             # Reset active selection and derived mappings so the UI reflects the new configs
             if processed_configs:
                 st.session_state.multi_backtest_active_portfolio_index = 0
@@ -2338,6 +2705,7 @@ def paste_all_json_callback():
                 st.session_state['multi_backtest_active_add_freq'] = processed_configs[0].get('added_frequency', 'none')
                 st.session_state['multi_backtest_active_benchmark'] = processed_configs[0].get('benchmark_ticker', '')
                 st.session_state['multi_backtest_active_use_momentum'] = bool(processed_configs[0].get('use_momentum', True))
+                st.session_state['multi_backtest_active_collect_dividends_as_cash'] = bool(processed_configs[0].get('collect_dividends_as_cash', False))
             else:
                 st.session_state.multi_backtest_active_portfolio_index = None
                 st.session_state.multi_backtest_portfolio_selector = ''
@@ -2369,6 +2737,9 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
             # Remove unused settings that were cleaned up
             cleaned_config.pop('use_relative_momentum', None)
             cleaned_config.pop('equal_if_all_negative', None)
+            # Update global settings from session state
+            cleaned_config['start_with'] = st.session_state.get('multi_backtest_start_with', 'all')
+            cleaned_config['first_rebalance_strategy'] = st.session_state.get('multi_backtest_first_rebalance_strategy', 'rebalancing_date')
             cleaned_configs.append(cleaned_config)
         return cleaned_configs
     
@@ -2913,30 +3284,32 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         left_col, mid_col, right_col = st.columns([1, 3, 1])
         with mid_col:
             st.markdown("<div style='display:flex; gap:8px; align-items:center;'>", unsafe_allow_html=True)
+            def update_selected_portfolio():
+                selected_display = st.session_state.get("multi_backtest_detail_portfolio_selector")
+                if selected_display:
+                    try:
+                        prefix, rest = selected_display.split(' - ', 1)
+                        if prefix.startswith('extra_'):
+                            # extra entries use the rest as the name
+                            st.session_state["multi_backtest_selected_portfolio_name"] = rest
+                        else:
+                            idx = int(prefix)
+                            st.session_state["multi_backtest_selected_portfolio_name"] = all_portfolio_names[idx]
+                    except Exception:
+                        st.session_state["multi_backtest_selected_portfolio_name"] = selected_display
+
             selected_display = st.selectbox(
                 "Select portfolio for details", 
                 options=display_options, 
                 index=current_selection_index,
-                key="multi_backtest_detail_portfolio_selector_temp", 
+                key="multi_backtest_detail_portfolio_selector", 
                 help='Choose which portfolio to inspect in detail', 
-                label_visibility='collapsed'
+                label_visibility='collapsed',
+                on_change=update_selected_portfolio
             )
             # Add a prominent view button with a professional color
             view_clicked = st.button("View Details", key='view_details_btn')
             st.markdown("</div>", unsafe_allow_html=True)
-            
-            # Update the persistent selection when the widget changes
-            if selected_display:
-                try:
-                    prefix, rest = selected_display.split(' - ', 1)
-                    if prefix.startswith('extra_'):
-                        # extra entries use the rest as the name
-                        st.session_state["multi_backtest_selected_portfolio_name"] = rest
-                    else:
-                        idx = int(prefix)
-                        st.session_state["multi_backtest_selected_portfolio_name"] = all_portfolio_names[idx]
-                except Exception:
-                    st.session_state["multi_backtest_selected_portfolio_name"] = selected_display
 
         # Map display label back to actual portfolio name
         selected_portfolio_detail = st.session_state["multi_backtest_selected_portfolio_name"]
@@ -3099,7 +3472,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
 
                     st.dataframe(styler_metrics, use_container_width=True)
 
-                    # --- Allocation plots: Final allocation and last rebalance allocation ---
+                                        # --- Allocation plots: Final allocation and last rebalance allocation ---
                     allocs_for_portfolio = st.session_state.multi_all_allocations.get(selected_portfolio_detail) if 'multi_all_allocations' in st.session_state else None
                     if allocs_for_portfolio:
                         try:
@@ -3129,21 +3502,407 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 labels_final, vals_final = prepare_bar_data(final_alloc)
                                 labels_rebal, vals_rebal = prepare_bar_data(rebal_alloc)
 
+                                # Add timer for next rebalance date
+                                try:
+                                    # Get the last rebalance date from allocation history
+                                    if len(alloc_dates) > 1:
+                                        last_rebal_date_for_timer = alloc_dates[-2]  # Second to last date (excluding today/yesterday)
+                                    else:
+                                        last_rebal_date_for_timer = alloc_dates[-1] if alloc_dates else None
+                                    
+                                    # Get rebalancing frequency from portfolio config
+                                    portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                                    portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
+                                    rebalancing_frequency = portfolio_cfg.get('rebalancing_frequency', 'none') if portfolio_cfg else 'none'
+                                    # Convert to lowercase and map to function expectations
+                                    rebalancing_frequency = rebalancing_frequency.lower()
+                                    # Map frequency names to what the function expects
+                                    frequency_mapping = {
+                                        'monthly': 'month',
+                                        'weekly': 'week',
+                                        'bi-weekly': '2weeks',
+                                        'biweekly': '2weeks',
+                                        'quarterly': '3months',
+                                        'semi-annually': '6months',
+                                        'semiannually': '6months',
+                                        'annually': 'year',
+                                        'yearly': 'year',
+                                        'market_day': 'market_day',
+                                        'calendar_day': 'calendar_day',
+                                        'never': 'none',
+                                        'none': 'none'
+                                    }
+                                    rebalancing_frequency = frequency_mapping.get(rebalancing_frequency, rebalancing_frequency)
+                                    
+                                    if last_rebal_date_for_timer and rebalancing_frequency != 'none':
+                                        # Ensure last_rebal_date_for_timer is a naive datetime object
+                                        if isinstance(last_rebal_date_for_timer, str):
+                                            last_rebal_date_for_timer = pd.to_datetime(last_rebal_date_for_timer)
+                                        if hasattr(last_rebal_date_for_timer, 'tzinfo') and last_rebal_date_for_timer.tzinfo is not None:
+                                            last_rebal_date_for_timer = last_rebal_date_for_timer.replace(tzinfo=None)
+                                        next_date, time_until, next_rebalance_datetime = calculate_next_rebalance_date(
+                                            rebalancing_frequency, last_rebal_date_for_timer
+                                        )
+                                        
+                                        if next_date and time_until:
+                                            st.markdown("---")
+                                            st.markdown("**⏰ Next Rebalance Timer**")
+                                            
+                                            # Create columns for timer display
+                                            col1, col2, col3 = st.columns(3)
+                                            
+                                            with col1:
+                                                st.metric(
+                                                    label="Time Until Next Rebalance",
+                                                    value=format_time_until(time_until),
+                                                    delta=None
+                                                )
+                                            
+                                            with col2:
+                                                st.metric(
+                                                    label="Target Rebalance Date",
+                                                    value=next_date.strftime("%B %d, %Y"),
+                                                    delta=None
+                                                )
+                                            
+                                            with col3:
+                                                st.metric(
+                                                    label="Rebalancing Frequency",
+                                                    value=rebalancing_frequency.replace('_', ' ').title(),
+                                                    delta=None
+                                                )
+                                            
+                                            # Add a progress bar showing progress to next rebalance
+                                            if rebalancing_frequency in ['week', '2weeks', 'month', '3months', '6months', 'year']:
+                                                # Calculate progress percentage
+                                                if hasattr(last_rebal_date_for_timer, 'to_pydatetime'):
+                                                    last_rebal_datetime = last_rebal_date_for_timer.to_pydatetime()
+                                                else:
+                                                    last_rebal_datetime = last_rebal_date_for_timer
+                                                
+                                                total_period = (next_rebalance_datetime - last_rebal_datetime).total_seconds()
+                                                elapsed_period = (datetime.now() - last_rebal_datetime).total_seconds()
+                                                progress = min(max(elapsed_period / total_period, 0), 1)
+                                                
+                                                st.progress(progress, text=f"Progress to next rebalance: {progress:.1%}")
+                                except Exception as e:
+                                    pass  # Silently ignore timer calculation errors
+
+                                # Main "Rebalance as of today" plot and table - this should be the main rebalancing representation
+                                st.markdown("---")
+                                st.markdown("**🔄 Rebalance as of Today**")
+                                
+                                # Get momentum-based calculated weights for today's rebalancing from stored snapshot
+                                today_weights = {}
+                                
+                                # Get the stored today_weights_map from snapshot data
+                                snapshot = st.session_state.get('multi_backtest_snapshot_data', {})
+                                today_weights_map = snapshot.get('today_weights_map', {}) if snapshot else {}
+                                
+                                if selected_portfolio_detail in today_weights_map:
+                                    today_weights = today_weights_map.get(selected_portfolio_detail, {})
+                                else:
+                                    # Fallback to current allocation if no stored weights found
+                                    today_weights = final_alloc
+                                
+                                # Create labels and values for the plot
+                                labels_today = [k for k, v in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])) if v > 0]
+                                vals_today = [float(today_weights[k]) * 100 for k in labels_today]
+                                
+                                # Create a larger plot for the main rebalancing representation
+                                st.markdown(f"**Target Allocation if Rebalanced Today**")
+                                fig_today = go.Figure()
+                                fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
+                                fig_today.update_traces(textinfo='percent+label')
+                                fig_today.update_layout(
+                                    template='plotly_dark', 
+                                    margin=dict(t=30),
+                                    height=600,  # Make it even bigger
+                                    showlegend=True
+                                )
+                                st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
+                                
+                                # Table moved under the plot
+                                # Add the "Rebalance as of today" table
+                                try:
+                                        # Get portfolio configuration for calculations
+                                        portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                                        portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
+                                        
+                                        if portfolio_cfg:
+                                            # Use current portfolio value from backtest results instead of initial value
+                                            portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)  # fallback to initial value
+                                            
+                                            # Get current portfolio value from backtest results
+                                            if 'multi_all_results' in st.session_state and st.session_state.multi_all_results:
+                                                portfolio_results = st.session_state.multi_all_results.get(selected_portfolio_detail)
+                                                if portfolio_results:
+                                                    # Use the Final Value (with additions) for Multi Backtest - total portfolio value including all cash additions and compounding
+                                                    if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
+                                                        # Get the final value from the with_additions series (includes all cash additions and compounding)
+                                                        final_value = portfolio_results['with_additions'].iloc[-1]
+                                                        if not pd.isna(final_value) and final_value > 0:
+                                                            portfolio_value = float(final_value)
+                                                    elif isinstance(portfolio_results, dict) and 'no_additions' in portfolio_results:
+                                                        # Fallback to no_additions if with_additions not available
+                                                        final_value = portfolio_results['no_additions'].iloc[-1]
+                                                        if not pd.isna(final_value) and final_value > 0:
+                                                            portfolio_value = float(final_value)
+                                                    elif isinstance(portfolio_results, pd.Series):
+                                                        # Get the latest value from the series
+                                                        latest_value = portfolio_results.iloc[-1]
+                                                        if not pd.isna(latest_value) and latest_value > 0:
+                                                            portfolio_value = float(latest_value)
+                                            
+                                            # Get raw data for price calculations
+                                            raw_data = st.session_state.get('multi_backtest_raw_data', {})
+                                            
+                                            def _price_on_or_before(df, target_date):
+                                                try:
+                                                    idx = df.index[df.index <= pd.to_datetime(target_date)]
+                                                    if len(idx) == 0:
+                                                        return None
+                                                    return float(df.loc[idx[-1], 'Close'])
+                                                except Exception:
+                                                    return None
+
+                                            def build_table_from_alloc(alloc_dict, price_date, label):
+                                                rows = []
+                                                for tk in sorted(alloc_dict.keys()):
+                                                    alloc_pct = float(alloc_dict.get(tk, 0))
+                                                    if tk == 'CASH':
+                                                        price = None
+                                                        shares = 0
+                                                        total_val = portfolio_value * alloc_pct
+                                                    else:
+                                                        df = raw_data.get(tk)
+                                                        price = None
+                                                        if isinstance(df, pd.DataFrame) and 'Close' in df.columns and not df['Close'].dropna().empty:
+                                                            if price_date is None:
+                                                                # use latest price
+                                                                try:
+                                                                    price = float(df['Close'].iloc[-1])
+                                                                except Exception:
+                                                                    price = None
+                                                            else:
+                                                                price = _price_on_or_before(df, price_date)
+                                                        try:
+                                                            if price and price > 0:
+                                                                allocation_value = portfolio_value * alloc_pct
+                                                                # allow fractional shares shown to 1 decimal place
+                                                                shares = round(allocation_value / price, 1)
+                                                                total_val = shares * price
+                                                            else:
+                                                                shares = 0.0
+                                                                total_val = portfolio_value * alloc_pct
+                                                        except Exception:
+                                                            shares = 0
+                                                            total_val = portfolio_value * alloc_pct
+
+                                                    pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
+                                                    rows.append({
+                                                        'Ticker': tk,
+                                                        'Allocation %': alloc_pct * 100,
+                                                        'Price ($)': price if price is not None else float('nan'),
+                                                        'Shares': shares,
+                                                        'Total Value ($)': total_val,
+                                                        '% of Portfolio': pct_of_port,
+                                                    })
+
+                                                df_table = pd.DataFrame(rows).set_index('Ticker')
+                                                # Decide whether to show CASH row: hide if Total Value is zero or Shares zero/NaN
+                                                df_display = df_table.copy()
+                                                show_cash = False
+                                                if 'CASH' in df_display.index:
+                                                    cash_val = None
+                                                    if 'Total Value ($)' in df_display.columns:
+                                                        cash_val = df_display.at['CASH', 'Total Value ($)']
+                                                    elif 'Shares' in df_display.columns:
+                                                        cash_val = df_display.at['CASH', 'Shares']
+                                                    try:
+                                                        show_cash = bool(cash_val and not pd.isna(cash_val) and cash_val != 0)
+                                                    except Exception:
+                                                        show_cash = False
+                                                    if not show_cash:
+                                                        df_display = df_display.drop('CASH')
+
+                                                # formatting for display
+                                                fmt = {
+                                                    'Allocation %': '{:,.1f}%',
+                                                    'Price ($)': '${:,.2f}',
+                                                    'Shares': '{:,.1f}',
+                                                    'Total Value ($)': '${:,.2f}',
+                                                    '% of Portfolio': '{:,.2f}%'
+                                                }
+                                                try:
+                                                    st.markdown(f"**{label}**")
+                                                    sty = df_display.style.format(fmt)
+                                                    if 'CASH' in df_table.index and show_cash:
+                                                        def _highlight_cash_row(s):
+                                                            if s.name == 'CASH':
+                                                                return ['background-color: #006400; color: white; font-weight: bold;' for _ in s]
+                                                        sty = sty.apply(_highlight_cash_row, axis=1)
+                                                    st.dataframe(sty, use_container_width=True)
+                                                except Exception:
+                                                    st.dataframe(df_display, use_container_width=True)
+                                            
+                                            # "Rebalance as of today" table (use momentum-based calculated weights)
+                                            build_table_from_alloc(today_weights, None, f"Target Allocation if Rebalanced Today")
+                                            
+                                except Exception as e:
+                                    print(f"[REBALANCE TODAY TABLE DEBUG] Failed to render rebalance today table for {selected_portfolio_detail}: {e}")
+
+                                # Other rebalancing plots (smaller, placed after the main one)
+                                st.markdown("---")
+                                st.markdown("**📊 Historical Rebalancing Comparison**")
+                                
                                 col_plot1, col_plot2 = st.columns(2)
                                 with col_plot1:
                                     st.markdown(f"**Last Rebalance Allocation (as of {last_rebal_date.date()})**")
                                     fig_rebal = go.Figure()
                                     fig_rebal.add_trace(go.Pie(labels=labels_rebal, values=vals_rebal, hole=0.3))
                                     fig_rebal.update_traces(textinfo='percent+label')
-                                    fig_rebal.update_layout(template='plotly_dark', margin=dict(t=30))
+                                    fig_rebal.update_layout(template='plotly_dark', margin=dict(t=30), height=400)
                                     st.plotly_chart(fig_rebal, use_container_width=True, key=f"multi_rebal_{selected_portfolio_detail}")
                                 with col_plot2:
                                     st.markdown(f"**Current Allocation (as of {final_date.date()})**")
                                     fig_final = go.Figure()
                                     fig_final.add_trace(go.Pie(labels=labels_final, values=vals_final, hole=0.3))
                                     fig_final.update_traces(textinfo='percent+label')
-                                    fig_final.update_layout(template='plotly_dark', margin=dict(t=30))
+                                    fig_final.update_layout(template='plotly_dark', margin=dict(t=30), height=400)
                                     st.plotly_chart(fig_final, use_container_width=True, key=f"multi_final_{selected_portfolio_detail}")
+                                
+                                # Add the three allocation tables from Allocations page
+                                try:
+                                    # Get portfolio configuration for calculations
+                                    portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                                    portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
+                                    
+                                    if portfolio_cfg:
+                                        # Use current portfolio value from backtest results instead of initial value
+                                        portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)  # fallback to initial value
+                                        
+                                        # Get current portfolio value from backtest results
+                                        if 'multi_all_results' in st.session_state and st.session_state.multi_all_results:
+                                            portfolio_results = st.session_state.multi_all_results.get(selected_portfolio_detail)
+                                            if portfolio_results:
+                                                # Use the Final Value (with additions) for Multi Backtest - total portfolio value including all cash additions and compounding
+                                                if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
+                                                    # Get the final value from the with_additions series (includes all cash additions and compounding)
+                                                    final_value = portfolio_results['with_additions'].iloc[-1]
+                                                    if not pd.isna(final_value) and final_value > 0:
+                                                        portfolio_value = float(final_value)
+                                                elif isinstance(portfolio_results, dict) and 'no_additions' in portfolio_results:
+                                                    # Fallback to no_additions if with_additions not available
+                                                    final_value = portfolio_results['no_additions'].iloc[-1]
+                                                    if not pd.isna(final_value) and final_value > 0:
+                                                        portfolio_value = float(final_value)
+                                                elif isinstance(portfolio_results, pd.Series):
+                                                    # Get the latest value from the series
+                                                    latest_value = portfolio_results.iloc[-1]
+                                                    if not pd.isna(latest_value) and latest_value > 0:
+                                                        portfolio_value = float(latest_value)
+                                        
+                                        # Get raw data for price calculations
+                                        raw_data = st.session_state.get('multi_backtest_raw_data', {})
+                                        
+                                        def _price_on_or_before(df, target_date):
+                                            try:
+                                                idx = df.index[df.index <= pd.to_datetime(target_date)]
+                                                if len(idx) == 0:
+                                                    return None
+                                                return float(df.loc[idx[-1], 'Close'])
+                                            except Exception:
+                                                return None
+
+                                        def build_table_from_alloc(alloc_dict, price_date, label):
+                                            rows = []
+                                            for tk in sorted(alloc_dict.keys()):
+                                                alloc_pct = float(alloc_dict.get(tk, 0))
+                                                if tk == 'CASH':
+                                                    price = None
+                                                    shares = 0
+                                                    total_val = portfolio_value * alloc_pct
+                                                else:
+                                                    df = raw_data.get(tk)
+                                                    price = None
+                                                    if isinstance(df, pd.DataFrame) and 'Close' in df.columns and not df['Close'].dropna().empty:
+                                                        if price_date is None:
+                                                            # use latest price
+                                                            try:
+                                                                price = float(df['Close'].iloc[-1])
+                                                            except Exception:
+                                                                price = None
+                                                        else:
+                                                            price = _price_on_or_before(df, price_date)
+                                                    try:
+                                                        if price and price > 0:
+                                                            allocation_value = portfolio_value * alloc_pct
+                                                            # allow fractional shares shown to 1 decimal place
+                                                            shares = round(allocation_value / price, 1)
+                                                            total_val = shares * price
+                                                        else:
+                                                            shares = 0.0
+                                                            total_val = portfolio_value * alloc_pct
+                                                    except Exception:
+                                                        shares = 0
+                                                        total_val = portfolio_value * alloc_pct
+
+                                                pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
+                                                rows.append({
+                                                    'Ticker': tk,
+                                                    'Allocation %': alloc_pct * 100,
+                                                    'Price ($)': price if price is not None else float('nan'),
+                                                    'Shares': shares,
+                                                    'Total Value ($)': total_val,
+                                                    '% of Portfolio': pct_of_port,
+                                                })
+
+                                            df_table = pd.DataFrame(rows).set_index('Ticker')
+                                            # Decide whether to show CASH row: hide if Total Value is zero or Shares zero/NaN
+                                            df_display = df_table.copy()
+                                            show_cash = False
+                                            if 'CASH' in df_display.index:
+                                                cash_val = None
+                                                if 'Total Value ($)' in df_display.columns:
+                                                    cash_val = df_display.at['CASH', 'Total Value ($)']
+                                                elif 'Shares' in df_display.columns:
+                                                    cash_val = df_display.at['CASH', 'Shares']
+                                                try:
+                                                    show_cash = bool(cash_val and not pd.isna(cash_val) and cash_val != 0)
+                                                except Exception:
+                                                    show_cash = False
+                                                if not show_cash:
+                                                    df_display = df_display.drop('CASH')
+
+                                            # formatting for display
+                                            fmt = {
+                                                'Allocation %': '{:,.1f}%',
+                                                'Price ($)': '${:,.2f}',
+                                                'Shares': '{:,.1f}',
+                                                'Total Value ($)': '${:,.2f}',
+                                                '% of Portfolio': '{:,.2f}%'
+                                            }
+                                            try:
+                                                st.markdown(f"**{label}**")
+                                                sty = df_display.style.format(fmt)
+                                                if 'CASH' in df_table.index and show_cash:
+                                                    def _highlight_cash_row(s):
+                                                        if s.name == 'CASH':
+                                                            return ['background-color: #006400; color: white; font-weight: bold;' for _ in s]
+                                                    sty = sty.apply(_highlight_cash_row, axis=1)
+                                                st.dataframe(sty, use_container_width=True)
+                                            except Exception:
+                                                st.dataframe(df_display, use_container_width=True)
+                                        
+                                        # Last rebalance table (use last_rebal_date)
+                                        build_table_from_alloc(rebal_alloc, last_rebal_date, f"Target Allocation at Last Rebalance ({last_rebal_date.date()})")
+                                        # Current / Today table (use final_date's latest available prices as of now)
+                                        build_table_from_alloc(final_alloc, None, f"Portfolio Evolution (Current Allocation)")
+                                        
+                                except Exception as e:
+                                    print(f"[ALLOC TABLE DEBUG] Failed to render allocation tables for {selected_portfolio_detail}: {e}")
+                                    
                         except Exception as e:
                             print(f"[ALLOC PLOT DEBUG] Failed to render allocation plots for {selected_portfolio_detail}: {e}")
                     else:
