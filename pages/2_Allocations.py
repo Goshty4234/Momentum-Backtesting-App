@@ -1,6 +1,33 @@
 import streamlit as st
 import datetime
 from datetime import timedelta, time
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import json
+import io
+import contextlib
+import warnings
+warnings.filterwarnings('ignore')
+
+def check_currency_warning(tickers):
+    """
+    Check if any tickers are non-USD and display a warning.
+    """
+    non_usd_suffixes = ['.TO', '.V', '.CN', '.AX', '.L', '.PA', '.AS', '.SW', '.T', '.HK', '.KS', '.TW', '.JP']
+    non_usd_tickers = []
+    
+    for ticker in tickers:
+        if any(ticker.endswith(suffix) for suffix in non_usd_suffixes):
+            non_usd_tickers.append(ticker)
+    
+    if non_usd_tickers:
+        st.warning(f"⚠️ **Currency Warning**: The following tickers are not in USD: {', '.join(non_usd_tickers)}. "
+                  f"Currency conversion is not taken into account, which may affect allocation accuracy. "
+                  f"Consider using USD equivalents for more accurate results.")
 st.set_page_config(layout="wide", page_title="Portfolio Allocation Analysis", page_icon="📈")
 st.markdown("""
 <style>
@@ -1368,7 +1395,12 @@ def update_rebal_freq():
     st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['rebalancing_frequency'] = st.session_state.get('alloc_active_rebal_freq', 'none')
 
 def update_benchmark():
-    st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['benchmark_ticker'] = st.session_state.get('alloc_active_benchmark', '')
+    # Convert benchmark ticker to uppercase
+    benchmark_val = st.session_state.get('alloc_active_benchmark', '')
+    upper_benchmark = benchmark_val.upper()
+    st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['benchmark_ticker'] = upper_benchmark
+    # Update the widget to show uppercase value
+    st.session_state['alloc_active_benchmark'] = upper_benchmark
 
 def update_use_momentum():
     current_val = st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index].get('use_momentum', True)
@@ -1747,6 +1779,7 @@ if st.sidebar.button("Run Backtests", type='primary'):
         all_tickers = [t for t in all_tickers if t]
         print("Downloading data for all tickers...")
         data = {}
+        invalid_tickers = []
         for i, t in enumerate(all_tickers):
             try:
                 progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
@@ -1755,97 +1788,156 @@ if st.sidebar.button("Run Backtests", type='primary'):
                 hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
                 if hist.empty:
                     print(f"No data available for {t}")
+                    invalid_tickers.append(t)
                     continue
-                hist.index = pd.to_datetime(hist.index)
+                # Force tz-naive for hist (like Backtest_Engine.py)
+                hist = hist.copy()
+                hist.index = hist.index.tz_localize(None)
+                
                 hist["Price_change"] = hist["Close"].pct_change(fill_method=None).fillna(0)
                 data[t] = hist
                 print(f"Data loaded for {t} from {data[t].index[0].date()}")
             except Exception as e:
                 print(f"Error loading {t}: {e}")
+                invalid_tickers.append(t)
+        
+        # Display invalid ticker warnings in Streamlit UI
+        if invalid_tickers:
+            # Separate portfolio tickers from benchmark tickers
+            portfolio_tickers = set(s['ticker'] for cfg in portfolio_list for s in cfg['stocks'] if s['ticker'])
+            benchmark_tickers = set(cfg.get('benchmark_ticker') for cfg in portfolio_list if 'benchmark_ticker' in cfg)
+            
+            portfolio_invalid = [t for t in invalid_tickers if t in portfolio_tickers]
+            benchmark_invalid = [t for t in invalid_tickers if t in benchmark_tickers]
+            
+            if portfolio_invalid:
+                st.warning(f"The following portfolio tickers are invalid and will be skipped: {', '.join(portfolio_invalid)}")
+            if benchmark_invalid:
+                st.warning(f"The following benchmark tickers are invalid and will be skipped: {', '.join(benchmark_invalid)}")
+        
+        # BULLETPROOF VALIDATION: Check for valid tickers and stop gracefully if none
         if not data:
-            print("No data downloaded; aborting.")
-            st.warning("No data downloaded; aborting.")
+            if invalid_tickers and len(invalid_tickers) == len(all_tickers):
+                st.error(f"❌ **No valid tickers found!** All tickers are invalid: {', '.join(invalid_tickers)}. Please check your ticker symbols and try again.")
+            else:
+                st.error("❌ **No valid tickers found!** No data downloaded; aborting.")
             progress_bar.empty()
             st.session_state.alloc_all_results = None
             st.session_state.alloc_all_allocations = None
             st.session_state.alloc_all_metrics = None
+            st.stop()
         else:
-            # Persist raw downloaded price data so later recomputations can access benchmark series
-            st.session_state.alloc_raw_data = data
-            common_start = max(df.first_valid_index() for df in data.values())
-            common_end = min(df.last_valid_index() for df in data.values())
-            print()
-            all_results = {}
-            all_drawdowns = {}
-            all_stats = {}
-            all_allocations = {}
-            all_metrics = {}
-            # Map portfolio index (0-based) to the unique key used in the result dicts
-            portfolio_key_map = {}
-            for i, cfg in enumerate(portfolio_list, start=1):
-                progress_text = f"Running backtest for {cfg.get('name', f'Backtest {i}')} ({i}/{len(portfolio_list)})..."
-                progress_bar.progress((len(all_tickers) + i) / (len(all_tickers) + len(portfolio_list)), text=progress_text)
-                name = cfg.get('name', f'Backtest {i}')
-                # Ensure unique key for storage to avoid overwriting when duplicate names exist
-                base_name = name
-                unique_name = base_name
-                suffix = 1
-                while unique_name in all_results or unique_name in all_allocations:
-                    unique_name = f"{base_name} ({suffix})"
-                    suffix += 1
-                print(f"\nRunning backtest {i}/{len(portfolio_list)}: {name}")
-                # Separate asset tickers from benchmark. Do NOT use benchmark when
-                # computing start/end/simulation dates or available-rebalance logic.
-                asset_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
-                asset_tickers = [t for t in asset_tickers if t in data and t is not None]
-                benchmark_local = cfg.get('benchmark_ticker')
-                benchmark_in_data = benchmark_local if benchmark_local in data else None
-                tickers_for_config = asset_tickers
-                # Build the list of tickers whose data we will reindex (include benchmark if present)
-                data_tickers = list(asset_tickers)
-                if benchmark_in_data:
-                    data_tickers.append(benchmark_in_data)
-                if not tickers_for_config:
-                    print(f"  No available asset tickers for {name}; skipping.")
-                    continue
-                if cfg.get('start_with') == 'all':
-                    # Start only when all asset tickers have data
-                    final_start = max(data[t].first_valid_index() for t in tickers_for_config)
-                else:
-                    # 'oldest' -> start at the earliest asset ticker date so assets can be added over time
-                    final_start = min(data[t].first_valid_index() for t in tickers_for_config)
-                if cfg.get('start_date_user'):
-                    user_start = pd.to_datetime(cfg['start_date_user'])
-                    final_start = max(final_start, user_start)
-                # Preserve previous global alignment only for 'all' mode; do NOT force 'oldest' back to global latest
-                if cfg.get('start_with') == 'all':
-                    final_start = max(final_start, common_start)
-                if cfg.get('end_date_user'):
-                    final_end = min(pd.to_datetime(cfg['end_date_user']), min(data[t].last_valid_index() for t in tickers_for_config))
-                else:
-                    final_end = min(data[t].last_valid_index() for t in tickers_for_config)
-                if final_start > final_end:
-                    print(f"  Start date {final_start.date()} is after end date {final_end.date()}. Skipping {name}.")
-                    continue
-                simulation_index = pd.date_range(start=final_start, end=final_end, freq='D')
-                print(f"  Simulation period for {name}: {final_start.date()} to {final_end.date()}\n")
-                data_reindexed_for_config = {}
-                for t in data_tickers:
-                    df = data[t].reindex(simulation_index)
-                    df["Close"] = df["Close"].ffill()
-                    df["Dividends"] = df["Dividends"].fillna(0)
-                    df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
-                    data_reindexed_for_config[t] = df
-                total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed_for_config)
-                # Store both series under the unique key for later use
-                all_results[unique_name] = {
-                    'no_additions': total_series_no_additions,
-                    'with_additions': total_series
-                }
-                all_allocations[unique_name] = historical_allocations
-                all_metrics[unique_name] = historical_metrics
-                # Remember mapping from portfolio index (0-based) to unique key
-                portfolio_key_map[i-1] = unique_name
+            # Check if any portfolio has valid tickers
+            all_portfolio_tickers = set()
+            for cfg in portfolio_list:
+                portfolio_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
+                all_portfolio_tickers.update(portfolio_tickers)
+            
+            # Check for non-USD tickers and display currency warning
+            check_currency_warning(list(all_portfolio_tickers))
+            
+            valid_portfolio_tickers = [t for t in all_portfolio_tickers if t in data]
+            if not valid_portfolio_tickers:
+                st.error(f"❌ **No valid tickers found!** No valid portfolio tickers found. Invalid tickers: {', '.join(all_portfolio_tickers)}. Please check your ticker symbols and try again.")
+                progress_bar.empty()
+                st.session_state.alloc_all_results = None
+                st.session_state.alloc_all_allocations = None
+                st.session_state.alloc_all_metrics = None
+                st.stop()
+            else:
+                # Persist raw downloaded price data so later recomputations can access benchmark series
+                st.session_state.alloc_raw_data = data
+                common_start = max(df.first_valid_index() for df in data.values())
+                common_end = min(df.last_valid_index() for df in data.values())
+                print()
+                all_results = {}
+                all_drawdowns = {}
+                all_stats = {}
+                all_allocations = {}
+                all_metrics = {}
+                # Map portfolio index (0-based) to the unique key used in the result dicts
+                portfolio_key_map = {}
+                
+                for i, cfg in enumerate(portfolio_list, start=1):
+                    progress_text = f"Running backtest for {cfg.get('name', f'Backtest {i}')} ({i}/{len(portfolio_list)})..."
+                    progress_bar.progress((len(all_tickers) + i) / (len(all_tickers) + len(portfolio_list)), text=progress_text)
+                    name = cfg.get('name', f'Backtest {i}')
+                    # Ensure unique key for storage to avoid overwriting when duplicate names exist
+                    base_name = name
+                    unique_name = base_name
+                    suffix = 1
+                    while unique_name in all_results or unique_name in all_allocations:
+                        unique_name = f"{base_name} ({suffix})"
+                        suffix += 1
+                    print(f"\nRunning backtest {i}/{len(portfolio_list)}: {name}")
+                    # Separate asset tickers from benchmark. Do NOT use benchmark when
+                    # computing start/end/simulation dates or available-rebalance logic.
+                    asset_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
+                    asset_tickers = [t for t in asset_tickers if t in data and t is not None]
+                    benchmark_local = cfg.get('benchmark_ticker')
+                    benchmark_in_data = benchmark_local if benchmark_local in data else None
+                    tickers_for_config = asset_tickers
+                    # Build the list of tickers whose data we will reindex (include benchmark if present)
+                    data_tickers = list(asset_tickers)
+                    if benchmark_in_data:
+                        data_tickers.append(benchmark_in_data)
+                    if not tickers_for_config:
+                        # Check if this is because all tickers are invalid
+                        original_asset_tickers = [s['ticker'] for s in cfg['stocks'] if s['ticker']]
+                        missing_tickers = [t for t in original_asset_tickers if t not in data]
+                        if missing_tickers:
+                            print(f"  No available asset tickers for {name}; invalid tickers: {missing_tickers}. Skipping.")
+                        else:
+                            print(f"  No available asset tickers for {name}; skipping.")
+                        continue
+                    if cfg.get('start_with') == 'all':
+                        # Start only when all asset tickers have data
+                        final_start = max(data[t].first_valid_index() for t in tickers_for_config)
+                    else:
+                        # 'oldest' -> start at the earliest asset ticker date so assets can be added over time
+                        final_start = min(data[t].first_valid_index() for t in tickers_for_config)
+                    if cfg.get('start_date_user'):
+                        user_start = pd.to_datetime(cfg['start_date_user'])
+                        final_start = max(final_start, user_start)
+                    # Preserve previous global alignment only for 'all' mode; do NOT force 'oldest' back to global latest
+                    if cfg.get('start_with') == 'all':
+                        final_start = max(final_start, common_start)
+                    if cfg.get('end_date_user'):
+                        final_end = min(pd.to_datetime(cfg['end_date_user']), min(data[t].last_valid_index() for t in tickers_for_config))
+                    else:
+                        final_end = min(data[t].last_valid_index() for t in tickers_for_config)
+                    if final_start > final_end:
+                        print(f"  Start date {final_start.date()} is after end date {final_end.date()}. Skipping {name}.")
+                        continue
+                    
+                    simulation_index = pd.date_range(start=final_start, end=final_end, freq='D')
+                    print(f"  Simulation period for {name}: {final_start.date()} to {final_end.date()}\n")
+                    data_reindexed_for_config = {}
+                    invalid_tickers = []
+                    for t in data_tickers:
+                        if t in data:  # Only process tickers that have data
+                            df = data[t].reindex(simulation_index)
+                            df["Close"] = df["Close"].ffill()
+                            df["Dividends"] = df["Dividends"].fillna(0)
+                            df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
+                            data_reindexed_for_config[t] = df
+                        else:
+                            invalid_tickers.append(t)
+                            print(f"Warning: Invalid ticker '{t}' - no data available, skipping reindexing")
+                    
+                    # Display invalid ticker warnings in Streamlit UI
+                    if invalid_tickers:
+                        st.warning(f"The following tickers are invalid and will be skipped: {', '.join(invalid_tickers)}")
+                    total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed_for_config)
+                    # Store both series under the unique key for later use
+                    all_results[unique_name] = {
+                        'no_additions': total_series_no_additions,
+                        'with_additions': total_series
+                    }
+                    all_allocations[unique_name] = historical_allocations
+                    all_metrics[unique_name] = historical_metrics
+                    # Remember mapping from portfolio index (0-based) to unique key
+                    portfolio_key_map[i-1] = unique_name
                 # --- PATCHED CASH FLOW LOGIC ---
                 # Track cash flows as pandas Series indexed by date
                 cash_flows = pd.Series(0.0, index=total_series.index)
