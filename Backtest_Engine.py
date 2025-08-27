@@ -687,17 +687,25 @@ def _prepare_backtest_dates(start_date_user: date | None, end_date_user: date | 
     if start_date_user_dt and start_date_user_dt > base_start:
         base_start = start_date_user_dt
 
-    # If user selected 'all' and momentum windows provided, add warm-up
+    # Handle first rebalance strategy
+    first_rebalance_strategy = st.session_state.get('first_rebalance_strategy', 'rebalancing_date')
+    
+    # If user selected 'all' and momentum windows provided, check first rebalance strategy
     if start_with == "all" and momentum_windows:
-        try:
-            # largest window measured as lookback + exclude (in days)
-            window_sizes = [int(w.get('lookback', 0)) + int(w.get('exclude', 0)) for w in momentum_windows if w is not None]
-            max_window_days = max(window_sizes) if window_sizes else 0
-        except Exception:
-            max_window_days = 0
-        tentative_start = base_start + pd.Timedelta(days=max_window_days)
-        # Use tentative_start as the backtest_start (will be aligned to the trading calendar below)
-        backtest_start = tentative_start
+        if first_rebalance_strategy == "momentum_window_complete":
+            # Wait for momentum window to complete before first rebalance
+            try:
+                # largest window measured as lookback only (exclude is handled within the calculation)
+                window_sizes = [int(w.get('lookback', 0)) for w in momentum_windows if w is not None]
+                max_window_days = max(window_sizes) if window_sizes else 0
+            except Exception:
+                max_window_days = 0
+            # Add momentum window delay so first rebalance happens when window is complete
+            tentative_start = base_start + pd.Timedelta(days=max_window_days)
+            backtest_start = tentative_start
+        else:  # first_rebalance_strategy == "rebalancing_date"
+            # Start immediately - momentum calculation will handle missing data
+            backtest_start = base_start
     else:
         backtest_start = base_start
 
@@ -790,6 +798,9 @@ def _get_rebalancing_dates(all_dates: pd.DatetimeIndex, rebalancing_frequency: s
         return pd.DatetimeIndex([all_dates[(all_dates.year == y) & (all_dates.month == m)][0] for y, m in semi if any((all_dates.year == y) & (all_dates.month == m))])
     elif rebalancing_frequency == "Annually":
         return all_dates[all_dates.is_year_end]
+    elif rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"]:
+        # Buy & Hold options don't have specific rebalancing dates - they rebalance immediately when cash is available
+        return pd.DatetimeIndex([])
     else:
         return pd.DatetimeIndex([])
 
@@ -1145,6 +1156,27 @@ def run_backtest(
     # Get rebalancing dates ONLY from rebalancing frequency
     raw_rebalancing_dates = get_event_dates(all_dates, rebalancing_frequency)
     mapped_rebalancing_dates = map_to_prev_trading_day(raw_rebalancing_dates, all_dates)
+    
+    # Handle first rebalance strategy - replace first rebalance date if needed
+    first_rebalance_strategy = st.session_state.get('first_rebalance_strategy', 'rebalancing_date')
+    if first_rebalance_strategy == "momentum_window_complete" and use_momentum and momentum_windows:
+        try:
+            # Calculate when momentum window completes
+            window_sizes = [int(w.get('lookback', 0)) for w in momentum_windows if w is not None]
+            max_window_days = max(window_sizes) if window_sizes else 0
+            momentum_completion_date = all_dates[0] + pd.Timedelta(days=max_window_days)
+            
+            # Find the closest trading day to momentum completion
+            momentum_completion_trading_day = all_dates[all_dates >= momentum_completion_date][0] if len(all_dates[all_dates >= momentum_completion_date]) > 0 else all_dates[-1]
+            
+            # Replace the first rebalancing date with momentum completion date
+            if len(mapped_rebalancing_dates) > 0:
+                # Remove the first rebalancing date and add momentum completion date
+                mapped_rebalancing_dates = mapped_rebalancing_dates[1:] if len(mapped_rebalancing_dates) > 1 else pd.DatetimeIndex([])
+                mapped_rebalancing_dates = mapped_rebalancing_dates.insert(0, momentum_completion_trading_day)
+        except Exception:
+            pass  # Fall back to regular rebalancing dates
+    
     # Always include the first date for initial investment
     first_date = all_dates[0]
     if rebalancing_frequency != "Never":
@@ -1239,10 +1271,19 @@ def run_backtest(
                     dividend_cash = shares_with * dividend
                     dividend_cash_wo = shares_without * dividend
                     # print(f"  Dividend cash (with): {dividend_cash}, Dividend cash (without): {dividend_cash_wo}")
-                    # Reinvest dividends
-                    asset_shares_with_additions.loc[t] += dividend_cash / price
-                    asset_shares_without_additions.loc[t] += dividend_cash_wo / price
-                    # print(f"  Reinvested dividend: Added {dividend_cash / price} shares (with), {dividend_cash_wo / price} shares (without)")
+                    
+                    # Check if dividends should be collected as cash instead of reinvested
+                    collect_as_cash = st.session_state.get('collect_dividends_as_cash', False)
+                    if collect_as_cash:
+                        # Add dividend cash to cash instead of reinvesting
+                        cash_with_additions += dividend_cash
+                        cash_without_additions += dividend_cash_wo
+                        # print(f"  Collected dividend as cash: Added {dividend_cash} to cash (with), {dividend_cash_wo} to cash (without)")
+                    else:
+                        # Reinvest dividends (original behavior)
+                        asset_shares_with_additions.loc[t] += dividend_cash / price
+                        asset_shares_without_additions.loc[t] += dividend_cash_wo / price
+                        # print(f"  Reinvested dividend: Added {dividend_cash / price} shares (with), {dividend_cash_wo / price} shares (without)")
 
                 asset_value_with = asset_shares_with_additions.loc[t] * price
                 asset_value_without = asset_shares_without_additions.loc[t] * price
@@ -1297,8 +1338,17 @@ def run_backtest(
         portfolio_value_without_additions.loc[current_date] = sum(asset_values_without_additions.values()) + cash_without_additions
         
         # --- Rebalance portfolio on designated dates ---
-        # Rebalance with additions
+        # Check if we should rebalance
+        should_rebalance = False
         if current_date in rebalancing_dates:
+            should_rebalance = True
+        elif rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"]:
+            # Buy & Hold: rebalance whenever there's cash available
+            if cash_with_additions > 0:
+                should_rebalance = True
+        
+        # Rebalance with additions
+        if should_rebalance:
             # print(f"Rebalancing portfolio with additions on {current_date.date()}...")
             target_alloc_with, rebalance_metrics = _rebalance_portfolio(
                 current_date, 
@@ -1344,7 +1394,7 @@ def run_backtest(
             cash_with_additions = new_cash
 
         # Rebalance without additions
-        if current_date in rebalancing_dates:
+        if should_rebalance:
             # print(f"Rebalancing portfolio without additions on {current_date.date()}...")
             
             target_alloc_without, _ = _rebalance_portfolio(
@@ -1603,7 +1653,112 @@ def run_backtest(
 # ==============================================================================
 # Streamlit App Logic
 # ==============================================================================
-st.set_page_config(page_title="Quantitative Portfolio Momentum Backtest & Analytics", layout="wide")
+st.set_page_config(page_title="Quantitative Portfolio Momentum Backtest & Analytics", layout="wide", page_icon="📈")
+
+# Handle imported values from JSON - MUST BE AT THE VERY BEGINNING
+if "_import_name" in st.session_state:
+    st.session_state["portfolio_name"] = st.session_state.pop("_import_name")
+    st.session_state["portfolio_name_input"] = st.session_state["portfolio_name"]
+if "_import_tickers" in st.session_state:
+    st.session_state["tickers"] = list(st.session_state.pop("_import_tickers"))
+if "_import_allocs" in st.session_state:
+    st.session_state["allocs"] = [float(a) for a in st.session_state.pop("_import_allocs")]
+if "_import_divs" in st.session_state:
+    st.session_state["divs"] = [bool(d) for d in st.session_state.pop("_import_divs")]
+if "_import_initial_value" in st.session_state:
+    val = st.session_state.pop("_import_initial_value")
+    try:
+        float_val = float(val)
+        st.session_state["initial_value"] = float_val
+        st.session_state["initial_value_input_int"] = int(float_val)
+        st.session_state["initial_value_input"] = float_val
+    except Exception:
+        pass
+if "_import_added_amount" in st.session_state:
+    val = st.session_state.pop("_import_added_amount")
+    try:
+        float_val = float(val)
+        st.session_state["added_amount"] = float_val
+        st.session_state["added_amount_input_int"] = int(float_val)
+        st.session_state["added_amount_input"] = float_val
+    except Exception:
+        pass
+if "_import_rebalancing_frequency" in st.session_state:
+    st.session_state["rebalancing_frequency"] = st.session_state.pop("_import_rebalancing_frequency")
+    st.session_state["rebalancing_frequency_widget"] = st.session_state["rebalancing_frequency"]
+if "_import_added_frequency" in st.session_state:
+    st.session_state["added_frequency"] = st.session_state.pop("_import_added_frequency")
+    st.session_state["added_frequency_widget"] = st.session_state["added_frequency"]
+if "_import_use_custom_dates" in st.session_state:
+    st.session_state["use_custom_dates"] = bool(st.session_state.pop("_import_use_custom_dates"))
+    st.session_state["use_custom_dates_checkbox"] = st.session_state["use_custom_dates"]
+if "_import_start_date" in st.session_state:
+    sd = st.session_state.pop("_import_start_date")
+    st.session_state["start_date"] = None if sd in (None, 'None', '') else pd.to_datetime(sd).date()
+if "_import_end_date" in st.session_state:
+    ed = st.session_state.pop("_import_end_date")
+    st.session_state["end_date"] = None if ed in (None, 'None', '') else pd.to_datetime(ed).date()
+if "_import_start_with" in st.session_state:
+    st.session_state["start_with_radio_key"] = st.session_state.pop("_import_start_with")
+if "_import_first_rebalance_strategy" in st.session_state:
+    st.session_state["first_rebalance_strategy"] = st.session_state.pop("_import_first_rebalance_strategy")
+    st.session_state["first_rebalance_strategy_radio_key"] = st.session_state["first_rebalance_strategy"]
+if "_import_use_momentum" in st.session_state:
+    st.session_state["use_momentum"] = bool(st.session_state.pop("_import_use_momentum"))
+    st.session_state["use_momentum_checkbox"] = st.session_state["use_momentum"]
+if "_import_momentum_strategy" in st.session_state:
+    st.session_state["momentum_strategy"] = st.session_state.pop("_import_momentum_strategy")
+    st.session_state["momentum_strategy_radio"] = st.session_state["momentum_strategy"]
+if "_import_negative_momentum_strategy" in st.session_state:
+    st.session_state["negative_momentum_strategy"] = st.session_state.pop("_import_negative_momentum_strategy")
+    st.session_state["negative_momentum_strategy_radio"] = st.session_state["negative_momentum_strategy"]
+if "_import_mom_windows" in st.session_state:
+    # Convert momentum window weights from percentage to decimal format
+    imported_windows = st.session_state.pop("_import_mom_windows")
+    converted_windows = []
+    for window in imported_windows:
+        converted_window = window.copy()
+        weight = window.get('weight', 0.0)
+        if isinstance(weight, (int, float)):
+            if weight > 1.0:
+                # If weight is stored as percentage, convert to decimal
+                converted_window['weight'] = weight / 100.0
+            else:
+                # Already in decimal format, use as is
+                converted_window['weight'] = weight
+        else:
+            converted_window['weight'] = 0.0
+        converted_windows.append(converted_window)
+    st.session_state["mom_windows"] = converted_windows
+if "_import_use_beta" in st.session_state:
+    st.session_state["use_beta"] = bool(st.session_state.pop("_import_use_beta"))
+    st.session_state["use_beta_checkbox"] = st.session_state["use_beta"]
+if "_import_beta_window_days" in st.session_state:
+    st.session_state["beta_window_days"] = int(st.session_state.pop("_import_beta_window_days"))
+    st.session_state["beta_window_input"] = st.session_state["beta_window_days"]
+if "_import_beta_exclude_days" in st.session_state:
+    st.session_state["beta_exclude_days"] = int(st.session_state.pop("_import_beta_exclude_days"))
+    st.session_state["beta_exclude_input"] = st.session_state["beta_exclude_days"]
+if "_import_use_vol" in st.session_state:
+    st.session_state["use_vol"] = bool(st.session_state.pop("_import_use_vol"))
+    st.session_state["use_vol_checkbox"] = st.session_state["use_vol"]
+if "_import_vol_window_days" in st.session_state:
+    st.session_state["vol_window_days"] = int(st.session_state.pop("_import_vol_window_days"))
+    st.session_state["vol_window_input"] = st.session_state["vol_window_days"]
+if "_import_vol_exclude_days" in st.session_state:
+    st.session_state["vol_exclude_days"] = int(st.session_state.pop("_import_vol_exclude_days"))
+    st.session_state["vol_exclude_input"] = st.session_state["vol_exclude_days"]
+if "_import_portfolio_drag_pct" in st.session_state:
+    try:
+        st.session_state["portfolio_drag_pct"] = float(st.session_state.pop("_import_portfolio_drag_pct"))
+    except Exception:
+        st.session_state["portfolio_drag_pct"] = st.session_state.pop("_import_portfolio_drag_pct")
+if "_import_benchmark_ticker" in st.session_state:
+    # This will be handled by the text_input widget directly when it renders
+    pass
+if "_import_collect_dividends_as_cash" in st.session_state:
+    st.session_state["collect_dividends_as_cash"] = bool(st.session_state.pop("_import_collect_dividends_as_cash"))
+    st.session_state["collect_dividends_as_cash_checkbox"] = st.session_state["collect_dividends_as_cash"]
 
 # Custom CSS for a better layout, a distinct primary button, and the fixed 'Back to Top' button
 st.markdown("""
@@ -1762,6 +1917,7 @@ _ss_default("added_amount", 1000)
 _ss_default("rebalancing_frequency", "Monthly")
 _ss_default("added_frequency", "Monthly")
 _ss_default("start_with_radio_key", "oldest")
+_ss_default("collect_dividends_as_cash", False)
 
 _ss_default("fig_dict", None)      
 _ss_default("console", "")   
@@ -1827,61 +1983,7 @@ if st.session_state.get("_import_pending", False):
         if "_import_end_date" in st.session_state:
             ed = st.session_state.pop("_import_end_date")
             st.session_state["end_date"] = None if ed in (None, 'None', '') else pd.to_datetime(ed).date()
-        if "_import_start_with" in st.session_state:
-            st.session_state["start_with_radio_key"] = st.session_state.pop("_import_start_with")
-        if "_import_use_momentum" in st.session_state:
-            st.session_state["use_momentum"] = bool(st.session_state.pop("_import_use_momentum"))
-            st.session_state["use_momentum_checkbox"] = st.session_state["use_momentum"]
-        if "_import_momentum_strategy" in st.session_state:
-            st.session_state["momentum_strategy"] = st.session_state.pop("_import_momentum_strategy")
-            st.session_state["momentum_strategy_radio"] = st.session_state["momentum_strategy"]
-        if "_import_negative_momentum_strategy" in st.session_state:
-            st.session_state["negative_momentum_strategy"] = st.session_state.pop("_import_negative_momentum_strategy")
-            st.session_state["negative_momentum_strategy_radio"] = st.session_state["negative_momentum_strategy"]
-        if "_import_mom_windows" in st.session_state:
-            # Convert momentum window weights from percentage to decimal format
-            imported_windows = st.session_state.pop("_import_mom_windows")
-            converted_windows = []
-            for window in imported_windows:
-                converted_window = window.copy()
-                weight = window.get('weight', 0.0)
-                if isinstance(weight, (int, float)):
-                    if weight > 1.0:
-                        # If weight is stored as percentage, convert to decimal
-                        converted_window['weight'] = weight / 100.0
-                    else:
-                        # Already in decimal format, use as is
-                        converted_window['weight'] = weight
-                else:
-                    converted_window['weight'] = 0.0
-                converted_windows.append(converted_window)
-            st.session_state["mom_windows"] = converted_windows
-        if "_import_use_beta" in st.session_state:
-            st.session_state["use_beta"] = bool(st.session_state.pop("_import_use_beta"))
-            st.session_state["use_beta_checkbox"] = st.session_state["use_beta"]
-        if "_import_beta_window_days" in st.session_state:
-            st.session_state["beta_window_days"] = int(st.session_state.pop("_import_beta_window_days"))
-            st.session_state["beta_window_input"] = st.session_state["beta_window_days"]
-        if "_import_beta_exclude_days" in st.session_state:
-            st.session_state["beta_exclude_days"] = int(st.session_state.pop("_import_beta_exclude_days"))
-            st.session_state["beta_exclude_input"] = st.session_state["beta_exclude_days"]
-        if "_import_use_vol" in st.session_state:
-            st.session_state["use_vol"] = bool(st.session_state.pop("_import_use_vol"))
-            st.session_state["use_vol_checkbox"] = st.session_state["use_vol"]
-        if "_import_vol_window_days" in st.session_state:
-            st.session_state["vol_window_days"] = int(st.session_state.pop("_import_vol_window_days"))
-            st.session_state["vol_window_input"] = st.session_state["vol_window_days"]
-        if "_import_vol_exclude_days" in st.session_state:
-            st.session_state["vol_exclude_days"] = int(st.session_state.pop("_import_vol_exclude_days"))
-            st.session_state["vol_exclude_input"] = st.session_state["vol_exclude_days"]
-        if "_import_portfolio_drag_pct" in st.session_state:
-            try:
-                st.session_state["portfolio_drag_pct"] = float(st.session_state.pop("_import_portfolio_drag_pct"))
-            except Exception:
-                st.session_state["portfolio_drag_pct"] = st.session_state.pop("_import_portfolio_drag_pct")
-        if "_import_benchmark_ticker" in st.session_state:
-            # This will be handled by the text_input widget directly when it renders
-            pass
+
         
         # Handle portfolio-specific JSON imports for main app
         if "_import_portfolio_config" in st.session_state:
@@ -1912,6 +2014,7 @@ if st.session_state.get("_import_pending", False):
                     'exclude_days_beta': portfolio_config.get('exclude_days_beta', 30),
                     'vol_window_days': portfolio_config.get('vol_window_days', 365),
                     'exclude_days_vol': portfolio_config.get('exclude_days_vol', 30),
+                    'collect_dividends_as_cash': portfolio_config.get('collect_dividends_as_cash', False),
                 }
                 
                 # Apply the portfolio configuration to main app session state
@@ -1920,22 +2023,42 @@ if st.session_state.get("_import_pending", False):
                     # Also update the widget key to ensure the UI reflects the imported name
                     st.session_state["portfolio_name_input"] = main_app_config['name']
                 if 'stocks' in main_app_config and main_app_config['stocks']:
-                    st.session_state["tickers"] = [stock.get('ticker', '') for stock in main_app_config['stocks']]
-                    # Keep allocations in decimal format (0.0-1.0) as Backtest Engine expects
+                    # Clear existing tickers first
+                    st.session_state["tickers"] = []
+                    st.session_state["allocs"] = []
+                    st.session_state["divs"] = []
+                    
+                    # Clear all ticker widget keys to prevent UI interference
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("ticker_") or key.startswith("alloc_input_") or key.startswith("divs_checkbox_"):
+                            del st.session_state[key]
+                    
+                    # Extract tickers and allocations from stocks array
+                    stocks = main_app_config['stocks']
+                    tickers = []
                     allocations = []
-                    for stock in main_app_config['stocks']:
-                        allocation = stock.get('allocation', 0.0)
-                        if isinstance(allocation, (int, float)):
-                            # If allocation is in percentage format (>1.0), convert to decimal
-                            if allocation > 1.0:
-                                allocations.append(allocation / 100.0)
+                    dividends = []
+                    
+                    for stock in stocks:
+                        if stock.get('ticker'):
+                            tickers.append(stock['ticker'])
+                            # Get allocation (convert from percentage to decimal if needed)
+                            allocation = stock.get('allocation', 0.0)
+                            if isinstance(allocation, (int, float)):
+                                if allocation > 1.0:
+                                    # Convert percentage to decimal
+                                    allocations.append(allocation / 100.0)
+                                else:
+                                    # Already in decimal format
+                                    allocations.append(allocation)
                             else:
-                                # Already in decimal format, use as is
-                                allocations.append(allocation)
-                        else:
-                            allocations.append(0.0)
+                                allocations.append(0.0)
+                            # Get dividend setting
+                            dividends.append(stock.get('include_dividends', True))
+                    
+                    st.session_state["tickers"] = tickers
                     st.session_state["allocs"] = allocations
-                    st.session_state["divs"] = [stock.get('include_dividends', True) for stock in main_app_config['stocks']]
+                    st.session_state["divs"] = dividends
                 
                 if 'benchmark_ticker' in main_app_config:
                     st.session_state["_import_benchmark_ticker"] = main_app_config['benchmark_ticker']
@@ -1961,6 +2084,9 @@ if st.session_state.get("_import_pending", False):
                 if 'added_frequency' in main_app_config:
                     st.session_state["added_frequency"] = main_app_config['added_frequency']
                     st.session_state["added_frequency_widget"] = main_app_config['added_frequency']
+                if 'collect_dividends_as_cash' in main_app_config:
+                    st.session_state["collect_dividends_as_cash"] = bool(main_app_config['collect_dividends_as_cash'])
+                    st.session_state["collect_dividends_as_cash_checkbox"] = bool(main_app_config['collect_dividends_as_cash'])
                 if 'start_with' in main_app_config:
                     # Handle start_with value mapping from other pages
                     start_with = main_app_config['start_with']
@@ -2250,6 +2376,155 @@ def update_mom_weight(idx):
     if key in st.session_state:
         st.session_state.mom_windows[idx]['weight'] = st.session_state[key] / 100.0
 
+def update_start_with():
+    st.session_state.start_with_radio_key = st.session_state.start_with_radio_key
+
+def update_first_rebalance_strategy():
+    st.session_state.first_rebalance_strategy = st.session_state.first_rebalance_strategy_radio_key
+
+def update_momentum_strategy():
+    st.session_state.momentum_strategy = st.session_state.momentum_strategy_radio
+
+def update_negative_momentum_strategy():
+    st.session_state.negative_momentum_strategy = st.session_state.negative_momentum_strategy_radio
+
+def paste_json_callback():
+    try:
+        json_data = json.loads(st.session_state.backtest_engine_paste_json_text)
+        
+        # Clear widget keys for portfolio settings to force re-initialization
+        widget_keys_to_clear = [
+            "initial_value_input", "added_amount_input", "rebalancing_frequency_widget", 
+            "added_frequency_widget", "collect_dividends_as_cash_checkbox", "first_rebalance_strategy_radio_key",
+            "start_with_radio_key", "momentum_strategy_radio", "negative_momentum_strategy_radio"
+        ]
+        for key in widget_keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
+        
+        # Handle stocks field - convert from stocks format to legacy format
+        stocks = json_data.get('stocks', [])
+        if stocks:
+            # Clear existing tickers and widget keys first
+            st.session_state.tickers = []
+            st.session_state.allocs = []
+            st.session_state.divs = []
+            
+            # Clear all ticker widget keys to prevent UI interference
+            for key in list(st.session_state.keys()):
+                if key.startswith("ticker_") or key.startswith("alloc_input_") or key.startswith("divs_checkbox_"):
+                    del st.session_state[key]
+            
+            tickers = []
+            allocations = []
+            dividends = []
+            
+            for stock in stocks:
+                if stock.get('ticker'):
+                    tickers.append(stock['ticker'])
+                    # Get allocation (convert from percentage to decimal if needed)
+                    allocation = stock.get('allocation', 0.0)
+                    if isinstance(allocation, (int, float)):
+                        if allocation > 1.0:
+                            # Convert percentage to decimal
+                            allocations.append(allocation / 100.0)
+                        else:
+                            # Already in decimal format
+                            allocations.append(allocation)
+                    else:
+                        allocations.append(0.0)
+                    # Get dividend setting
+                    dividends.append(stock.get('include_dividends', True))
+            
+            st.session_state.tickers = tickers
+            st.session_state.allocs = allocations
+            st.session_state.divs = dividends
+        
+        # Handle basic portfolio settings
+        if 'name' in json_data:
+            st.session_state.portfolio_name = json_data['name']
+            st.session_state.portfolio_name_input = json_data['name']
+        if 'initial_value' in json_data:
+            val = json_data['initial_value']
+            try:
+                float_val = float(val)
+                st.session_state.initial_value = float_val
+                st.session_state.initial_value_input_int = int(float_val)
+                st.session_state.initial_value_input = float_val
+            except Exception:
+                pass
+        if 'added_amount' in json_data:
+            val = json_data['added_amount']
+            try:
+                float_val = float(val)
+                st.session_state.added_amount = float_val
+                st.session_state.added_amount_input_int = int(float_val)
+                st.session_state.added_amount_input = float_val
+            except Exception:
+                pass
+        if 'rebalancing_frequency' in json_data:
+            st.session_state.rebalancing_frequency = json_data['rebalancing_frequency']
+            st.session_state.rebalancing_frequency_widget = json_data['rebalancing_frequency']
+        if 'added_frequency' in json_data:
+            st.session_state.added_frequency = json_data['added_frequency']
+            st.session_state.added_frequency_widget = json_data['added_frequency']
+        if 'collect_dividends_as_cash' in json_data:
+            st.session_state['_import_collect_dividends_as_cash'] = bool(json_data['collect_dividends_as_cash'])
+        if 'start_date_user' in json_data:
+            st.session_state['_import_start_date'] = json_data['start_date_user']
+        if 'end_date_user' in json_data:
+            st.session_state['_import_end_date'] = json_data['end_date_user']
+        if 'benchmark_ticker' in json_data:
+            st.session_state['_import_benchmark_ticker'] = json_data['benchmark_ticker']
+        
+        # Handle momentum settings
+        if 'use_momentum' in json_data:
+            st.session_state['_import_use_momentum'] = bool(json_data['use_momentum'])
+        if 'momentum_strategy' in json_data:
+            st.session_state['_import_momentum_strategy'] = json_data['momentum_strategy']
+        if 'negative_momentum_strategy' in json_data:
+            st.session_state['_import_negative_momentum_strategy'] = json_data['negative_momentum_strategy']
+        if 'momentum_windows' in json_data:
+            st.session_state['_import_mom_windows'] = json_data['momentum_windows']
+        
+        # Handle beta and volatility settings
+        if 'calc_beta' in json_data:
+            st.session_state['_import_use_beta'] = bool(json_data['calc_beta'])
+        if 'beta_window_days' in json_data:
+            st.session_state['_import_beta_window_days'] = int(json_data['beta_window_days'])
+        if 'exclude_days_beta' in json_data:
+            st.session_state['_import_beta_exclude_days'] = int(json_data['exclude_days_beta'])
+        if 'calc_volatility' in json_data:
+            st.session_state['_import_use_vol'] = bool(json_data['calc_volatility'])
+        if 'vol_window_days' in json_data:
+            st.session_state['_import_vol_window_days'] = int(json_data['vol_window_days'])
+        if 'exclude_days_vol' in json_data:
+            st.session_state['_import_vol_exclude_days'] = int(json_data['exclude_days_vol'])
+        
+        # Handle portfolio drag
+        if 'portfolio_drag_pct' in json_data:
+            st.session_state['_import_portfolio_drag_pct'] = float(json_data['portfolio_drag_pct'])
+        
+        # Handle global start_with setting from imported JSON
+        if 'start_with' in json_data:
+            # Handle start_with value mapping from other pages
+            start_with = json_data['start_with']
+            if start_with == 'first':
+                start_with = 'oldest'  # Map 'first' to 'oldest' (closest equivalent)
+            elif start_with not in ['all', 'oldest']:
+                start_with = 'all'  # Default fallback
+            st.session_state['_import_start_with'] = start_with
+        
+        # Handle first rebalance strategy from imported JSON
+        if 'first_rebalance_strategy' in json_data:
+            st.session_state['_import_first_rebalance_strategy'] = json_data['first_rebalance_strategy']
+        
+        st.success("Portfolio configuration updated from JSON (Backtest Engine page).")
+    except json.JSONDecodeError:
+        st.error("Invalid JSON format. Please check the text and try again.")
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
+
 def clear_outputs():
     st.session_state.fig_dict = None
     st.session_state.console = ""
@@ -2416,7 +2691,44 @@ def reset_assets_only():
 
     # Update JSON preview
     try:
-        st.session_state['backtest_json'] = json.dumps(get_current_config(), indent=2, default=str)
+        # Create config using the new format
+        config = {
+            'name': st.session_state.get("portfolio_name", "Main Portfolio"),
+            'stocks': [
+                {
+                    'ticker': ticker,
+                    'allocation': alloc,
+                    'include_dividends': div
+                }
+                for ticker, alloc, div in zip(
+                    st.session_state.get("tickers", []),
+                    st.session_state.get("allocs", []),
+                    st.session_state.get("divs", [])
+                )
+            ],
+            'benchmark_ticker': st.session_state.get("benchmark_ticker", "^GSPC"),
+            'initial_value': st.session_state.get("initial_value", 10000),
+            'added_amount': st.session_state.get("added_amount", 0),
+            'added_frequency': st.session_state.get("added_frequency", "Monthly"),
+            'rebalancing_frequency': st.session_state.get("rebalancing_frequency", "Monthly"),
+            'start_date_user': st.session_state.get("start_date", None),
+            'end_date_user': st.session_state.get("end_date", None),
+            'start_with': st.session_state.get("start_with_radio_key", "oldest"),
+            'first_rebalance_strategy': st.session_state.get("first_rebalance_strategy", "rebalancing_date"),
+            'use_momentum': st.session_state.get("use_momentum", False),
+            'momentum_strategy': st.session_state.get("momentum_strategy", "Classic momentum"),
+            'negative_momentum_strategy': st.session_state.get("negative_momentum_strategy", "Go to cash"),
+            'momentum_windows': st.session_state.get("mom_windows", []),
+            'calc_beta': st.session_state.get("use_beta", False),
+            'calc_volatility': st.session_state.get("use_vol", False),
+            'beta_window_days': st.session_state.get("beta_window_days", 365),
+            'exclude_days_beta': st.session_state.get("beta_exclude_days", 30),
+            'vol_window_days': st.session_state.get("vol_window_days", 365),
+            'exclude_days_vol': st.session_state.get("vol_exclude_days", 30),
+            'collect_dividends_as_cash': st.session_state.get("collect_dividends_as_cash", False),
+            'portfolio_drag_pct': float(st.session_state.get("portfolio_drag_pct", 0.0)),
+        }
+        st.session_state['backtest_json'] = json.dumps(config, indent=2, default=str)
     except Exception:
         st.session_state['backtest_json'] = '{}'
 def clear_dates():
@@ -2433,15 +2745,7 @@ def strip_ansi(text: str) -> str:
 
 # Helper functions removed - checkboxes now use the same pattern as working Multi backtest and Allocations pages
 
-def json_refresh():
-    """Small helper to mark UI changes so JSON and other UI reflect state
-    immediately. Intended for use as an on_change callback for inputs.
-    """
-    try:
-        st.session_state['_last_ui_change'] = datetime.now().isoformat()
-    except Exception:
-        pass
-    return
+
 
 def create_pie_chart(allocations, title):
     if not allocations:
@@ -2534,9 +2838,46 @@ with st.sidebar:
             st.session_state.portfolio_drag_pct = 0.0
         # Update the JSON preview used for copy/paste/export so the change appears live
         try:
-            st.session_state['backtest_json'] = json.dumps(get_current_config(), indent=2, default=str)
+            # Create config using the new format
+            config = {
+                'name': st.session_state.get("portfolio_name", "Main Portfolio"),
+                'stocks': [
+                    {
+                        'ticker': ticker,
+                        'allocation': alloc,
+                        'include_dividends': div
+                    }
+                    for ticker, alloc, div in zip(
+                        st.session_state.get("tickers", []),
+                        st.session_state.get("allocs", []),
+                        st.session_state.get("divs", [])
+                    )
+                ],
+                'benchmark_ticker': st.session_state.get("benchmark_ticker", "^GSPC"),
+                'initial_value': st.session_state.get("initial_value", 10000),
+                'added_amount': st.session_state.get("added_amount", 0),
+                'added_frequency': st.session_state.get("added_frequency", "Monthly"),
+                'rebalancing_frequency': st.session_state.get("rebalancing_frequency", "Monthly"),
+                'start_date_user': st.session_state.get("start_date", None),
+                'end_date_user': st.session_state.get("end_date", None),
+                'start_with': st.session_state.get("start_with_radio_key", "oldest"),
+                'first_rebalance_strategy': st.session_state.get("first_rebalance_strategy", "rebalancing_date"),
+                'use_momentum': st.session_state.get("use_momentum", False),
+                'momentum_strategy': st.session_state.get("momentum_strategy", "Classic momentum"),
+                'negative_momentum_strategy': st.session_state.get("negative_momentum_strategy", "Go to cash"),
+                'momentum_windows': st.session_state.get("mom_windows", []),
+                'calc_beta': st.session_state.get("use_beta", False),
+                'calc_volatility': st.session_state.get("use_vol", False),
+                'beta_window_days': st.session_state.get("beta_window_days", 365),
+                'exclude_days_beta': st.session_state.get("beta_exclude_days", 30),
+                'vol_window_days': st.session_state.get("vol_window_days", 365),
+                'exclude_days_vol': st.session_state.get("vol_exclude_days", 30),
+                'collect_dividends_as_cash': st.session_state.get("collect_dividends_as_cash", False),
+                'portfolio_drag_pct': float(st.session_state.get("portfolio_drag_pct", 0.0)),
+            }
+            st.session_state['backtest_json'] = json.dumps(config, indent=2, default=str)
         except Exception:
-            # If get_current_config isn't available yet during initial runs, ignore
+            # If config creation fails during initial runs, ignore
             pass
 
     with st.expander("Portfolio drag / fees (annual %)", expanded=False):
@@ -2574,7 +2915,7 @@ with st.sidebar:
                 st.session_state[div_key] = st.session_state.divs[i]
             st.checkbox("Include Dividends", key=div_key, on_change=lambda i=i: setattr(st.session_state, f'divs[{i}]', st.session_state[div_key]))
         with col4:
-            if st.button("x", key=f"remove_{i}_{st.session_state.tickers[i]}_{id(st.session_state.tickers)}", help="Remove this ticker", on_click=remove_ticker_callback, args=(st.session_state.tickers[i],)):
+            if st.button("x", key=f"remove_ticker_{i}", help="Remove this ticker", on_click=remove_ticker_callback, args=(st.session_state.tickers[i],)):
                 pass
         # Only show allocation if NOT using momentum
         if not st.session_state.use_momentum:
@@ -2666,8 +3007,8 @@ with st.sidebar:
     # 4. Rebalancing frequency and cash addition frequency side by side (switched order)
     st.markdown("")
     col_freq1, col_freq2 = st.columns(2)
-    added_freq_options = ["Never", "Weekly", "Biweekly", "Monthly", "Quarterly", "Semiannually", "Annually"]
-    rebalancing_freq_options = ["Never", "Weekly", "Biweekly", "Monthly", "Quarterly", "Semiannually", "Annually"]
+    added_freq_options = ["Never", "Buy & Hold", "Buy & Hold (Target)", "Weekly", "Biweekly", "Monthly", "Quarterly", "Semiannually", "Annually"]
+    rebalancing_freq_options = ["Never", "Buy & Hold", "Buy & Hold (Target)", "Weekly", "Biweekly", "Monthly", "Quarterly", "Semiannually", "Annually"]
     # Helper placeholder: widget on_change handlers will cause a rerun so the
     # JSON text_area (rendered directly each run) updates automatically.
     def update_backtest_json():
@@ -2675,17 +3016,28 @@ with st.sidebar:
     with col_freq1:
         rebalancing_frequency = st.selectbox(
             "Rebalancing Frequency", rebalancing_freq_options,
-            help="How often to rebalance the portfolio. This is where the momentum strategy is applied.",
+            help="How often to rebalance the portfolio. This is where the momentum strategy is applied. 'Buy & Hold' reinvests cash immediately using current proportions. 'Buy & Hold (Target)' reinvests cash immediately using target allocations. Cash from dividends (if 'Collect Dividends as Cash' is enabled) will be available for rebalancing.",
             key="rebalancing_frequency_widget", on_change=lambda: setattr(st.session_state, 'rebalancing_frequency', st.session_state["rebalancing_frequency_widget"])
         )
     with col_freq2:
         added_frequency = st.selectbox(
             "Cash Addition Frequency", added_freq_options,
+            help="How often to add cash to the portfolio. 'Buy & Hold' reinvests cash immediately using current proportions. 'Buy & Hold (Target)' reinvests cash immediately using target allocations.",
             key="added_frequency_widget", on_change=lambda: setattr(st.session_state, 'added_frequency', st.session_state["added_frequency_widget"])
         )
     # Prevent cash from being added if frequency is Never
     if added_frequency == "Never":
         added_amount = 0
+
+    # Dividend handling option
+    if "collect_dividends_as_cash_checkbox" not in st.session_state:
+        st.session_state["collect_dividends_as_cash_checkbox"] = st.session_state.collect_dividends_as_cash
+    st.checkbox(
+        "Collect Dividends as Cash", 
+        key="collect_dividends_as_cash_checkbox",
+        help="When enabled, dividends are collected as cash instead of being automatically reinvested in the stock. This cash will be available for rebalancing.",
+        on_change=lambda: setattr(st.session_state, 'collect_dividends_as_cash', st.session_state["collect_dividends_as_cash_checkbox"])
+    )
 
     st.markdown("---")
     # Time & Data Options section (only once, after portfolio settings)
@@ -2713,7 +3065,7 @@ with st.sidebar:
             # update session state automatically when the user selects a date.
             st.date_input(
                 "Start Date",
-                min_value=date(1900, 1, 1), key='start_date', on_change=json_refresh
+                min_value=date(1900, 1, 1), key='start_date'
             )
         with col_end:
             # Initialize widget key with session state value
@@ -2721,13 +3073,12 @@ with st.sidebar:
                 st.session_state["end_date"] = st.session_state.end_date if st.session_state.end_date else date.today()
             # Let Streamlit manage `st.session_state['end_date']` via the widget key
             st.date_input(
-                "End Date", key='end_date', on_change=json_refresh
+                "End Date", key='end_date'
             )
         with col_clear_dates:
             st.markdown("<br>", unsafe_allow_html=True) # Spacer for alignment
             st.button("Clear Dates", on_click=clear_dates)
-            # Extra Apply button to ensure dates are committed and JSON updates
-            st.button("Apply Dates", help="Apply selected dates to update JSON immediately", on_click=json_refresh, key="apply_dates_btn")
+
 
         start_date_user = st.session_state.start_date
         end_date_user = st.session_state.end_date
@@ -2737,17 +3088,37 @@ with st.sidebar:
 
     # 5. How to handle assets with different start dates?
     start_with_options = ["all", "oldest"]
+    if "start_with_radio_key" not in st.session_state:
+        st.session_state["start_with_radio_key"] = st.session_state.get("start_with_radio_key", "oldest")
     start_with = st.radio(
         "How to handle assets with different start dates?",
         start_with_options,
-        
+        index=0 if st.session_state["start_with_radio_key"] == "all" else 1,
         format_func=lambda x: "Start when ALL assets are available" if x == "all" else "Start with OLDEST asset",
         help="""
         **All:** Starts the backtest when all selected assets are available.
         **Oldest:** Starts at the oldest date of any asset and adds assets as they become available.
         """,
         key="start_with_radio_key",
-        on_change=lambda: setattr(st.session_state, 'start_with_radio_key', st.session_state["start_with_radio_key"])
+        on_change=update_start_with
+    )
+
+    # 6. When should the first rebalancing occur?
+    first_rebalance_options = ["rebalancing_date", "momentum_window_complete"]
+    if "first_rebalance_strategy_radio_key" not in st.session_state:
+        st.session_state["first_rebalance_strategy_radio_key"] = st.session_state.get("first_rebalance_strategy", "rebalancing_date")
+    
+    first_rebalance_strategy = st.radio(
+        "When should the first rebalancing occur?",
+        first_rebalance_options,
+        index=0 if st.session_state["first_rebalance_strategy_radio_key"] == "rebalancing_date" else 1,
+        format_func=lambda x: "First rebalance on rebalancing date" if x == "rebalancing_date" else "First rebalance when momentum window complete",
+        help="""
+        **First rebalance on rebalancing date:** Start rebalancing immediately when possible.
+        **First rebalance when momentum window complete:** Wait for the largest momentum window to complete before first rebalance.
+        """,
+        key="first_rebalance_strategy_radio_key",
+        on_change=update_first_rebalance_strategy
     )
 
     # Always preserve radio selections in session state
@@ -2760,21 +3131,25 @@ with st.sidebar:
 
     if st.session_state.use_momentum:
         st.header("Momentum & Rebalancing")
+        if "momentum_strategy_radio" not in st.session_state:
+            st.session_state["momentum_strategy_radio"] = st.session_state.get("momentum_strategy", "Classic momentum")
         selected_momentum = st.radio(
             "Momentum Strategy (when not all assets have negative):",
             ["Classic momentum", "Relative momentum"],
-
+            index=0 if st.session_state["momentum_strategy_radio"] == "Classic momentum" else 1,
             key="momentum_strategy_radio",
             help="Choose how to allocate when at least one asset has positive momentum.",
-            on_change=lambda: setattr(st.session_state, 'momentum_strategy', st.session_state["momentum_strategy_radio"])
+            on_change=update_momentum_strategy
         )
+        if "negative_momentum_strategy_radio" not in st.session_state:
+            st.session_state["negative_momentum_strategy_radio"] = st.session_state.get("negative_momentum_strategy", "Go to cash")
         selected_negative = st.radio(
             "If all assets have negative momentum:",
             ["Go to cash", "Equal weight", "Relative momentum"],
-
+            index=0 if st.session_state["negative_momentum_strategy_radio"] == "Go to cash" else (1 if st.session_state["negative_momentum_strategy_radio"] == "Equal weight" else 2),
             key="negative_momentum_strategy_radio",
             help="Choose what to do when all assets have negative momentum.",
-            on_change=lambda: setattr(st.session_state, 'negative_momentum_strategy', st.session_state["negative_momentum_strategy_radio"])
+            on_change=update_negative_momentum_strategy
         )
         st.subheader("Momentum Windows")
         # Buttons for momentum window management
@@ -2968,313 +3343,63 @@ with st.sidebar:
 
 
 
-    # --- Copy/Paste Backtest Parameters Section (after Benchmark Ticker) ---
+    # --- JSON Configuration Section (after Benchmark Ticker) ---
     st.markdown("---")
-    st.subheader("Copy/Paste Backtest Parameters")
-    def get_current_config():
-        # Return None for start/end if custom dates are not enabled so JSON
-        # shows null instead of a stringified date.
-        use_custom = st.session_state.get("use_custom_dates", False)
-        sd = st.session_state.get("start_date", None) if use_custom else None
-        ed = st.session_state.get("end_date", None) if use_custom else None
-        # If dates were stored as strings (from an import or earlier state),
-        # convert them to date objects so JSON shows the value (and not None).
-        try:
-            if sd is not None and isinstance(sd, str):
-                sd = pd.to_datetime(sd).date()
-        except Exception:
-            sd = None
-        try:
-            if ed is not None and isinstance(ed, str):
-                ed = pd.to_datetime(ed).date()
-        except Exception:
-            ed = None
-        return {
-            "name": st.session_state.get("portfolio_name", "Main Portfolio"),
-            "tickers": st.session_state.get("tickers", []),
-            "allocs": st.session_state.get("allocs", []),
-            "divs": st.session_state.get("divs", []),
-                            "initial_value": st.session_state.get("initial_value", 10000),
-                "added_amount": st.session_state.get("added_amount", 0),
-                "rebalancing_frequency": st.session_state.get("rebalancing_frequency", "Monthly"),
-                "added_frequency": st.session_state.get("added_frequency", "Monthly"),
-            "use_custom_dates": use_custom,
-            "start_date": sd if sd is None else sd,
-            "end_date": ed if ed is None else ed,
-                            "start_with": st.session_state.get("start_with_radio_key", "oldest"),
-            "use_momentum": st.session_state.get("use_momentum", False),
-            "momentum_strategy": st.session_state.get("momentum_strategy", "Classic momentum"),
-            "negative_momentum_strategy": st.session_state.get("negative_momentum_strategy", "Go to cash"),
-            "momentum_windows": st.session_state.get("mom_windows", []),
-                            # Backtest_Engine.py format
-            "use_beta": st.session_state.get("use_beta", False),
-            "beta_window_days": st.session_state.get("beta_window_days", 365),
-            "beta_exclude_days": st.session_state.get("beta_exclude_days", 30),
-            "use_vol": st.session_state.get("use_vol", False),
-            "vol_window_days": st.session_state.get("vol_window_days", 365),
-            "vol_exclude_days": st.session_state.get("vol_exclude_days", 30),
-            # Other pages format (for compatibility)
-            "calc_beta": st.session_state.get("use_beta", False),
-            "calc_volatility": st.session_state.get("use_vol", False),
-            # Persist the portfolio drag (%) so JSON export shows the live value
-            "portfolio_drag_pct": float(st.session_state.get("portfolio_drag_pct", 0.0)),
-            # Add benchmark ticker to JSON export
-            "benchmark_ticker": benchmark_ticker
-        }
+    
+    # Create a single portfolio config for Backtest Engine (since it's single portfolio)
+    backtest_engine_config = {
+        'name': st.session_state.get("portfolio_name", "Main Portfolio"),
+        'stocks': [
+            {
+                'ticker': ticker,
+                'allocation': alloc,
+                'include_dividends': div
+            }
+            for ticker, alloc, div in zip(
+                st.session_state.get("tickers", []),
+                st.session_state.get("allocs", []),
+                st.session_state.get("divs", [])
+            )
+        ],
+        'benchmark_ticker': benchmark_ticker,
+        'initial_value': st.session_state.get("initial_value", 10000),
+        'added_amount': st.session_state.get("added_amount", 0),
+        'added_frequency': st.session_state.get("added_frequency", "Monthly"),
+        'rebalancing_frequency': st.session_state.get("rebalancing_frequency", "Monthly"),
+        'start_date_user': st.session_state.get("start_date", None),
+        'end_date_user': st.session_state.get("end_date", None),
+        'start_with': st.session_state.get("start_with_radio_key", "oldest"),
+        'first_rebalance_strategy': st.session_state.get("first_rebalance_strategy", "rebalancing_date"),
+        'use_momentum': st.session_state.get("use_momentum", False),
+        'momentum_strategy': st.session_state.get("momentum_strategy", "Classic momentum"),
+        'negative_momentum_strategy': st.session_state.get("negative_momentum_strategy", "Go to cash"),
+        'momentum_windows': st.session_state.get("mom_windows", []),
+        'calc_beta': st.session_state.get("use_beta", False),
+        'calc_volatility': st.session_state.get("use_vol", False),
+        'beta_window_days': st.session_state.get("beta_window_days", 365),
+        'exclude_days_beta': st.session_state.get("beta_exclude_days", 30),
+        'vol_window_days': st.session_state.get("vol_window_days", 365),
+        'exclude_days_vol': st.session_state.get("vol_exclude_days", 30),
+        'collect_dividends_as_cash': st.session_state.get("collect_dividends_as_cash", False),
+        'portfolio_drag_pct': float(st.session_state.get("portfolio_drag_pct", 0.0)),
+    }
 
-
+with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
+    # Clean portfolio config for export by removing unused settings
+    cleaned_config = backtest_engine_config.copy()
+    # Update global settings from session state
+    cleaned_config['start_with'] = st.session_state.get('start_with_radio_key', 'oldest')
+    cleaned_config['first_rebalance_strategy'] = st.session_state.get('first_rebalance_strategy', 'rebalancing_date')
+    config_json = json.dumps(cleaned_config, indent=4, default=str)
+    st.code(config_json, language='json')
+    # Fixed JSON copy button
     import streamlit.components.v1 as components
-    json_str = json.dumps(get_current_config(), indent=2, default=str)
-    # Store the JSON in session_state so callbacks can update it and the
-    # disabled text_area will display the live value without relying on a
-    # separate local variable.
-    try:
-        st.session_state['backtest_json'] = json_str
-    except Exception:
-        pass
-    st.text_area("Backtest Parameters (JSON)", height=300, key='backtest_json', disabled=True)
-
-    # Small diagnostic helper: shows the raw session state values the JSON is
-    # computed from. Helpful to debug if a widget change isn't applied.
-    try:
-        sd_raw = repr(st.session_state.get("start_date", None))
-        sd_type = type(st.session_state.get("start_date", None)).__name__
-        use_custom_raw = st.session_state.get("use_custom_dates", None)
-        st.caption(f"DEBUG: use_custom_dates={use_custom_raw} | start_date={sd_raw} (type={sd_type})")
-    except Exception:
-        pass
-
-    # Fix invalid escape sequence and add small paste button
-    # Use the live session JSON if available so the Copy button always copies
-    # the latest parameters (previously this used a local snapshot `json_str`).
-    safe_json_str = st.session_state.get('backtest_json', json_str).replace("`", "\u0060")
     copy_html = f"""
-    <style>
-    .nice-btn {{
-        background-color: #0078D4;
-        color: white;
-        border: none;
-        padding: 8px 18px;
-        border-radius: 6px;
-        font-size: 16px;
-        cursor: pointer;
-        margin-bottom: 10px;
-    }}
-    .nice-btn:hover {{ background-color: #005A9E; }}
-    .small-btn {{
-        background-color: #e0e0e0;
-        color: #333;
-        border: none;
-        padding: 4px 10px;
-        border-radius: 4px;
-        font-size: 13px;
-        cursor: pointer;
-        margin-right: 8px;
-    }}
-    .small-btn:hover {{ background-color: #cccccc; }}
-    </style>
-    <button class='nice-btn' onclick='navigator.clipboard.writeText(`{safe_json_str}`)'>📋 Copy JSON</button>
+    <button onclick='navigator.clipboard.writeText({json.dumps(config_json)});' style='margin-bottom:10px;'>Copy to Clipboard</button>
     """
-    components.html(copy_html, height=60)
-
-
-    uploaded_json = st.text_area("Paste Backtest Parameters to Import", height=150, key="import_json")
-    execute_json = st.button("🚀 Execute JSON Import", help="Apply pasted JSON parameters", key="execute_json_btn")
-    if execute_json and uploaded_json:
-        # Validate JSON input first
-        json_text = uploaded_json.strip()
-        
-        if not json_text:
-            st.warning("Please paste JSON data before importing.")
-        else:
-            try:
-                imported_config = json.loads(json_text)
-                
-                # Check if this is a list of portfolio configurations (from Multi Backtest or Allocations pages)
-                if isinstance(imported_config, list) and len(imported_config) > 0:
-                    # Take the first portfolio configuration from the list
-                    first_portfolio = imported_config[0]
-                    if 'stocks' in first_portfolio and isinstance(first_portfolio['stocks'], list):
-                        # NEW FUNCTIONALITY: If multiple portfolios, just update tickers from first portfolio
-                        if len(imported_config) > 1:
-                            # Extract tickers and allocations from the first portfolio
-                            stocks = first_portfolio['stocks']
-                            tickers = []
-                            allocations = []
-                            dividends = []
-                            
-                            for stock in stocks:
-                                if stock.get('ticker'):
-                                    tickers.append(stock['ticker'])
-                                    # Get allocation (convert from percentage to decimal if needed)
-                                    allocation = stock.get('allocation', 0.0)
-                                    if isinstance(allocation, (int, float)):
-                                        if allocation > 1.0:
-                                            # Convert percentage to decimal
-                                            allocations.append(allocation / 100.0)
-                                        else:
-                                            # Already in decimal format
-                                            allocations.append(allocation)
-                                    else:
-                                        allocations.append(0.0)
-                                    # Get dividend setting
-                                    dividends.append(stock.get('include_dividends', True))
-                            
-                            # OPERATION 1: CLEAR EXISTING TICKERS AND WIDGET KEYS
-                            st.session_state.tickers = []
-                            st.session_state.allocs = []
-                            st.session_state.divs = []
-                            
-                            # Clear all ticker widget keys to prevent UI interference
-                            for key in list(st.session_state.keys()):
-                                if key.startswith("ticker_") or key.startswith("alloc_input_") or key.startswith("divs_checkbox_"):
-                                    del st.session_state[key]
-                            
-                            # OPERATION 2: UPDATE WITH NEW TICKERS AND THEIR ALLOCATIONS
-                            st.session_state.tickers = tickers
-                            st.session_state.allocs = allocations
-                            st.session_state.divs = dividends
-                            
-                            st.success(f"✅ Updated tickers and allocations from multiple portfolios: {tickers}")
-                            st.info(f"Allocations: {[f'{alloc*100:.1f}%' for alloc in allocations]}")
-                            st.rerun()
-                        else:
-                            # Single portfolio - use existing logic
-                            st.session_state['_import_portfolio_config'] = first_portfolio
-                            st.session_state['_import_pending'] = True
-                            st.success(f"Portfolio '{first_portfolio.get('name', 'Unknown')}' imported from list (Main App). Applying to UI...")
-                            st.rerun()
-                    else:
-                        st.error("Invalid portfolio configuration structure in list.")
-                # Check if this is a single portfolio configuration (has 'stocks' field)
-                elif 'stocks' in imported_config and isinstance(imported_config['stocks'], list):
-                    # This is a portfolio configuration - handle it specially
-                    st.session_state['_import_portfolio_config'] = imported_config
-                    st.session_state['_import_pending'] = True
-                    st.success("Portfolio configuration staged for import (Main App). Applying to UI...")
-                    st.rerun()
-                else:
-                                        # OPERATION 1: COMPLETELY CLEAR ALL TICKERS AND WIDGET KEYS
-                    st.session_state.tickers = []
-                    st.session_state.allocs = []
-                    st.session_state.divs = []
-                    
-                    # Clear all ticker widget keys to prevent UI interference
-                    for key in list(st.session_state.keys()):
-                        if key.startswith("ticker_") or key.startswith("alloc_input_") or key.startswith("divs_checkbox_"):
-                            del st.session_state[key]
-                    
-                    # OPERATION 2: IMMEDIATELY IMPORT FROM JSON (NO RELOAD)
-                    if 'name' in imported_config:
-                        st.session_state.portfolio_name = imported_config['name']
-                    if 'tickers' in imported_config:
-                        st.session_state.tickers = imported_config['tickers'].copy()
-                    if 'allocs' in imported_config:
-                        # Convert allocations to decimal format if they're in percentage format
-                        allocs = imported_config['allocs'].copy()
-                        for i, alloc in enumerate(allocs):
-                            if isinstance(alloc, (int, float)) and alloc > 1.0:
-                                allocs[i] = alloc / 100.0
-                        st.session_state.allocs = allocs
-                    if 'divs' in imported_config:
-                        st.session_state.divs = imported_config['divs'].copy()
-                    if 'initial_value' in imported_config:
-                        st.session_state.initial_value = imported_config['initial_value']
-                    if 'added_amount' in imported_config:
-                        st.session_state.added_amount = imported_config['added_amount']
-                    if 'rebalancing_frequency' in imported_config:
-                        # Map frequency values from other pages to app.py format
-                        freq = imported_config['rebalancing_frequency']
-                        freq_map = {
-                            'Never': 'Never',
-                            'Weekly': 'Weekly',
-                            'Biweekly': 'Biweekly',
-                            'Monthly': 'Monthly',
-                            'Quarterly': 'Quarterly',
-                            'Semiannually': 'Semiannually',
-                            'Annually': 'Annually',
-                            # Legacy format mapping
-                            'none': 'Never',
-                            'week': 'Weekly',
-                            '2weeks': 'Biweekly',
-                            'month': 'Monthly',
-                            '3months': 'Quarterly',
-                            '6months': 'Semiannually',
-                            'year': 'Annually'
-                        }
-                        st.session_state.rebalancing_frequency = freq_map.get(freq, 'Monthly')
-                    if 'added_frequency' in imported_config:
-                        # Map frequency values from other pages to app.py format
-                        freq = imported_config['added_frequency']
-                        freq_map = {
-                            'Never': 'Never',
-                            'Weekly': 'Weekly',
-                            'Biweekly': 'Biweekly',
-                            'Monthly': 'Monthly',
-                            'Quarterly': 'Quarterly',
-                            'Semiannually': 'Semiannually',
-                            'Annually': 'Annually',
-                            # Legacy format mapping
-                            'none': 'Never',
-                            'week': 'Weekly',
-                            '2weeks': 'Biweekly',
-                            'month': 'Monthly',
-                            '3months': 'Quarterly',
-                            '6months': 'Semiannually',
-                            'year': 'Annually'
-                        }
-                        st.session_state.added_frequency = freq_map.get(freq, 'Monthly')
-                    if 'use_custom_dates' in imported_config:
-                        st.session_state['_import_use_custom_dates'] = bool(imported_config['use_custom_dates'])
-                    if 'start_date' in imported_config:
-                        st.session_state['_import_start_date'] = imported_config['start_date']
-                    if 'end_date' in imported_config:
-                        st.session_state['_import_end_date'] = imported_config['end_date']
-                    if 'start_with' in imported_config:
-                        # Handle start_with value mapping from other pages
-                        start_with = imported_config['start_with']
-                        if start_with == 'first':
-                            start_with = 'oldest'  # Map 'first' to 'oldest' (closest equivalent)
-                        elif start_with not in ['all', 'oldest']:
-                            start_with = 'all'  # Default fallback
-                        st.session_state['_import_start_with'] = start_with
-                    if 'use_momentum' in imported_config:
-                        st.session_state['_import_use_momentum'] = bool(imported_config['use_momentum'])
-                    if 'momentum_strategy' in imported_config:
-                        st.session_state['_import_momentum_strategy'] = imported_config['momentum_strategy']
-                    if 'negative_momentum_strategy' in imported_config:
-                        st.session_state['_import_negative_momentum_strategy'] = imported_config['negative_momentum_strategy']
-                    if 'mom_windows' in imported_config:
-                        st.session_state['_import_mom_windows'] = imported_config['mom_windows']
-                    if 'momentum_windows' in imported_config:
-                        st.session_state['_import_mom_windows'] = imported_config['momentum_windows']
-                    if 'use_beta' in imported_config:
-                        st.session_state['_import_use_beta'] = bool(imported_config['use_beta'])
-                    if 'beta_window_days' in imported_config:
-                        st.session_state['_import_beta_window_days'] = int(imported_config['beta_window_days'])
-                    if 'beta_exclude_days' in imported_config:
-                        st.session_state['_import_beta_exclude_days'] = int(imported_config['beta_exclude_days'])
-                    if 'use_vol' in imported_config:
-                        st.session_state['_import_use_vol'] = bool(imported_config['use_vol'])
-                    if 'vol_window_days' in imported_config:
-                        st.session_state['_import_vol_window_days'] = int(imported_config['vol_window_days'])
-                    if 'vol_exclude_days' in imported_config:
-                        st.session_state['_import_vol_exclude_days'] = int(imported_config['vol_exclude_days'])
-                    if 'portfolio_drag_pct' in imported_config:
-                        # Stage the drag percent under a staging key to be applied before widgets
-                        st.session_state['_import_portfolio_drag_pct'] = imported_config['portfolio_drag_pct']
-                    if 'benchmark_ticker' in imported_config:
-                        st.session_state['_import_benchmark_ticker'] = str(imported_config['benchmark_ticker'])
-
-                    st.success("Configuration imported successfully!")
-                    st.rerun()
-                    
-            except json.JSONDecodeError as e:
-                st.error(f"❌ Invalid JSON format: {str(e)}")
-                st.info("💡 Please check your JSON syntax. Make sure all brackets, quotes, and commas are correct.")
-            except Exception as e:
-                st.error(f"❌ Error parsing JSON: {str(e)}")
-                st.info("💡 The JSON data appears to be corrupted or in an unexpected format.")
+    components.html(copy_html, height=40)
+    st.text_area("Paste JSON Here to Update Portfolio", key="backtest_engine_paste_json_text", height=200)
+    st.button("Update with Pasted JSON", on_click=paste_json_callback)
 
     # --- Yahoo Finance Verification for Benchmark Ticker ---
     benchmark_error = None
