@@ -57,10 +57,26 @@ def _ensure_naive_index(obj: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Seri
         # already naive
         import plotly.graph_objects as go
         import logging
+def check_currency_warning(tickers):
+    """
+    Check if any tickers are non-USD and display a warning.
+    """
+    non_usd_suffixes = ['.TO', '.V', '.CN', '.AX', '.L', '.PA', '.AS', '.SW', '.T', '.HK', '.KS', '.TW', '.JP']
+    non_usd_tickers = []
+    
+    for ticker in tickers:
+        if any(ticker.endswith(suffix) for suffix in non_usd_suffixes):
+            non_usd_tickers.append(ticker)
+    
+    if non_usd_tickers:
+        st.warning(f"⚠️ **Currency Warning**: The following tickers are not in USD: {', '.join(non_usd_tickers)}. "
+                  f"Currency conversion is not taken into account, which may affect allocation accuracy. "
+                  f"Consider using USD equivalents for more accurate results.")
+
 def get_trading_days(start_date, end_date):
     """
-    Retrieves NYSE market days between two dates, ensuring inputs are
-    datetime objects for robustness.
+    Retrieves trading days between two dates. For international stocks (like Canadian .TO),
+    this uses business days to avoid calendar mismatches with different market schedules.
     """
     # Ensure start_date and end_date are datetime objects before processing
     if not isinstance(start_date, datetime):
@@ -68,17 +84,10 @@ def get_trading_days(start_date, end_date):
     if not isinstance(end_date, datetime):
         end_date = datetime.combine(end_date, datetime.min.time())
 
-    try:
-        nyse = mcal.get_calendar('NYSE')
-        schedule = nyse.schedule(start_date=start_date, end_date=end_date)
-        idx = schedule.index
-        if getattr(idx, "tz", None) is not None:
-            idx = idx.tz_convert(None)
-        return pd.DatetimeIndex(idx)
-    except Exception as e:
-        warn(f"NYSE calendar error, using business days: {str(e)}")
-        # Fallback to standard business days, using the .date() from the datetime object
-        return pd.bdate_range(start=start_date.date(), end=end_date.date())
+    # Use business days instead of NYSE calendar to handle international stocks properly
+    # This prevents issues with Canadian stocks (.TO) that trade on different holidays
+    # Note: pd.bdate_range excludes weekends but includes US holidays
+    return pd.bdate_range(start=start_date.date(), end=end_date.date())
 
 def get_risk_free_rate(dates):
     """Downloads the risk-free rate (IRX) and aligns it to a given date range."""
@@ -589,6 +598,7 @@ def _load_data(tickers: List[str], start_date: datetime, end_date: datetime):
     """
     data = {}
     available_tickers = []
+    invalid_tickers = []
 
     # Default to large range if missing
     if start_date is None:
@@ -616,6 +626,7 @@ def _load_data(tickers: List[str], start_date: datetime, end_date: datetime):
 
             if hist.empty:
                 logger.warning(f"No data available for {t}")
+                invalid_tickers.append(t)
                 continue
 
             # Force tz-naive for hist
@@ -651,12 +662,13 @@ def _load_data(tickers: List[str], start_date: datetime, end_date: datetime):
 
         except Exception as e:
             logger.error(f"Error for {t}: {e}")
+            invalid_tickers.append(t)
             continue
 
     if not available_tickers:
         raise ValueError("No assets available with data.")
 
-    return data, available_tickers
+    return data, available_tickers, invalid_tickers
 
 
 def _prepare_backtest_dates(start_date_user: date | None, end_date_user: date | None, start_with: str, data: Dict, portfolio_tickers: List[str], momentum_windows: List[Dict] | None = None):
@@ -716,8 +728,23 @@ def _prepare_backtest_dates(start_date_user: date | None, end_date_user: date | 
     if backtest_start >= backtest_end:
         raise ValueError("Start date must be before end date based on data availability and your settings.")
 
-    # Build trading calendar and snap backtest_start to first available trading day
-    all_dates = get_trading_days(backtest_start, backtest_end)
+    # Build trading calendar from actual data instead of calendar to handle international stocks
+    # This ensures we only use dates when ALL stocks actually have data (intersection, not union)
+    all_trading_days = None
+    for t, d in data.items():
+        if t in portfolio_tickers and not d.empty:
+            # Get trading days from this stock's data within our range
+            stock_dates = set(d.index[(d.index >= backtest_start) & (d.index <= backtest_end)])
+            if all_trading_days is None:
+                all_trading_days = stock_dates
+            else:
+                # Use intersection to ensure ALL stocks have data on each date
+                all_trading_days = all_trading_days.intersection(stock_dates)
+    
+    if all_trading_days is None or len(all_trading_days) == 0:
+        raise ValueError("No overlapping trading days found for the selected date range.")
+    
+    all_dates = pd.DatetimeIndex(sorted(all_trading_days))
     # Ensure we start no earlier than backtest_start and not after end
     all_dates = all_dates[(all_dates >= backtest_start) & (all_dates <= backtest_end)]
 
@@ -822,7 +849,7 @@ def _get_added_cash_dates(all_dates: pd.DatetimeIndex, added_frequency: str):
 # NEW MOMENTUM LOGIC
 # =============================
 
-def calculate_momentum(date, current_assets, momentum_windows):
+def calculate_momentum(date, current_assets, momentum_windows, data_dict):
     cumulative_returns, valid_assets = {}, []
     filtered_windows = [w for w in momentum_windows if w["weight"] > 0]
     # Normalize weights so they sum to 1
@@ -831,27 +858,62 @@ def calculate_momentum(date, current_assets, momentum_windows):
         normalized_weights = [0 for _ in filtered_windows]
     else:
         normalized_weights = [w["weight"] / total_weight for w in filtered_windows]
-    start_dates_config = {t: data[t].first_valid_index() for t in current_assets if t in data}
+    
+    # Bulletproof start dates calculation
+    start_dates_config = {}
     for t in current_assets:
+        if t in data_dict and not data_dict[t].empty:
+            try:
+                start_dates_config[t] = data_dict[t].first_valid_index()
+            except:
+                start_dates_config[t] = pd.Timestamp.max
+    
+    for t in current_assets:
+        # Skip if ticker not in data
+        if t not in data_dict or data_dict[t].empty:
+            continue
+            
         is_valid, asset_returns = True, 0.0
         for idx, window in enumerate(filtered_windows):
             lookback, exclude = window["lookback"], window["exclude"]
             weight = normalized_weights[idx]
             start_mom = date - pd.Timedelta(days=lookback)
             end_mom = date - pd.Timedelta(days=exclude)
+            
             if start_dates_config.get(t, pd.Timestamp.max) > start_mom:
-                is_valid = False; break
-            df_t = data[t]
-            price_start_index = df_t.index.asof(start_mom)
-            price_end_index = df_t.index.asof(end_mom)
-            if pd.isna(price_start_index) or pd.isna(price_end_index):
-                is_valid = False; break
-            price_start = df_t.loc[price_start_index, "Close"]
-            price_end = df_t.loc[price_end_index, "Close"]
-            if pd.isna(price_start) or pd.isna(price_end) or price_start == 0:
-                is_valid = False; break
-            ret = (price_end - price_start) / price_start
-            asset_returns += ret * weight
+                is_valid = False
+                break
+                
+            df_t = data_dict[t]
+            
+            # Bulletproof date access
+            try:
+                price_start_index = df_t.index.asof(start_mom)
+                price_end_index = df_t.index.asof(end_mom)
+                
+                if pd.isna(price_start_index) or pd.isna(price_end_index):
+                    is_valid = False
+                    break
+                    
+                # Ensure indices exist in the dataframe
+                if price_start_index not in df_t.index or price_end_index not in df_t.index:
+                    is_valid = False
+                    break
+                    
+                price_start = df_t.loc[price_start_index, "Close"]
+                price_end = df_t.loc[price_end_index, "Close"]
+                
+                if pd.isna(price_start) or pd.isna(price_end) or price_start == 0:
+                    is_valid = False
+                    break
+                    
+                ret = (price_end - price_start) / price_start
+                asset_returns += ret * weight
+                
+            except Exception:
+                is_valid = False
+                break
+                
         if is_valid:
             cumulative_returns[t] = asset_returns
             valid_assets.append(t)
@@ -1026,7 +1088,7 @@ def _rebalance_portfolio(
     }
 
     if use_momentum:
-        returns, valid_assets = calculate_momentum(current_date, set(tradable_tickers_today), momentum_windows)
+        returns, valid_assets = calculate_momentum(current_date, set(tradable_tickers_today), momentum_windows, data)
         weights, metrics = calculate_momentum_weights(returns, valid_assets, date=current_date, negative_momentum_strategy=negative_momentum_strategy)
         
         rebalance_metrics["momentum_scores"] = {t: metrics.get(t, {}).get("Momentum", None) for t in tradable_tickers_today}
@@ -1136,21 +1198,66 @@ def run_backtest(
     # Removed "Downloading data..." print for better performance
     # Tickers to download: portfolio + benchmark
     all_tickers_to_fetch = list(set(tickers + [benchmark_ticker] if benchmark_ticker else tickers))
-    data, available_tickers = _load_data(all_tickers_to_fetch, start_dt, end_dt)
     
-    if not tickers or not available_tickers:
-        raise ValueError("No selected assets have data available in the specified range.")
+    # BULLETPROOF VALIDATION: Wrap _load_data in try-catch to prevent crashes
+    try:
+        data, available_tickers, invalid_tickers = _load_data(all_tickers_to_fetch, start_dt, end_dt)
+    except ValueError as e:
+        # Handle the case where no assets are available
+        raise ValueError("❌ **No valid tickers found!** No data could be downloaded for any of the specified tickers. Please check your ticker symbols and try again.")
+    except Exception as e:
+        # Handle any other unexpected errors
+        raise ValueError(f"❌ **Error downloading data:** {str(e)}. Please check your ticker symbols and try again.")
     
+    # Display invalid ticker warnings in Streamlit UI
+    if invalid_tickers:
+        # Separate portfolio tickers from benchmark ticker
+        portfolio_invalid = [t for t in invalid_tickers if t in tickers]
+        benchmark_invalid = [t for t in invalid_tickers if t == benchmark_ticker]
+        
+        if portfolio_invalid:
+            st.warning(f"The following portfolio tickers are invalid and will be skipped: {', '.join(portfolio_invalid)}")
+        if benchmark_invalid:
+            st.warning(f"The benchmark ticker '{benchmark_ticker}' is invalid and will be skipped.")
+    
+    # BULLETPROOF VALIDATION: Check for valid tickers and raise exceptions if none
+    if not tickers:
+        raise ValueError("❌ **No valid tickers found!** No tickers were provided. Please add at least one ticker before running the backtest.")
+    
+    if not available_tickers:
+        if invalid_tickers and len(invalid_tickers) == len(all_tickers_to_fetch):
+            raise ValueError(f"❌ **No valid tickers found!** All tickers are invalid: {', '.join(invalid_tickers)}. Please check your ticker symbols and try again.")
+        else:
+            raise ValueError("❌ **No valid tickers found!** No data could be downloaded for any of the specified tickers. Please check your ticker symbols and try again.")
+    
+    # Filter to only valid tickers that exist in data
     tickers_with_data = [t for t in tickers if t in data]
     # Ensure tickers_with_data is also deduplicated
     tickers_with_data = list(dict.fromkeys(tickers_with_data))
+    
     if not tickers_with_data:
-        raise ValueError("None of your selected assets have data available.")
+        if invalid_tickers:
+            raise ValueError(f"❌ **No valid tickers found!** None of your selected assets have data available. Invalid tickers: {', '.join(invalid_tickers)}")
+        else:
+            raise ValueError("❌ **No valid tickers found!** None of your selected assets have data available.")
+    
+    # Check if benchmark ticker is valid, if not, set it to None
+    if benchmark_ticker and benchmark_ticker not in data:
+        benchmark_ticker = None
         
-    all_dates, backtest_start, backtest_end = _prepare_backtest_dates(
-        start_date_user, end_date_user, start_with, data, tickers_with_data,
-        momentum_windows=momentum_windows if use_momentum else None
-    )
+    # Check for non-USD tickers and display currency warning
+    check_currency_warning(tickers_with_data)
+    
+    # BULLETPROOF VALIDATION: Wrap _prepare_backtest_dates in try-catch to prevent crashes
+    try:
+        all_dates, backtest_start, backtest_end = _prepare_backtest_dates(
+            start_date_user, end_date_user, start_with, data, tickers_with_data,
+            momentum_windows=momentum_windows if use_momentum else None
+        )
+    except ValueError as e:
+        raise ValueError(f"❌ **Date range error:** {str(e)}. Please check your date settings and try again.")
+    except Exception as e:
+        raise ValueError(f"❌ **Error preparing backtest dates:** {str(e)}. Please check your settings and try again.")
     # Removed backtest date range print for better performance
 
     # Get rebalancing dates ONLY from rebalancing frequency
@@ -1191,8 +1298,8 @@ def run_backtest(
     added_cash_dates = pd.DatetimeIndex(sorted(set(added_cash_dates)))
     # Do NOT merge or insert cash addition dates into rebalancing_dates
 
-    portfolio_value_with_additions = pd.Series(dtype=float, index=all_dates)
-    portfolio_value_without_additions = pd.Series(dtype=float, index=all_dates)
+    portfolio_value_with_additions = pd.Series(0.0, index=all_dates)
+    portfolio_value_without_additions = pd.Series(0.0, index=all_dates)
     
     # --- New variables to explicitly track cash and shares ---
     asset_shares_with_additions = pd.Series(0.0, index=tickers_with_data)
@@ -1233,8 +1340,30 @@ def run_backtest(
     progress_text = st.empty()
     for i, current_date in enumerate(all_dates):
         
-        # Only tickers that have price today
-        tradable_tickers_today = [t for t in tickers_with_data if current_date in data.get(t, pd.DataFrame()).index]
+        # Only tickers that have price today - use more robust data access
+        tradable_tickers_today = []
+        for t in tickers_with_data:
+            ticker_data = data.get(t, pd.DataFrame())
+            if not ticker_data.empty and current_date in ticker_data.index:
+                # Additional check: ensure we have valid price data
+                try:
+                    price = ticker_data.loc[current_date, "Close"]
+                    if not pd.isna(price) and price > 0:
+                        tradable_tickers_today.append(t)
+                except (KeyError, IndexError):
+                    continue
+        
+        # If no tickers have data for this date, carry forward the previous portfolio value
+        if not tradable_tickers_today:
+            # Carry forward the previous portfolio values
+            if i > 0:
+                prev_value_with = portfolio_value_with_additions.iloc[-1]
+                prev_value_without = portfolio_value_without_additions.iloc[-1]
+                # Only carry forward if we have valid previous values
+                if not pd.isna(prev_value_with) and not pd.isna(prev_value_without):
+                    portfolio_value_with_additions.loc[current_date] = prev_value_with
+                    portfolio_value_without_additions.loc[current_date] = prev_value_without
+            continue
         # Progress bar update
         elapsed = time.time() - start_time
         steps_left = total_steps - (i + 1)
@@ -1256,21 +1385,34 @@ def run_backtest(
         asset_values_without_additions = {}
         
         for t in asset_shares_with_additions.index:
-            if current_date in data.get(t, pd.DataFrame()).index:
-                price = float(data[t].loc[current_date, "Close"])
-                dividend = data[t].loc[current_date, "Dividend_per_share"] if "Dividend_per_share" in data[t].columns else 0.0
+            # Bulletproof data access - only process if we have valid data for this ticker and date
+            ticker_data = data.get(t, pd.DataFrame())
+            if ticker_data.empty or current_date not in ticker_data.index:
+                continue
+                
+            try:
+                price = float(ticker_data.loc[current_date, "Close"])
+                if pd.isna(price) or price <= 0:
+                    continue
+                    
+                # Safe dividend access
+                dividend = 0.0
+                if "Dividend_per_share" in ticker_data.columns:
+                    try:
+                        dividend_val = ticker_data.loc[current_date, "Dividend_per_share"]
+                        dividend = float(dividend_val) if not pd.isna(dividend_val) else 0.0
+                    except:
+                        dividend = 0.0
                 if pd.isna(dividend):
                     dividend = 0.0
+                    
                 shares_with = asset_shares_with_additions.loc[t]
                 shares_without = asset_shares_without_additions.loc[t]
-                # Detailed debug print for dividends and shares
-                # print(f"Date: {current_date.date()}, Ticker: {t}, Price: {price}, Shares (with): {shares_with}, Shares (without): {shares_without}, Dividend: {dividend}, Include: {include_dividends.get(t, False)}")
-
+                
                 # Only credit dividends if include_dividends is True
                 if price > 0 and dividend > 0 and include_dividends.get(t, False):
                     dividend_cash = shares_with * dividend
                     dividend_cash_wo = shares_without * dividend
-                    # print(f"  Dividend cash (with): {dividend_cash}, Dividend cash (without): {dividend_cash_wo}")
                     
                     # Check if dividends should be collected as cash instead of reinvested
                     collect_as_cash = st.session_state.get('collect_dividends_as_cash', False)
@@ -1278,12 +1420,10 @@ def run_backtest(
                         # Add dividend cash to cash instead of reinvesting
                         cash_with_additions += dividend_cash
                         cash_without_additions += dividend_cash_wo
-                        # print(f"  Collected dividend as cash: Added {dividend_cash} to cash (with), {dividend_cash_wo} to cash (without)")
                     else:
                         # Reinvest dividends (original behavior)
                         asset_shares_with_additions.loc[t] += dividend_cash / price
                         asset_shares_without_additions.loc[t] += dividend_cash_wo / price
-                        # print(f"  Reinvested dividend: Added {dividend_cash / price} shares (with), {dividend_cash_wo / price} shares (without)")
 
                 asset_value_with = asset_shares_with_additions.loc[t] * price
                 asset_value_without = asset_shares_without_additions.loc[t] * price
@@ -1293,6 +1433,10 @@ def run_backtest(
 
                 asset_values_with_additions[t] = asset_value_with
                 asset_values_without_additions[t] = asset_value_without
+                
+            except Exception:
+                # Skip this ticker if there's any error
+                continue
         
         # Add periodic cash (if applicable)
         if current_date in added_cash_dates and current_date != all_dates[0] and added_amount > 0:
@@ -1447,18 +1591,34 @@ def run_backtest(
         current_allocs["CASH"] = cash_perc
     
 
-    # Compute stats (guard if no benchmark)
+    # Compute stats (guard if no benchmark) - BULLETPROOF APPROACH
     bench_returns = None
     if benchmark_ticker and benchmark_ticker in data:
-        bench_returns = data[benchmark_ticker].loc[all_dates, "Close"].pct_change()
+        try:
+            # Only use dates that exist in both portfolio and benchmark data
+            benchmark_df = data[benchmark_ticker]
+            common_dates = all_dates.intersection(benchmark_df.index)
+            if len(common_dates) > 0:
+                bench_returns = benchmark_df.loc[common_dates, "Close"].pct_change()
+                # Reindex to all_dates, filling missing values with 0
+                bench_returns = bench_returns.reindex(all_dates, fill_value=0.0)
+            else:
+                bench_returns = pd.Series(0.0, index=all_dates)
+        except Exception:
+            bench_returns = pd.Series(0.0, index=all_dates)
     else:
         bench_returns = pd.Series(0.0, index=all_dates)
     
     final_beta = np.nan
     if calc_beta and benchmark_ticker and benchmark_ticker in data:
         try:
-            benchmark_returns_series = data[benchmark_ticker].loc[all_dates, "Close"].pct_change().dropna()
-            final_beta = calculate_beta(portfolio_value_with_additions.pct_change().dropna(), benchmark_returns_series)
+            # Use only common dates for beta calculation
+            benchmark_df = data[benchmark_ticker]
+            common_dates = all_dates.intersection(benchmark_df.index)
+            if len(common_dates) > 1:
+                benchmark_returns_series = benchmark_df.loc[common_dates, "Close"].pct_change().dropna()
+                portfolio_returns = portfolio_value_with_additions.loc[common_dates].pct_change().dropna()
+                final_beta = calculate_beta(portfolio_returns, benchmark_returns_series)
         except Exception:
             final_beta = np.nan
     
@@ -1522,8 +1682,19 @@ def run_backtest(
     
     normalized_portfolio = portfolio_value_without_additions / portfolio_value_without_additions.iloc[0] * 100
     if benchmark_ticker and benchmark_ticker in data:
-        benchmark_data = data[benchmark_ticker].loc[all_dates, "Close"]
-        normalized_benchmark = benchmark_data / benchmark_data.iloc[0] * 100
+        try:
+            # Only use dates that exist in benchmark data
+            benchmark_df = data[benchmark_ticker]
+            common_dates = all_dates.intersection(benchmark_df.index)
+            if len(common_dates) > 0:
+                benchmark_data = benchmark_df.loc[common_dates, "Close"]
+                normalized_benchmark = benchmark_data / benchmark_data.iloc[0] * 100
+                # Reindex to all_dates for plotting
+                normalized_benchmark = normalized_benchmark.reindex(all_dates, method='ffill')
+            else:
+                normalized_benchmark = pd.Series(index=all_dates, dtype=float)
+        except Exception:
+            normalized_benchmark = pd.Series(index=all_dates, dtype=float)
     else:
         normalized_benchmark = pd.Series(index=all_dates, dtype=float)
     
@@ -1543,7 +1714,15 @@ def run_backtest(
     # --- Drawdown compare for Portfolio (no additions) vs Benchmark (no additions)
     try:
         if benchmark_ticker and benchmark_ticker in data:
-            bench_series = data[benchmark_ticker].loc[all_dates, "Close"]
+            # Only use dates that exist in benchmark data
+            benchmark_df = data[benchmark_ticker]
+            common_dates = all_dates.intersection(benchmark_df.index)
+            if len(common_dates) > 0:
+                bench_series = benchmark_df.loc[common_dates, "Close"]
+                # Reindex to all_dates for plotting
+                bench_series = bench_series.reindex(all_dates, method='ffill')
+            else:
+                bench_series = pd.Series(index=all_dates, dtype=float)
             drawdown_bench = (bench_series / bench_series.expanding(min_periods=1).max() - 1) * 100
         else:
             drawdown_bench = pd.Series(index=all_dates, dtype=float)
@@ -1569,24 +1748,39 @@ def run_backtest(
     # Build benchmark series that simulates buying the benchmark with each cash addition so it can be
     # compared fairly to `portfolio_value_with_additions` which already counts added cash.
     if benchmark_ticker and benchmark_ticker in data:
-        bench_close = data[benchmark_ticker].loc[all_dates, "Close"]
-        shares = 0.0
-        bench_vals = []
-        # cash_flows_with_additions uses negative values for cash invested into the portfolio
-        for d in all_dates:
-            cf = 0.0
-            try:
-                cf = cash_flows_with_additions.loc[d]
-            except Exception:
-                cf = 0.0
-            # if cf is negative, it's an investment into the portfolio -> buy benchmark
-            if pd.notna(cf) and cf < 0:
-                invest = -float(cf)
-                price = bench_close.loc[d]
-                if price and price > 0:
-                    shares += invest / price
-            bench_vals.append(shares * bench_close.loc[d])
-        benchmark_with_additions = pd.Series(bench_vals, index=all_dates)
+        try:
+            # Only use dates that exist in benchmark data
+            benchmark_df = data[benchmark_ticker]
+            common_dates = all_dates.intersection(benchmark_df.index)
+            if len(common_dates) > 0:
+                bench_close = benchmark_df.loc[common_dates, "Close"]
+                # Reindex to all_dates for consistent access
+                bench_close = bench_close.reindex(all_dates, method='ffill')
+                
+                shares = 0.0
+                bench_vals = []
+                # cash_flows_with_additions uses negative values for cash invested into the portfolio
+                for d in all_dates:
+                    cf = 0.0
+                    try:
+                        cf = cash_flows_with_additions.loc[d]
+                    except Exception:
+                        cf = 0.0
+                    # if cf is negative, it's an investment into the portfolio -> buy benchmark
+                    if pd.notna(cf) and cf < 0:
+                        invest = -float(cf)
+                        try:
+                            price = bench_close.loc[d]
+                            if price and price > 0:
+                                shares += invest / price
+                        except Exception:
+                            pass  # Skip if price not available
+                    bench_vals.append(shares * bench_close.loc[d])
+                benchmark_with_additions = pd.Series(bench_vals, index=all_dates)
+            else:
+                benchmark_with_additions = pd.Series(index=all_dates, dtype=float)
+        except Exception:
+            benchmark_with_additions = pd.Series(index=all_dates, dtype=float)
     else:
         benchmark_with_additions = pd.Series(index=all_dates, dtype=float)
 
@@ -2258,6 +2452,21 @@ def remove_ticker_callback(ticker: str):
     except (ValueError, IndexError):
         pass
 
+def update_ticker_callback(index: int):
+    """Callback for ticker input to convert to uppercase"""
+    try:
+        key = f"ticker_{index}"
+        val = st.session_state.get(key, None)
+        if val is not None:
+            # Convert the input value to uppercase
+            upper_val = val.upper()
+            st.session_state.tickers[index] = upper_val
+            # Update the text box's state to show the uppercase value
+            st.session_state[key] = upper_val
+    except Exception:
+        # Defensive: if index is out of range, skip silently
+        pass
+
 def add_mom_window(lookback=90, exclude=30, weight=0.0):
     st.session_state.mom_windows.append({"lookback": int(lookback), "exclude": int(exclude), "weight": float(weight)})
     # Force sync after adding a new window
@@ -2905,9 +3114,8 @@ with st.sidebar:
             
             # Always update tickers from text_input
             ticker_val = st.text_input(
-                f"Ticker {i+1}", key=ticker_key
+                f"Ticker {i+1}", key=ticker_key, on_change=update_ticker_callback, args=(i,)
             )
-            st.session_state.tickers[i] = ticker_val
         with col3:
             # Use the same pattern as working Multi backtest and Allocations pages
             div_key = f"divs_checkbox_{i}"
@@ -3131,8 +3339,23 @@ with st.sidebar:
 
     if st.session_state.use_momentum:
         st.header("Momentum & Rebalancing")
+        # Ensure momentum_strategy_radio has a valid value
         if "momentum_strategy_radio" not in st.session_state:
             st.session_state["momentum_strategy_radio"] = st.session_state.get("momentum_strategy", "Classic momentum")
+        
+        # Validate and fix the value if it's not in the expected options
+        current_value = st.session_state["momentum_strategy_radio"]
+        valid_options = ["Classic momentum", "Relative momentum"]
+        if current_value not in valid_options:
+            # Map common variations to valid options
+            if current_value in ["Classic", "Classic momentum"]:
+                st.session_state["momentum_strategy_radio"] = "Classic momentum"
+            elif current_value in ["Relative", "Relative Momentum", "Relative momentum"]:
+                st.session_state["momentum_strategy_radio"] = "Relative momentum"
+            else:
+                # Default fallback
+                st.session_state["momentum_strategy_radio"] = "Classic momentum"
+        
         selected_momentum = st.radio(
             "Momentum Strategy (when not all assets have negative):",
             ["Classic momentum", "Relative momentum"],
@@ -3141,8 +3364,25 @@ with st.sidebar:
             help="Choose how to allocate when at least one asset has positive momentum.",
             on_change=update_momentum_strategy
         )
+        # Ensure negative_momentum_strategy_radio has a valid value
         if "negative_momentum_strategy_radio" not in st.session_state:
             st.session_state["negative_momentum_strategy_radio"] = st.session_state.get("negative_momentum_strategy", "Go to cash")
+        
+        # Validate and fix the value if it's not in the expected options
+        current_negative_value = st.session_state["negative_momentum_strategy_radio"]
+        valid_negative_options = ["Go to cash", "Equal weight", "Relative momentum"]
+        if current_negative_value not in valid_negative_options:
+            # Map common variations to valid options
+            if current_negative_value in ["Cash", "Go to cash"]:
+                st.session_state["negative_momentum_strategy_radio"] = "Go to cash"
+            elif current_negative_value in ["Equal weight", "Equal Weight"]:
+                st.session_state["negative_momentum_strategy_radio"] = "Equal weight"
+            elif current_negative_value in ["Relative momentum", "Relative Momentum"]:
+                st.session_state["negative_momentum_strategy_radio"] = "Relative momentum"
+            else:
+                # Default fallback
+                st.session_state["negative_momentum_strategy_radio"] = "Go to cash"
+        
         selected_negative = st.radio(
             "If all assets have negative momentum:",
             ["Go to cash", "Equal weight", "Relative momentum"],
@@ -3571,6 +3811,15 @@ if st.session_state.get("_run_requested", False) and st.session_state.get("runni
             "exclude_days_vol": st.session_state.vol_exclude_days,
         }
 
+    # BULLETPROOF VALIDATION: Check for empty tickers before starting the backtest
+    if not params.get("tickers") or not any(params.get("tickers")):
+        st.error("❌ **No valid tickers found!** Please add at least one ticker before running the backtest.")
+        st.session_state.running = False
+        st.session_state._run_requested = False
+        if "_pending_backtest_params" in st.session_state:
+            del st.session_state["_pending_backtest_params"]
+        st.stop()
+
     with st.spinner("Running backtest..."):
         console_buf = io.StringIO()
         with contextlib.redirect_stdout(console_buf):
@@ -3603,7 +3852,11 @@ if st.session_state.get("_run_requested", False) and st.session_state.get("runni
                 st.session_state.cash_flows_without_additions = cash_flows_without_additions
             except Exception as e:
                 # Ensure flags are cleared so the UI does not remain in running state
-                st.session_state.error = f"An error occurred during backtest: {e}"
+                error_message = str(e)
+                if "All tickers are invalid" in error_message or "Invalid tickers" in error_message:
+                    st.session_state.error = error_message
+                else:
+                    st.session_state.error = f"An error occurred during backtest: {e}"
                 logger.exception("Backtest failed")
             finally:
                 st.session_state.console = strip_ansi(console_buf.getvalue())
