@@ -661,6 +661,30 @@ def calculate_upi(cagr, ulcer_index, risk_free_rate=0):
         return np.nan
     return (cagr - risk_free_rate) / ulcer_index
 
+def calculate_total_money_added(config, start_date, end_date):
+    """Calculate total money added to portfolio (initial + periodic additions)"""
+    if start_date is None or end_date is None:
+        return "N/A"
+    
+    # Initial investment
+    initial_value = config.get('initial_value', 0)
+    
+    # Calculate periodic additions
+    added_amount = config.get('added_amount', 0)
+    added_frequency = config.get('added_frequency', 'None')
+    
+    if added_frequency in ['None', 'Never', 'none', None] or added_amount == 0:
+        return initial_value
+    
+    # Get dates when additions were made
+    dates_added = get_dates_by_freq(added_frequency, start_date, end_date, pd.date_range(start_date, end_date, freq='D'))
+    
+    # Count additions (excluding the first date which is initial investment)
+    num_additions = len([d for d in dates_added if d != start_date])
+    total_additions = num_additions * added_amount
+    
+    return initial_value + total_additions
+
 # -----------------------
 # Single-backtest core (adapted from your code, robust)
 # -----------------------
@@ -3032,6 +3056,12 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                             print(f"[BETA DEBUG] Failed to compute beta for {name}: {e}")
                 mwrr_val = preserved_mwrr.get(name, "N/A")
 
+                # Calculate total money added for this portfolio
+                total_money_added = "N/A"
+                cfg_for_name = next((c for c in st.session_state.multi_backtest_portfolio_configs if c['name'] == name), None)
+                if cfg_for_name and isinstance(ser_noadd, pd.Series) and len(ser_noadd) > 0:
+                    total_money_added = calculate_total_money_added(cfg_for_name, ser_noadd.index[0], ser_noadd.index[-1])
+
                 recomputed_stats[name] = {
                     "Total Return": clamp_stat(total_return, "Total Return"),
                     "CAGR": clamp_stat(cagr, "CAGR"),
@@ -3045,7 +3075,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     "MWRR": mwrr_val,
                     # Final values with and without additions
                     "Final Value (with)": (series_obj['with_additions'].iloc[-1] if isinstance(series_obj, dict) and 'with_additions' in series_obj and len(series_obj['with_additions'])>0 else "N/A"),
-                    "Final Value (no_additions)": (ser_noadd.iloc[-1] if isinstance(ser_noadd, pd.Series) and len(ser_noadd)>0 else "N/A")
+                    "Final Value (no_additions)": (ser_noadd.iloc[-1] if isinstance(ser_noadd, pd.Series) and len(ser_noadd)>0 else "N/A"),
+                    "Total Money Added": total_money_added
                 }
 
             stats_df_display = pd.DataFrame(recomputed_stats).T
@@ -3060,11 +3091,11 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             stats_df_display = stats_df_display[cols]
             # Rename and format columns similarly to prior display code
             stats_df_display.rename(columns={'MaxDrawdown': 'Max Drawdown', 'UlcerIndex': 'Ulcer Index'}, inplace=True)
-            # Ensure ordering: Beta then MWRR at end, Total Return at the very end
+            # Ensure ordering: Beta then MWRR at end, Total Return and Total Money Added at the very end
             cols = list(stats_df_display.columns)
-            if 'Beta' in cols and 'MWRR' in cols and 'Total Return' in cols:
-                cols.remove('Beta'); cols.remove('MWRR'); cols.remove('Total Return')
-                cols.extend(['Beta','MWRR','Total Return'])
+            if 'Beta' in cols and 'MWRR' in cols and 'Total Return' in cols and 'Total Money Added' in cols:
+                cols.remove('Beta'); cols.remove('MWRR'); cols.remove('Total Return'); cols.remove('Total Money Added')
+                cols.extend(['Beta','MWRR','Total Return','Total Money Added'])
                 stats_df_display = stats_df_display[cols]
 
             st.subheader("Final Performance Statistics")
@@ -3074,6 +3105,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 fmt_map_display[fv_with] = '${:,.2f}'
             if fv_no in stats_df_display.columns:
                 fmt_map_display[fv_no] = '${:,.2f}'
+            if 'Total Money Added' in stats_df_display.columns:
+                fmt_map_display['Total Money Added'] = '${:,.2f}'
             if fmt_map_display:
                 try:
                     st.dataframe(stats_df_display.style.format(fmt_map_display), use_container_width=True)
