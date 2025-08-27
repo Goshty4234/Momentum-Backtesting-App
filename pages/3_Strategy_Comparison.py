@@ -13,16 +13,7 @@ import json
 # Initialize page-specific session state for Strategy Comparison page
 if 'strategy_comparison_page_initialized' not in st.session_state:
     st.session_state.strategy_comparison_page_initialized = True
-    # Initialize global ticker configuration (shared across all portfolios)
-    st.session_state.strategy_comparison_global_tickers = [
-        {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True},
-        {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True},
-        {'ticker': 'GLD', 'allocation': 0.25, 'include_dividends': True},
-        {'ticker': 'TLT', 'allocation': 0.25, 'include_dividends': True},
-    ]
-
-# Initialize portfolio configs only if they don't exist
-if 'strategy_comparison_portfolio_configs' not in st.session_state:
+    # Initialize strategy-comparison specific session state
     st.session_state.strategy_comparison_portfolio_configs = [
         # 1) Equal weight portfolio (no momentum) - baseline strategy
         {
@@ -118,23 +109,126 @@ if 'strategy_comparison_portfolio_configs' not in st.session_state:
         },
     ]
     st.session_state.strategy_comparison_active_portfolio_index = 0
-st.session_state.strategy_comparison_rerun_flag = False
-
-# Clean up any existing portfolio configs to remove unused settings
+    st.session_state.strategy_comparison_rerun_flag = False
+    # Clean up any existing portfolio configs to remove unused settings
 if 'strategy_comparison_portfolio_configs' in st.session_state:
     for config in st.session_state.strategy_comparison_portfolio_configs:
         config.pop('use_relative_momentum', None)
         config.pop('equal_if_all_negative', None)
 
-# Portfolio selection will be initialized when the selector is first rendered
+# Initialize portfolio selection persistence - default to first portfolio
+if 'strategy_comparison_detail_portfolio_selector' not in st.session_state:
+    if st.session_state.strategy_comparison_portfolio_configs:
+        first_portfolio_name = st.session_state.strategy_comparison_portfolio_configs[0].get('name', 'Portfolio 1')
+        st.session_state.strategy_comparison_detail_portfolio_selector = f"0 - {first_portfolio_name}"
 
-# Initialize other session state variables if they don't exist
-if 'strategy_comparison_active_portfolio_index' not in st.session_state:
-    st.session_state.strategy_comparison_active_portfolio_index = 0
-if 'strategy_comparison_rerun_flag' not in st.session_state:
-    st.session_state.strategy_comparison_rerun_flag = False
+# -----------------------
+# Default JSON configs (for initialization)
+# -----------------------
+default_configs = [
+    # 1) Equal weight portfolio (no momentum) - baseline strategy
+    {
+        'name': 'Equal Weight (Baseline)',
+        'stocks': [
+            {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True},
+            {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True},
+            {'ticker': 'GLD', 'allocation': 0.25, 'include_dividends': True},
+            {'ticker': 'TLT', 'allocation': 0.25, 'include_dividends': True},
+        ],
+        'benchmark_ticker': '^GSPC',
+        'initial_value': 10000,
+        'added_amount': 10000,
+        'added_frequency': 'Annually',
+        'rebalancing_frequency': 'Annually',
+        'start_date_user': None,
+        'end_date_user': None,
+        'start_with': 'all',
+        'use_momentum': False,
+        'momentum_strategy': 'Classic',
+        'negative_momentum_strategy': 'Cash',
+        'momentum_windows': [],
+        'calc_beta': False,
+        'calc_volatility': False,
+        'beta_window_days': 365,
+        'exclude_days_beta': 30,
+        'vol_window_days': 365,
+        'exclude_days_vol': 30,
+    },
+    # 2) Momentum-based portfolio with Beta + Volatility adjustments
+    {
+        'name': 'Momentum Strategy + Beta + Volatility',
+        'stocks': [
+            {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True},
+            {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True},
+            {'ticker': 'GLD', 'allocation': 0.25, 'include_dividends': True},
+            {'ticker': 'TLT', 'allocation': 0.25, 'include_dividends': True},
+        ],
+        'benchmark_ticker': '^GSPC',
+        'initial_value': 10000,
+        'added_amount': 10000,
+        'added_frequency': 'Annually',
+        'rebalancing_frequency': 'Annually',
+        'start_date_user': None,
+        'end_date_user': None,
+        'start_with': 'all',
+        'use_momentum': True,
+        'momentum_strategy': 'Classic',
+        'negative_momentum_strategy': 'Cash',
+        'momentum_windows': [
+            {'lookback': 365, 'exclude': 30, 'weight': 0.5},
+            {'lookback': 180, 'exclude': 30, 'weight': 0.3},
+            {'lookback': 120, 'exclude': 30, 'weight': 0.2},
+        ],
+        'calc_beta': True,
+        'calc_volatility': True,
+        'beta_window_days': 365,
+        'exclude_days_beta': 30,
+        'vol_window_days': 365,
+        'exclude_days_vol': 30,
+    },
+    # 3) Pure momentum strategy (no beta/volatility adjustments)
+    {
+        'name': 'Pure Momentum Strategy',
+        'stocks': [
+            {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True},
+            {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True},
+            {'ticker': 'GLD', 'allocation': 0.25, 'include_dividends': True},
+            {'ticker': 'TLT', 'allocation': 0.25, 'include_dividends': True},
+        ],
+        'benchmark_ticker': '^GSPC',
+        'initial_value': 10000,
+        'added_amount': 10000,
+        'added_frequency': 'Annually',
+        'rebalancing_frequency': 'Annually',
+        'start_date_user': None,
+        'end_date_user': None,
+        'start_with': 'all',
+        'use_momentum': True,
+        'momentum_strategy': 'Classic',
+        'negative_momentum_strategy': 'Cash',
+        'momentum_windows': [
+            {'lookback': 365, 'exclude': 30, 'weight': 0.5},
+            {'lookback': 180, 'exclude': 30, 'weight': 0.3},
+            {'lookback': 120, 'exclude': 30, 'weight': 0.2},
+        ],
+        'calc_beta': False,
+        'calc_volatility': False,
+        'beta_window_days': 365,
+        'exclude_days_beta': 30,
+        'vol_window_days': 365,
+        'exclude_days_vol': 30,
+    },
+]
 
 st.set_page_config(layout="wide", page_title="Strategy Performance Comparison", page_icon="📈")
+
+# Handle imported values from JSON - MUST BE AT THE VERY BEGINNING
+if "_import_start_with" in st.session_state:
+    st.session_state["strategy_comparison_start_with"] = st.session_state.pop("_import_start_with")
+    st.session_state["strategy_comparison_start_with_radio"] = st.session_state["strategy_comparison_start_with"]
+if "_import_first_rebalance_strategy" in st.session_state:
+    st.session_state["strategy_comparison_first_rebalance_strategy"] = st.session_state.pop("_import_first_rebalance_strategy")
+    st.session_state["strategy_comparison_first_rebalance_strategy_radio"] = st.session_state["strategy_comparison_first_rebalance_strategy"]
 st.markdown("""
 <style>
     /* Global Styles for the App */
@@ -376,100 +470,12 @@ st.set_page_config(layout="wide", page_title="Strategy Performance Comparison")
 st.title("Strategy Comparison")
 st.markdown("Use the forms below to configure and run backtests for multiple portfolios.")
 
-# Portfolio name is handled in the main UI below
-
-# -----------------------
-# Default JSON configs (for initialization)
-# -----------------------
-default_configs = [
-    # 1) Benchmark only (SPY) - yearly rebalancing and yearly additions
-    {
-        'name': 'Benchmark Only (SPY)',
-        'stocks': [
-            {'ticker': 'SPY', 'allocation': 1.0, 'include_dividends': True},
-        ],
-        'benchmark_ticker': '^GSPC',
-            'initial_value': 10000,
-    'added_amount': 10000,
-    'added_frequency': 'Annually',
-    'rebalancing_frequency': 'Annually',
-    'start_date_user': None,
-    'end_date_user': None,
-    'start_with': 'all',
-    'use_momentum': False,
-        'use_relative_momentum': False,
-        'equal_if_all_negative': False,
-        'momentum_windows': [],
-        'calc_beta': False,
-        'calc_volatility': False,
-        'beta_window_days': 365,
-        'exclude_days_beta': 30,
-        'vol_window_days': 365,
-        'exclude_days_vol': 30,
-    },
-    # 2) Momentum-based portfolio using SPY, QQQ, GLD, TLT
-    {
-        'name': 'Momentum-Based Portfolio',
-        'stocks': [
-            {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True},
-            {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True},
-            {'ticker': 'GLD', 'allocation': 0.25, 'include_dividends': True},
-            {'ticker': 'TLT', 'allocation': 0.25, 'include_dividends': True},
-        ],
-        'benchmark_ticker': '^GSPC',
-        'initial_value': 10000,
-        'added_amount': 10000,
-        'added_frequency': 'year',
-    'rebalancing_frequency': 'year',
-        'start_date_user': None,
-        'end_date_user': None,
-        'start_with': 'all',
-        'use_momentum': True,
-        'use_relative_momentum': True,
-        'equal_if_all_negative': True,
-        'momentum_strategy': 'Classic',
-        'negative_momentum_strategy': 'Cash',
-        'momentum_windows': [
-            {'lookback': 365, 'exclude': 30, 'weight': 0.5},
-            {'lookback': 180, 'exclude': 30, 'weight': 0.3},
-            {'lookback': 120, 'exclude': 30, 'weight': 0.2},
-        ],
-        'calc_beta': True,
-        'calc_volatility': True,
-        'beta_window_days': 365,
-        'exclude_days_beta': 30,
-        'vol_window_days': 365,
-        'exclude_days_vol': 30,
-    },
-    # 3) Equal weight (No Momentum) using the same tickers
-    {
-        'name': 'Equal Weight Portfolio (No Momentum)',
-        'stocks': [
-            {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True},
-            {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True},
-            {'ticker': 'GLD', 'allocation': 0.25, 'include_dividends': True},
-            {'ticker': 'TLT', 'allocation': 0.25, 'include_dividends': True},
-        ],
-        'benchmark_ticker': '^GSPC',
-        'initial_value': 10000,
-        'added_amount': 10000,
-        'added_frequency': 'year',
-    'rebalancing_frequency': 'year',
-        'start_date_user': None,
-        'end_date_user': None,
-        'start_with': 'all',
-        'use_momentum': False,
-        'use_relative_momentum': False,
-        'equal_if_all_negative': False,
-        'momentum_windows': [],
-        'calc_beta': False,
-        'calc_volatility': False,
-        'beta_window_days': 365,
-        'exclude_days_beta': 30,
-        'vol_window_days': 365,
-        'exclude_days_vol': 30,
-    },
-]
+# Handle rerun flag first (exact same as Multi Backtest)
+active_portfolio = st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index] if 'strategy_comparison_portfolio_configs' in st.session_state and 'strategy_comparison_active_portfolio_index' in st.session_state else None
+if active_portfolio:
+    if st.session_state.get('strategy_comparison_rerun_flag', False):
+        st.session_state.strategy_comparison_rerun_flag = False
+        st.rerun()
 
 # -----------------------
 # Helper functions
@@ -505,6 +511,9 @@ def get_dates_by_freq(freq, start, end, market_days):
     elif freq == "Annually" or freq == "year":
         base = pd.date_range(start=start, end=end, freq='YS')
     elif freq == "Never" or freq == "none" or freq is None:
+        return set()
+    elif freq == "Buy & Hold" or freq == "Buy & Hold (Target)":
+        # Buy & Hold options don't have specific rebalancing dates - they rebalance immediately when cash is available
         return set()
     else:
         raise ValueError(f"Unknown frequency: {freq}")
@@ -657,7 +666,30 @@ def single_backtest(config, sim_index, reindexed_data):
     exclude_days_vol = config.get('exclude_days_vol', 30)
     current_data = {t: reindexed_data[t] for t in tickers + [benchmark_ticker] if t in reindexed_data}
     dates_added = get_dates_by_freq(added_frequency, sim_index[0], sim_index[-1], sim_index)
+    
+    # Get regular rebalancing dates
     dates_rebal = sorted(get_dates_by_freq(rebalancing_frequency, sim_index[0], sim_index[-1], sim_index))
+    
+    # Handle first rebalance strategy - replace first rebalance date if needed
+    first_rebalance_strategy = st.session_state.get('strategy_comparison_first_rebalance_strategy', 'rebalancing_date')
+    if first_rebalance_strategy == "momentum_window_complete" and use_momentum and momentum_windows:
+        try:
+            # Calculate when momentum window completes
+            window_sizes = [int(w.get('lookback', 0)) for w in momentum_windows if w is not None]
+            max_window_days = max(window_sizes) if window_sizes else 0
+            momentum_completion_date = sim_index[0] + pd.Timedelta(days=max_window_days)
+            
+            # Find the closest trading day to momentum completion
+            momentum_completion_trading_day = sim_index[sim_index >= momentum_completion_date][0] if len(sim_index[sim_index >= momentum_completion_date]) > 0 else sim_index[-1]
+            
+            # Replace the first rebalancing date with momentum completion date
+            if len(dates_rebal) > 0:
+                # Remove the first rebalancing date and add momentum completion date
+                dates_rebal = dates_rebal[1:] if len(dates_rebal) > 1 else []
+                dates_rebal.insert(0, momentum_completion_trading_day)
+                dates_rebal = sorted(dates_rebal)
+        except Exception:
+            pass  # Fall back to regular rebalancing dates
 
     # Dictionaries to store historical data for new tables
     historical_allocations = {}
@@ -874,8 +906,20 @@ def single_backtest(config, sim_index, reindexed_data):
                             div = df.loc[future_dates[0], "Dividends"]
                 var = df.loc[date, "Price_change"] if date in df.index else 0.0
                 if include_dividends.get(t, False):
-                    rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
-                    val_new = val_prev * (1 + rate_of_return)
+                    # Check if dividends should be collected as cash instead of reinvested
+                    collect_as_cash = config.get('collect_dividends_as_cash', False)
+                    if collect_as_cash and div > 0:
+                        # Calculate dividend cash and add to unreinvested cash
+                        nb_shares = val_prev / price_prev if price_prev > 0 else 0
+                        dividend_cash = nb_shares * div
+                        total_unreinvested_dividends += dividend_cash
+                        # Don't include dividend in rate of return
+                        rate_of_return = var
+                        val_new = val_prev * (1 + rate_of_return)
+                    else:
+                        # Reinvest dividends (original behavior)
+                        rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                        val_new = val_prev * (1 + rate_of_return)
                 else:
                     val_new = val_prev * (1 + var)
                     # If dividends are not included, do NOT add to unreinvested cash or anywhere else
@@ -897,8 +941,20 @@ def single_backtest(config, sim_index, reindexed_data):
                         div = df.loc[future_dates[0], "Dividends"]
             var = df.loc[date, "Price_change"] if date in df.index else 0.0
             if include_dividends.get(t, False):
-                rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
-                val_new = val_prev * (1 + rate_of_return)
+                # Check if dividends should be collected as cash instead of reinvested
+                collect_as_cash = config.get('collect_dividends_as_cash', False)
+                if collect_as_cash and div > 0:
+                    # Calculate dividend cash and add to unreinvested cash
+                    nb_shares = val_prev / price_prev if price_prev > 0 else 0
+                    dividend_cash = nb_shares * div
+                    total_unreinvested_dividends += dividend_cash
+                    # Don't include dividend in rate of return
+                    rate_of_return = var
+                    val_new = val_prev * (1 + rate_of_return)
+                else:
+                    # Reinvest dividends (original behavior)
+                    rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                    val_new = val_prev * (1 + rate_of_return)
             else:
                 val_new = val_prev * (1 + var)
             values[t].append(val_new)
@@ -909,7 +965,18 @@ def single_backtest(config, sim_index, reindexed_data):
         portfolio_no_additions.append(portfolio_no_additions[-1] * daily_growth_factor)
         
         current_total = sum(values[t][-1] for t in tickers) + unallocated_cash[-1] + unreinvested_cash[-1]
+        
+        # Check if we should rebalance
+        should_rebalance = False
         if date in dates_rebal and set(tickers):
+            should_rebalance = True
+        elif rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"] and set(tickers):
+            # Buy & Hold: rebalance whenever there's cash available
+            total_cash = unallocated_cash[-1] + unreinvested_cash[-1]
+            if total_cash > 0:
+                should_rebalance = True
+        
+        if should_rebalance:
             if use_momentum:
                 returns, valid_assets = calculate_momentum(date, set(tickers), momentum_windows)
                 if valid_assets:
@@ -1161,11 +1228,13 @@ def add_portfolio_callback():
     new_portfolio['name'] = f"New Portfolio {len(st.session_state.strategy_comparison_portfolio_configs) + 1}"
     st.session_state.strategy_comparison_portfolio_configs.append(new_portfolio)
     st.session_state.strategy_comparison_active_portfolio_index = len(st.session_state.strategy_comparison_portfolio_configs) - 1
+    st.session_state.strategy_comparison_rerun_flag = True
 
 def remove_portfolio_callback():
     if len(st.session_state.strategy_comparison_portfolio_configs) > 1:
         st.session_state.strategy_comparison_portfolio_configs.pop(st.session_state.strategy_comparison_active_portfolio_index)
         st.session_state.strategy_comparison_active_portfolio_index = max(0, st.session_state.strategy_comparison_active_portfolio_index - 1)
+        st.session_state.strategy_comparison_rerun_flag = True
 
 def add_stock_callback():
     st.session_state.strategy_comparison_add_stock_flag = True
@@ -1239,6 +1308,7 @@ def reset_portfolio_callback():
     if 'saved_momentum_settings' in default_cfg_found:
         del default_cfg_found['saved_momentum_settings']
     st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index] = default_cfg_found
+    st.session_state.strategy_comparison_rerun_flag = True
 
 def reset_stock_selection_callback():
     # Reset global tickers to default
@@ -1536,6 +1606,8 @@ def paste_json_callback():
                 return 'Never'
             freq_map = {
                 'Never': 'Never',
+                'Buy & Hold': 'Buy & Hold',
+                'Buy & Hold (Target)': 'Buy & Hold (Target)',
                 'Weekly': 'Weekly',
                 'Biweekly': 'Biweekly',
                 'Monthly': 'Monthly',
@@ -1566,6 +1638,7 @@ def paste_json_callback():
             'start_date_user': json_data.get('start_date_user'),
             'end_date_user': json_data.get('end_date_user'),
             'start_with': json_data.get('start_with', 'all'),
+            'first_rebalance_strategy': json_data.get('first_rebalance_strategy', 'rebalancing_date'),
             'use_momentum': json_data.get('use_momentum', True),
             'momentum_strategy': momentum_strategy,
             'negative_momentum_strategy': negative_momentum_strategy,
@@ -1576,10 +1649,9 @@ def paste_json_callback():
             'exclude_days_beta': json_data.get('exclude_days_beta', 30),
             'vol_window_days': json_data.get('vol_window_days', 365),
             'exclude_days_vol': json_data.get('exclude_days_vol', 30),
-            # Add missing fields that might be in Backtest Engine JSON
-            'use_custom_dates': json_data.get('use_custom_dates', False),
-            'portfolio_drag_pct': json_data.get('portfolio_drag_pct', 0.0),
+            'collect_dividends_as_cash': json_data.get('collect_dividends_as_cash', False),
             'saved_momentum_settings': json_data.get('saved_momentum_settings', {}),
+            # Note: Ignoring Backtest Engine specific fields like 'portfolio_drag_pct', 'use_custom_dates', etc.
         }
         
         st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index] = strategy_comparison_config
@@ -1609,6 +1681,23 @@ def paste_json_callback():
         st.session_state['strategy_comparison_active_calc_vol'] = strategy_comparison_config['calc_volatility']
         st.session_state['strategy_comparison_active_vol_window'] = strategy_comparison_config['vol_window_days']
         st.session_state['strategy_comparison_active_vol_exclude'] = strategy_comparison_config['exclude_days_vol']
+        
+        # Update dividend settings
+        st.session_state['strategy_comparison_active_collect_dividends_as_cash'] = strategy_comparison_config['collect_dividends_as_cash']
+        
+        # Handle global start_with setting from imported JSON
+        if 'start_with' in json_data:
+            # Handle start_with value mapping from other pages
+            start_with = json_data['start_with']
+            if start_with == 'first':
+                start_with = 'oldest'  # Map 'first' to 'oldest' (closest equivalent)
+            elif start_with not in ['all', 'oldest']:
+                start_with = 'all'  # Default fallback
+            st.session_state['_import_start_with'] = start_with
+        
+        # Handle first rebalance strategy from imported JSON
+        if 'first_rebalance_strategy' in json_data:
+            st.session_state['_import_first_rebalance_strategy'] = json_data['first_rebalance_strategy']
         
         # UPDATE GLOBAL TICKERS FROM IMPORTED JSON
         if stocks:
@@ -1647,6 +1736,18 @@ def paste_all_json_callback():
     try:
         obj = json.loads(txt)
         if isinstance(obj, list):
+            # Clear widget keys to force re-initialization
+            widget_keys_to_clear = [
+                "strategy_comparison_active_name", "strategy_comparison_active_initial", 
+                "strategy_comparison_active_added_amount", "strategy_comparison_active_rebal_freq",
+                "strategy_comparison_active_add_freq", "strategy_comparison_active_benchmark",
+                "strategy_comparison_active_use_momentum", "strategy_comparison_active_collect_dividends_as_cash",
+                "strategy_comparison_start_with_radio", "strategy_comparison_first_rebalance_strategy_radio"
+            ]
+            for key in widget_keys_to_clear:
+                if key in st.session_state:
+                    del st.session_state[key]
+            
             # Process each portfolio configuration for Strategy Comparison page (existing logic)
             processed_configs = []
             for cfg in obj:
@@ -1715,6 +1816,8 @@ def paste_all_json_callback():
                         return 'Never'
                     freq_map = {
                         'Never': 'Never',
+                        'Buy & Hold': 'Buy & Hold',
+                        'Buy & Hold (Target)': 'Buy & Hold (Target)',
                         'Weekly': 'Weekly',
                         'Biweekly': 'Biweekly',
                         'Monthly': 'Monthly',
@@ -1745,6 +1848,7 @@ def paste_all_json_callback():
                     'start_date_user': cfg.get('start_date_user'),
                     'end_date_user': cfg.get('end_date_user'),
                     'start_with': cfg.get('start_with', 'all'),
+                    'first_rebalance_strategy': cfg.get('first_rebalance_strategy', 'rebalancing_date'),
                     'use_momentum': cfg.get('use_momentum', True),
                     'momentum_strategy': momentum_strategy,
                     'negative_momentum_strategy': negative_momentum_strategy,
@@ -1755,10 +1859,9 @@ def paste_all_json_callback():
                     'exclude_days_beta': cfg.get('exclude_days_beta', 30),
                     'vol_window_days': cfg.get('vol_window_days', 365),
                     'exclude_days_vol': cfg.get('exclude_days_vol', 30),
-                    # Add missing fields that might be in Backtest Engine JSON
-                    'use_custom_dates': cfg.get('use_custom_dates', False),
-                    'portfolio_drag_pct': cfg.get('portfolio_drag_pct', 0.0),
+                    'collect_dividends_as_cash': cfg.get('collect_dividends_as_cash', False),
                     'saved_momentum_settings': cfg.get('saved_momentum_settings', {}),
+                    # Note: Ignoring Backtest Engine specific fields like 'portfolio_drag_pct', 'use_custom_dates', etc.
                 }
                 processed_configs.append(strategy_comparison_config)
             
@@ -1775,6 +1878,7 @@ def paste_all_json_callback():
                 st.session_state['strategy_comparison_active_add_freq'] = processed_configs[0].get('added_frequency', 'none')
                 st.session_state['strategy_comparison_active_benchmark'] = processed_configs[0].get('benchmark_ticker', '')
                 st.session_state['strategy_comparison_active_use_momentum'] = bool(processed_configs[0].get('use_momentum', True))
+                st.session_state['strategy_comparison_active_collect_dividends_as_cash'] = bool(processed_configs[0].get('collect_dividends_as_cash', False))
                 
                 # UPDATE GLOBAL TICKERS FROM FIRST PORTFOLIO
                 first_portfolio_stocks = processed_configs[0].get('stocks', [])
@@ -1798,6 +1902,19 @@ def paste_all_json_callback():
                     
                     # Sync global tickers to all portfolios
                     sync_global_tickers_to_all_portfolios()
+                
+                # Update global first rebalance strategy from first portfolio
+                if 'first_rebalance_strategy' in processed_configs[0]:
+                    st.session_state['_import_first_rebalance_strategy'] = processed_configs[0]['first_rebalance_strategy']
+                
+                # Update global start_with setting from first portfolio
+                if 'start_with' in processed_configs[0]:
+                    start_with = processed_configs[0]['start_with']
+                    if start_with == 'first':
+                        start_with = 'oldest'  # Map 'first' to 'oldest' (closest equivalent)
+                    elif start_with not in ['all', 'oldest']:
+                        start_with = 'all'  # Default fallback
+                    st.session_state['_import_start_with'] = start_with
             else:
                 st.session_state.strategy_comparison_active_portfolio_index = None
                 st.session_state.strategy_comparison_portfolio_selector = ''
@@ -1825,33 +1942,7 @@ def update_active_portfolio_index():
     else:
         # default to first portfolio if selector is missing or value not found
         st.session_state.strategy_comparison_active_portfolio_index = 0 if portfolio_names else None
-    
-    # Update UI widget states to reflect the newly selected portfolio
-    if st.session_state.strategy_comparison_active_portfolio_index is not None:
-        active_portfolio = portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]
-        
-        # Update basic portfolio settings
-        st.session_state['strategy_comparison_active_name'] = active_portfolio['name']
-        st.session_state['strategy_comparison_active_initial'] = int(active_portfolio['initial_value'])
-        st.session_state['strategy_comparison_active_added_amount'] = int(active_portfolio['added_amount'])
-        st.session_state['strategy_comparison_active_rebal_freq'] = active_portfolio['rebalancing_frequency']
-        st.session_state['strategy_comparison_active_add_freq'] = active_portfolio['added_frequency']
-        st.session_state['strategy_comparison_active_benchmark'] = active_portfolio['benchmark_ticker']
-        
-        # Update momentum settings
-        st.session_state['strategy_comparison_active_use_momentum'] = active_portfolio['use_momentum']
-        st.session_state['strategy_comparison_active_momentum_strategy'] = active_portfolio['momentum_strategy']
-        st.session_state['strategy_comparison_active_negative_momentum_strategy'] = active_portfolio['negative_momentum_strategy']
-        
-        # Update beta settings
-        st.session_state['strategy_comparison_active_calc_beta'] = active_portfolio['calc_beta']
-        st.session_state['strategy_comparison_active_beta_window'] = active_portfolio['beta_window_days']
-        st.session_state['strategy_comparison_active_beta_exclude'] = active_portfolio['exclude_days_beta']
-        
-        # Update volatility settings
-        st.session_state['strategy_comparison_active_calc_vol'] = active_portfolio['calc_volatility']
-        st.session_state['strategy_comparison_active_vol_window'] = active_portfolio['vol_window_days']
-        st.session_state['strategy_comparison_active_vol_exclude'] = active_portfolio['exclude_days_vol']
+    st.session_state.strategy_comparison_rerun_flag = True
 
 def update_name():
     st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['name'] = st.session_state.strategy_comparison_active_name
@@ -1951,6 +2042,9 @@ def update_vol_window():
 
 def update_vol_exclude():
     st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['exclude_days_vol'] = st.session_state.strategy_comparison_active_vol_exclude
+
+def update_collect_dividends_as_cash():
+    st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index]['collect_dividends_as_cash'] = st.session_state.strategy_comparison_active_collect_dividends_as_cash
 
 # Sidebar for portfolio selection
 st.sidebar.title("Manage Portfolios")
@@ -2069,7 +2163,7 @@ for i in range(len(st.session_state.strategy_comparison_global_tickers)):
     
     with col4:
         # Remove button
-        if st.button("x", key=f"remove_global_{i}_{stock['ticker']}_{id(stock)}", help="Remove this ticker", on_click=remove_global_stock_callback, args=(stock['ticker'],)):
+        if st.button("x", key=f"remove_global_stock_{i}", help="Remove this ticker", on_click=remove_global_stock_callback, args=(stock['ticker'],)):
             pass
 
 # Validation constants
@@ -2107,12 +2201,12 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
 # Start with option
 st.sidebar.markdown("---")
 st.sidebar.subheader("Data Options")
-if "strategy_comparison_start_with" not in st.session_state:
-    st.session_state.strategy_comparison_start_with = "all"
+if "strategy_comparison_start_with_radio" not in st.session_state:
+    st.session_state["strategy_comparison_start_with_radio"] = st.session_state.get("strategy_comparison_start_with", "all")
 st.sidebar.radio(
     "How to handle assets with different start dates?",
     ["all", "oldest"],
-    index=0 if st.session_state.strategy_comparison_start_with == "all" else 1,
+    index=0 if st.session_state["strategy_comparison_start_with_radio"] == "all" else 1,
     format_func=lambda x: "Start when ALL assets are available" if x == "all" else "Start with OLDEST asset",
     help="""
     **All:** Starts the backtest when all selected assets are available.
@@ -2120,6 +2214,22 @@ st.sidebar.radio(
     """,
     key="strategy_comparison_start_with_radio",
     on_change=lambda: setattr(st.session_state, 'strategy_comparison_start_with', st.session_state.strategy_comparison_start_with_radio)
+)
+
+# First rebalance strategy option
+if "strategy_comparison_first_rebalance_strategy_radio" not in st.session_state:
+    st.session_state["strategy_comparison_first_rebalance_strategy_radio"] = st.session_state.get("strategy_comparison_first_rebalance_strategy", "rebalancing_date")
+st.sidebar.radio(
+    "When should the first rebalancing occur?",
+    ["rebalancing_date", "momentum_window_complete"],
+    index=0 if st.session_state["strategy_comparison_first_rebalance_strategy_radio"] == "rebalancing_date" else 1,
+    format_func=lambda x: "First rebalance on rebalancing date" if x == "rebalancing_date" else "First rebalance when momentum window complete",
+    help="""
+    **First rebalance on rebalancing date:** Start rebalancing immediately when possible.
+    **First rebalance when momentum window complete:** Wait for the largest momentum window to complete before first rebalance.
+    """,
+    key="strategy_comparison_first_rebalance_strategy_radio",
+    on_change=lambda: setattr(st.session_state, 'strategy_comparison_first_rebalance_strategy', st.session_state.strategy_comparison_first_rebalance_strategy_radio)
 )
 
 # JSON section for all portfolios
@@ -2133,6 +2243,9 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
             # Remove unused settings that were cleaned up
             cleaned_config.pop('use_relative_momentum', None)
             cleaned_config.pop('equal_if_all_negative', None)
+            # Update global settings from session state
+            cleaned_config['start_with'] = st.session_state.get('strategy_comparison_start_with', 'all')
+            cleaned_config['first_rebalance_strategy'] = st.session_state.get('strategy_comparison_first_rebalance_strategy', 'rebalancing_date')
             cleaned_configs.append(cleaned_config)
         return cleaned_configs
     
@@ -2166,15 +2279,24 @@ with col_right:
 # Swap positions: show Rebalancing Frequency first, then Added Frequency.
 # Use two equal-width columns and make selectboxes use the container width so they match visually.
 col_freq_rebal, col_freq_add = st.columns([1, 1])
-freq_options = ["Never", "Weekly", "Biweekly", "Monthly", "Quarterly", "Semiannually", "Annually"]
+freq_options = ["Never", "Buy & Hold", "Buy & Hold (Target)", "Weekly", "Biweekly", "Monthly", "Quarterly", "Semiannually", "Annually"]
 with col_freq_rebal:
     if "strategy_comparison_active_rebal_freq" not in st.session_state:
         st.session_state["strategy_comparison_active_rebal_freq"] = active_portfolio['rebalancing_frequency']
-    st.selectbox("Rebalancing Frequency", freq_options, key="strategy_comparison_active_rebal_freq", on_change=update_rebal_freq, help="How often the portfolio is rebalanced.", )
+    st.selectbox("Rebalancing Frequency", freq_options, key="strategy_comparison_active_rebal_freq", on_change=update_rebal_freq, help="How often the portfolio is rebalanced. 'Buy & Hold' reinvests cash immediately using current proportions. 'Buy & Hold (Target)' reinvests cash immediately using target allocations. Cash from dividends (if 'Collect Dividends as Cash' is enabled) will be available for rebalancing.", )
 with col_freq_add:
     if "strategy_comparison_active_add_freq" not in st.session_state:
         st.session_state["strategy_comparison_active_add_freq"] = active_portfolio['added_frequency']
-    st.selectbox("Added Frequency", freq_options, key="strategy_comparison_active_add_freq", on_change=update_add_freq, help="How often cash is added to the portfolio.")
+    st.selectbox("Added Frequency", freq_options, key="strategy_comparison_active_add_freq", on_change=update_add_freq, help="How often cash is added to the portfolio. 'Buy & Hold' reinvests cash immediately using current proportions. 'Buy & Hold (Target)' reinvests cash immediately using target allocations.")
+
+# Dividend handling option
+st.session_state["strategy_comparison_active_collect_dividends_as_cash"] = active_portfolio.get('collect_dividends_as_cash', False)
+st.checkbox(
+    "Collect Dividends as Cash", 
+    key="strategy_comparison_active_collect_dividends_as_cash",
+    help="When enabled, dividends are collected as cash instead of being automatically reinvested in the stock. This cash will be available for rebalancing.",
+    on_change=update_collect_dividends_as_cash
+)
 
 with st.expander("Rebalancing and Added Frequency Explained", expanded=False):
     st.markdown("""
@@ -2182,7 +2304,13 @@ with st.expander("Rebalancing and Added Frequency Explained", expanded=False):
     
     **Rebalancing Frequency** is the frequency at which the portfolio is rebalanced to the specified allocations. It is also at this date that any additional cash from the `Added Frequency` is invested into the portfolio.
     
-    *Keeping a Rebalancing Frequency to "none" will mean no additional cash is invested, even if you have an `Added Frequency` specified.*
+    **Buy & Hold Options:**
+    - **Buy & Hold**: When cash is available (from additions or dividends), it's immediately reinvested using the current portfolio proportions
+    - **Buy & Hold (Target)**: When cash is available (from additions or dividends), it's immediately reinvested using the target allocations
+    
+    **Collect Dividends as Cash**: When enabled, dividends are collected as cash instead of being automatically reinvested. This cash becomes available for rebalancing.
+    
+    *Keeping a Rebalancing Frequency to "Never" will mean no additional cash is invested, even if you have an `Added Frequency` specified.*
     """)
 
 # Sync buttons
@@ -2382,6 +2510,9 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     cleaned_config = active_portfolio.copy()
     cleaned_config.pop('use_relative_momentum', None)
     cleaned_config.pop('equal_if_all_negative', None)
+    # Update global settings from session state
+    cleaned_config['start_with'] = st.session_state.get('strategy_comparison_start_with', 'all')
+    cleaned_config['first_rebalance_strategy'] = st.session_state.get('strategy_comparison_first_rebalance_strategy', 'rebalancing_date')
     config_json = json.dumps(cleaned_config, indent=4)
     st.code(config_json, language='json')
     # Fixed JSON copy button
@@ -3395,27 +3526,29 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
         left_col, mid_col, right_col = st.columns([1, 3, 1])
         with mid_col:
             st.markdown("<div style='display:flex; gap:8px; align-items:center;'>", unsafe_allow_html=True)
+            def update_selected_portfolio():
+                selected_display = st.session_state.get("strategy_comparison_detail_portfolio_selector")
+                if selected_display:
+                    try:
+                        prefix, rest = selected_display.split(' - ', 1)
+                        if prefix.startswith('extra_'):
+                            # extra entries use the rest as the name
+                            st.session_state["strategy_comparison_selected_portfolio_name"] = rest
+                        else:
+                            idx = int(prefix)
+                            st.session_state["strategy_comparison_selected_portfolio_name"] = all_portfolio_names[idx]
+                    except Exception:
+                        st.session_state["strategy_comparison_selected_portfolio_name"] = selected_display
+
             selected_display = st.selectbox(
                 "Select portfolio for details", 
                 options=display_options, 
                 index=current_selection_index,
-                key="strategy_comparison_detail_portfolio_selector_temp", 
+                key="strategy_comparison_detail_portfolio_selector", 
                 help='Choose which portfolio to inspect in detail', 
-                label_visibility='collapsed'
+                label_visibility='collapsed',
+                on_change=update_selected_portfolio
             )
-            
-            # Update the persistent selection when the widget changes
-            if selected_display:
-                try:
-                    prefix, rest = selected_display.split(' - ', 1)
-                    if prefix.startswith('extra_'):
-                        # extra entries use the rest as the name
-                        st.session_state["strategy_comparison_selected_portfolio_name"] = rest
-                    else:
-                        idx = int(prefix)
-                        st.session_state["strategy_comparison_selected_portfolio_name"] = all_portfolio_names[idx]
-                except Exception:
-                    st.session_state["strategy_comparison_selected_portfolio_name"] = selected_display
             # Add a prominent view button with a professional color
             view_clicked = st.button("View Details", key='strategy_comparison_view_details_btn')
             st.markdown("</div>", unsafe_allow_html=True)
