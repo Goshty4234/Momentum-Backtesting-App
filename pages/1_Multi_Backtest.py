@@ -266,40 +266,6 @@ def calculate_mwrr(values, cash_flows, dates):
             return np.nan
     except Exception:
         return np.nan
-    # Exact logic from app.py for MWRR calculation
-    try:
-        from scipy.optimize import brentq
-        values = pd.Series(values).dropna()
-        flows = pd.Series(cash_flows).reindex(values.index, fill_value=0.0)
-        if len(values) < 2:
-            return np.nan
-        dates = pd.to_datetime(values.index)
-        start_date = dates[0]
-        time_periods = np.array([(d - start_date).days / 365.25 for d in dates])
-        initial_investment = -values.iloc[0]
-        significant_flows = flows[flows != 0]
-        cash_flow_dates = [start_date]
-        cash_flow_amounts = [initial_investment]
-        cash_flow_times = [0.0]
-        for date, flow in significant_flows.items():
-            if date != dates[0] and date != dates[-1]:
-                cash_flow_dates.append(pd.to_datetime(date))
-                cash_flow_amounts.append(flow)
-                cash_flow_times.append((pd.to_datetime(date) - start_date).days / 365.25)
-        cash_flow_dates.append(dates[-1])
-        cash_flow_amounts.append(values.iloc[-1])
-        cash_flow_times.append((dates[-1] - start_date).days / 365.25)
-        cash_flow_amounts = np.array(cash_flow_amounts)
-        cash_flow_times = np.array(cash_flow_times)
-        def npv(rate):
-            return np.sum(cash_flow_amounts / (1 + rate) ** cash_flow_times)
-        try:
-            irr = brentq(npv, -0.999, 10)
-            return irr
-        except (ValueError, RuntimeError):
-            return np.nan
-    except Exception:
-        return np.nan
 # Backtest_Engine.py
 import streamlit as st
 import pandas as pd
@@ -562,16 +528,48 @@ def calculate_beta(returns, benchmark_returns):
 
 # FIXED: Correct Sortino Ratio calculation
 def calculate_sortino(returns, risk_free_rate=0):
-    # Annualized Sortino ratio
-    target_return = risk_free_rate / 252  # Daily target
-    downside_returns = returns[returns < target_return]
+    """
+    Calculate the Sortino ratio - a risk-adjusted return measure that penalizes downside volatility.
+    
+    Args:
+        returns: Daily returns series
+        risk_free_rate: Annual risk-free rate (default 0)
+    
+    Returns:
+        Annualized Sortino ratio
+    """
+    if returns.empty or len(returns) < 2:
+        return np.nan
+    
+    # Convert annual risk-free rate to daily
+    daily_rf_rate = risk_free_rate / 252
+    
+    # Create a constant risk-free rate series aligned with returns
+    rf_series = pd.Series(daily_rf_rate, index=returns.index)
+    
+    # Calculate downside returns (returns below the risk-free rate)
+    downside_returns = returns[returns < rf_series]
+    
     if len(downside_returns) < 2:
+        # If no downside returns, Sortino is undefined
         return np.nan
-    downside_std = np.std(downside_returns) * np.sqrt(252)
+    
+    # Calculate downside deviation (standard deviation of downside returns)
+    downside_std = downside_returns.std()
+    
     if downside_std == 0:
+        # If no volatility in downside returns, Sortino is undefined
         return np.nan
-    expected_return = returns.mean() * 252
-    return (expected_return - risk_free_rate) / downside_std
+    
+    # Calculate excess return (portfolio return - risk-free rate)
+    portfolio_return = returns.mean()
+    rf_mean = rf_series.mean()
+    excess_return = portfolio_return - rf_mean
+    
+    # Use the same formula as Backtest_Engine.py: (excess_return / downside_std) * sqrt(252)
+    sortino_ratio = (excess_return / downside_std) * np.sqrt(252)
+    
+    return sortino_ratio
 
 # -----------------------
 # Timer function for next rebalance date
@@ -2367,7 +2365,7 @@ if st.sidebar.button("Run Backtests", type='primary'):
                     all_metrics[unique_name] = historical_metrics
                     # Remember mapping from portfolio index (0-based) to unique key
                     portfolio_key_map[i-1] = unique_name
-                    # --- PATCHED CASH FLOW LOGIC ---
+                    # --- CASH FLOW LOGIC FOR MWRR (stored for later calculation) ---
                     # Track cash flows as pandas Series indexed by date
                     cash_flows = pd.Series(0.0, index=total_series.index)
                     # Initial investment: negative cash flow on first date
@@ -2381,6 +2379,11 @@ if st.sidebar.button("Run Backtests", type='primary'):
                     # Final value: positive cash flow on last date for MWRR
                     if len(total_series.index) > 0:
                         cash_flows.iloc[-1] += total_series.iloc[-1]
+                    
+                    # Store cash flows and portfolio values for MWRR calculation after all portfolios are processed
+                    all_results[unique_name]['cash_flows'] = cash_flows
+                    all_results[unique_name]['portfolio_values'] = total_series
+                    
                     # Get benchmark returns for stats calculation
                     benchmark_returns = None
                     if cfg['benchmark_ticker'] and cfg['benchmark_ticker'] in data_reindexed:
@@ -2388,27 +2391,8 @@ if st.sidebar.button("Run Backtests", type='primary'):
                     # Ensure benchmark_returns is a pandas Series aligned to total_series
                     if benchmark_returns is not None:
                         benchmark_returns = pd.Series(benchmark_returns, index=total_series.index).dropna()
-                    # Ensure cash_flows is a pandas Series indexed by date, with initial investment and additions
-                    cash_flows = pd.Series(cash_flows, index=total_series.index)
-                    # Align for stats calculation
-                    # Track cash flows for MWRR exactly as in app.py
-                    # Initial investment: negative cash flow on first date
-                    mwrr_cash_flows = pd.Series(0.0, index=total_series.index)
-                    if len(total_series.index) > 0:
-                        mwrr_cash_flows.iloc[0] = -cfg.get('initial_value', 0)
-                    # Periodic additions: negative cash flow on their respective dates
-                    dates_added = get_dates_by_freq(cfg.get('added_frequency'), total_series.index[0], total_series.index[-1], total_series.index)
-                    for d in dates_added:
-                        if d in mwrr_cash_flows.index and d != mwrr_cash_flows.index[0]:
-                            mwrr_cash_flows.loc[d] -= cfg.get('added_amount', 0)
-                    # Final value: positive cash flow on last date for MWRR
-                    if len(total_series.index) > 0:
-                        mwrr_cash_flows.iloc[-1] += total_series.iloc[-1]
-
-                    # Use the no-additions series returned by single_backtest (do NOT reconstruct it here)
-                    # total_series_no_additions is returned by single_backtest and already represents the portfolio value without added cash.
-
-                    # Calculate statistics
+                    
+                    # Calculate statistics (excluding MWRR for now)
                     # Use total_series_no_additions for all stats except MWRR
                     stats_values = total_series_no_additions.values
                     stats_dates = total_series_no_additions.index
@@ -2438,8 +2422,6 @@ if st.sidebar.button("Run Backtests", type='primary'):
                                 cov = pr.loc[common_idx2].cov(br.loc[common_idx2])
                                 var = br.loc[common_idx2].var()
                                 beta = cov / var
-                    # MWRR uses the full backtest with additions
-                    mwrr = calculate_mwrr(total_series, mwrr_cash_flows, total_series.index)
                     def scale_pct(val):
                         if val is None or np.isnan(val):
                             return np.nan
@@ -2451,12 +2433,19 @@ if st.sidebar.button("Run Backtests", type='primary'):
                     def clamp_stat(val, stat_type):
                         if val is None or np.isnan(val):
                             return "N/A"
-                        v = scale_pct(val)
+                        if stat_type == "MWRR":
+                            # MWRR is already a percentage from calculate_mwrr, don't scale it
+                            v = val
+                        else:
+                            v = scale_pct(val)
                         # Clamp ranges for each stat type
-                        if stat_type in ["CAGR", "Volatility", "MWRR", "Total Return"]:
+                        if stat_type in ["CAGR", "Volatility", "Total Return"]:
                             if v < 0 or v > 100:
                                 return "N/A"
-                        if stat_type == "MaxDrawdown":
+                        elif stat_type == "MWRR":
+                            # MWRR can be negative or exceed 100%, so don't clamp it
+                            pass
+                        elif stat_type == "MaxDrawdown":
                             if v < -100 or v > 0:
                                 return "N/A"
                         return f"{v:.2f}%" if stat_type in ["CAGR", "MaxDrawdown", "Volatility", "MWRR", "Total Return"] else f"{v:.3f}" if isinstance(v, float) else v
@@ -2479,12 +2468,32 @@ if st.sidebar.button("Run Backtests", type='primary'):
                     "UlcerIndex": clamp_stat(ulcer, "UlcerIndex"),
                     "UPI": clamp_stat(upi / 100 if isinstance(upi, (int, float)) and pd.notna(upi) else upi, "UPI"),
                     "Beta": clamp_stat(beta / 100 if isinstance(beta, (int, float)) and pd.notna(beta) else beta, "Beta"),
-                    "MWRR": clamp_stat(mwrr, "MWRR"),
+                    # MWRR will be calculated after all portfolios are processed
                 }
                 all_stats[unique_name] = stats
                 all_drawdowns[unique_name] = pd.Series(drawdowns, index=stats_dates)
             progress_bar.progress(100, text="Multi-portfolio backtest analysis complete!")
             progress_bar.empty()
+            
+            # --- CALCULATE MWRR FOR ALL PORTFOLIOS AFTER LOOP COMPLETES ---
+            print("Calculating MWRR for all portfolios...")
+            for unique_name, results in all_results.items():
+                if 'cash_flows' in results and 'portfolio_values' in results:
+                    cash_flows = results['cash_flows']
+                    portfolio_values = results['portfolio_values']
+                    # Calculate MWRR with complete cash flow series
+                    mwrr = calculate_mwrr(portfolio_values, cash_flows, portfolio_values.index)
+                    # Add MWRR to the stats
+                    if unique_name in all_stats:
+                        all_stats[unique_name]["MWRR"] = mwrr
+                    print(f"MWRR for {unique_name}: {mwrr:.2f}%")
+                    # Clean up temporary data
+                    del results['cash_flows']
+                    del results['portfolio_values']
+                else:
+                    print(f"No cash flows found for {unique_name}")
+                    if unique_name in all_stats:
+                        all_stats[unique_name]["MWRR"] = np.nan
             print("\n" + "="*80)
             print(" " * 25 + "FINAL PERFORMANCE STATISTICS")
             print("="*80 + "\n")
@@ -2520,7 +2529,9 @@ if st.sidebar.button("Run Backtests", type='primary'):
                     cols.append(mwrr_col)
                     cols.append(total_return_col)
                     stats_df_display = stats_df_display[cols]
-                stats_df_display['MWRR'] = stats_df_display['MWRR'].apply(lambda x: fmt_pct(x))
+                # MWRR is already a percentage from calculate_mwrr, format it properly
+                if 'MWRR' in stats_df_display.columns:
+                    stats_df_display['MWRR'] = stats_df_display['MWRR'].apply(lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) and pd.notna(x) else "N/A")
                 stats_df_display['Sharpe'] = stats_df_display['Sharpe'].apply(lambda x: fmt_num(x))
                 stats_df_display['Sortino'] = stats_df_display['Sortino'].apply(lambda x: fmt_num(x))
                 stats_df_display['Ulcer Index'] = stats_df_display['Ulcer Index'].apply(lambda x: fmt_num(x))
@@ -3015,12 +3026,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             def get_no_additions(series_or_dict):
                 return series_or_dict['no_additions'] if isinstance(series_or_dict, dict) and 'no_additions' in series_or_dict else series_or_dict
 
-            # Try to preserve existing MWRR values (these depend on cash flows and are not easily recomputed here)
-            preserved_mwrr = {}
-            existing_stats = st.session_state.get('multi_backtest_stats_df_display')
-            if existing_stats is not None and 'MWRR' in existing_stats.columns:
-                for name, val in existing_stats['MWRR'].items():
-                    preserved_mwrr[name] = val
+            # MWRR will be calculated fresh for each portfolio in the recomputation loop
 
             recomputed_stats = {}
 
@@ -3066,7 +3072,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         "UlcerIndex": "N/A",
                         "UPI": "N/A",
                         "Beta": "N/A",
-                        "MWRR": preserved_mwrr.get(name, "N/A"),
+                        "MWRR": "N/A",
                         # Final values with and without additions (if available)
                         "Final Value (with)": (series_obj['with_additions'].iloc[-1] if isinstance(series_obj, dict) and 'with_additions' in series_obj and len(series_obj['with_additions'])>0 else "N/A"),
                         "Final Value (no_additions)": (ser_noadd.iloc[-1] if isinstance(ser_noadd, pd.Series) and len(ser_noadd)>0 else "N/A")
@@ -3124,7 +3130,27 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     beta = cov / var
                         except Exception as e:
                             print(f"[BETA DEBUG] Failed to compute beta for {name}: {e}")
-                mwrr_val = preserved_mwrr.get(name, "N/A")
+                
+                # Calculate MWRR for this portfolio using the complete cash flow series
+                mwrr_val = "N/A"
+                if isinstance(series_obj, dict) and 'with_additions' in series_obj:
+                    portfolio_values = series_obj['with_additions']
+                    # Reconstruct cash flows for this portfolio
+                    cfg_for_name = next((c for c in st.session_state.multi_backtest_portfolio_configs if c['name'] == name), None)
+                    if cfg_for_name and len(portfolio_values) > 0:
+                        cash_flows = pd.Series(0.0, index=portfolio_values.index)
+                        # Initial investment: negative cash flow on first date
+                        cash_flows.iloc[0] = -cfg_for_name.get('initial_value', 0)
+                        # Periodic additions: negative cash flow on their respective dates
+                        dates_added = get_dates_by_freq(cfg_for_name.get('added_frequency'), portfolio_values.index[0], portfolio_values.index[-1], portfolio_values.index)
+                        for d in dates_added:
+                            if d in cash_flows.index and d != cash_flows.index[0]:
+                                cash_flows.loc[d] -= cfg_for_name.get('added_amount', 0)
+                        # Final value: positive cash flow on last date for MWRR
+                        cash_flows.iloc[-1] += portfolio_values.iloc[-1]
+                        # Calculate MWRR
+                        mwrr = calculate_mwrr(portfolio_values, cash_flows, portfolio_values.index)
+                        mwrr_val = mwrr
 
                 # Calculate total money added for this portfolio
                 total_money_added = "N/A"
@@ -3177,6 +3203,9 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 fmt_map_display[fv_no] = '${:,.2f}'
             if 'Total Money Added' in stats_df_display.columns:
                 fmt_map_display['Total Money Added'] = '${:,.2f}'
+            # Format MWRR as percentage
+            if 'MWRR' in stats_df_display.columns:
+                fmt_map_display['MWRR'] = '{:.2f}%'
             if fmt_map_display:
                 try:
                     st.dataframe(stats_df_display.style.format(fmt_map_display), use_container_width=True)
