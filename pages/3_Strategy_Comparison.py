@@ -563,7 +563,7 @@ def calculate_max_drawdown(values):
 
 def calculate_volatility(returns):
     # Annualized volatility
-    return np.std(returns) * np.sqrt(252) if len(returns) > 1 else np.nan
+    return np.std(returns) * np.sqrt(365) if len(returns) > 1 else np.nan
 
 def calculate_beta(returns, benchmark_returns):
     # Use exact logic from app.py
@@ -582,32 +582,60 @@ def calculate_beta(returns, benchmark_returns):
     var = br.loc[common_idx].var()
     return cov / var
 
-# FIXED: Correct Sortino Ratio calculation
-def calculate_sortino(returns, risk_free_rate=0):
-    # Annualized Sortino ratio
-    target_return = risk_free_rate / 252  # Daily target
-    downside_returns = returns[returns < target_return]
-    if len(downside_returns) < 2:
+# FIXED: Correct Sortino Ratio calculation - EXACTLY like Backtest_Engine.py
+def calculate_sortino(returns, risk_free_rate):
+    """Calculates the Sortino ratio."""
+    # Create a constant risk-free rate series aligned with returns
+    daily_rf_rate = risk_free_rate / 252
+    rf_series = pd.Series(daily_rf_rate, index=returns.index)
+    
+    aligned_returns, aligned_rf = returns.align(rf_series, join='inner')
+    if aligned_returns.empty:
         return np.nan
-    downside_std = np.std(downside_returns) * np.sqrt(252)
-    if downside_std == 0:
+        
+    downside_returns = aligned_returns[aligned_returns < aligned_rf]
+    if downside_returns.empty or downside_returns.std() == 0:
+        # If no downside returns, Sortino is infinite or undefined.
+        # We can return nan or a very high value. nan is safer.
         return np.nan
-    expected_return = returns.mean() * 252
-    return (expected_return - risk_free_rate) / downside_std
+    
+    downside_std = downside_returns.std()
+    
+    return (aligned_returns.mean() - aligned_rf.mean()) / downside_std * np.sqrt(365)
 
-# FIXED: Correct Ulcer Index calculation
-def calculate_ulcer_index(values):
-    values = np.array(values)
-    peak = np.maximum.accumulate(values)
-    peak[peak == 0] = 1 # Avoid division by zero
-    drawdown_sq = ((values - peak) / peak)**2
-    return np.sqrt(np.mean(drawdown_sq)) if len(drawdown_sq) > 0 else np.nan
-
-# FIXED: Correct UPI calculation
-def calculate_upi(cagr, ulcer_index, risk_free_rate=0):
-    if pd.isna(cagr) or pd.isna(ulcer_index) or ulcer_index == 0:
+# FIXED: Correct Sharpe ratio calculation - EXACTLY like Backtest_Engine.py
+def calculate_sharpe(returns, risk_free_rate):
+    """Calculates the Sharpe ratio."""
+    # Create a constant risk-free rate series aligned with returns
+    daily_rf_rate = risk_free_rate / 252
+    rf_series = pd.Series(daily_rf_rate, index=returns.index)
+    
+    aligned_returns, aligned_rf = returns.align(rf_series, join='inner')
+    if aligned_returns.empty:
         return np.nan
-    return (cagr - risk_free_rate) / ulcer_index
+    
+    excess_returns = aligned_returns - aligned_rf
+    if excess_returns.std() == 0:
+        return np.nan
+        
+    return excess_returns.mean() / excess_returns.std() * np.sqrt(365)
+
+# FIXED: Correct Ulcer Index calculation - EXACTLY like Backtest_Engine.py
+def calculate_ulcer_index(series):
+    """Calculates the Ulcer Index (average squared percent drawdown, then sqrt)."""
+    if series.empty:
+        return np.nan
+    peak = series.expanding(min_periods=1).max()
+    drawdown = (series - peak) / peak * 100  # percent drawdown
+    drawdown_sq = drawdown ** 2
+    return np.sqrt(drawdown_sq.mean())
+
+# FIXED: Correct UPI calculation - EXACTLY like Backtest_Engine.py
+def calculate_upi(cagr, ulcer_index):
+    """Calculates the Ulcer Performance Index (UPI = CAGR / Ulcer Index, both as decimals)."""
+    if ulcer_index is None or pd.isna(ulcer_index) or ulcer_index == 0:
+        return np.nan
+    return cagr / (ulcer_index / 100)
 
 def calculate_total_money_added(config, start_date, end_date):
     """Calculate total money added to portfolio (initial + periodic additions)"""
@@ -2849,13 +2877,12 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 cagr = calculate_cagr(stats_values, stats_dates)
                 max_dd, drawdowns = calculate_max_drawdown(stats_values)
                 vol = calculate_volatility(stats_returns)
-                # Avoid division by zero; if std is zero set Sharpe to NaN
-                try:
-                    sharpe = np.nan if stats_returns.std() == 0 else (stats_returns.mean() * 252 / (stats_returns.std() * np.sqrt(252)))
-                except Exception:
-                    sharpe = np.nan
-                sortino = calculate_sortino(stats_returns)
-                ulcer = calculate_ulcer_index(stats_values)
+                
+                # Use 2% annual risk-free rate (same as Backtest_Engine.py default)
+                risk_free_rate = 0.02
+                sharpe = calculate_sharpe(stats_returns, risk_free_rate)
+                sortino = calculate_sortino(stats_returns, risk_free_rate)
+                ulcer = calculate_ulcer_index(pd.Series(stats_values, index=stats_dates))
                 upi = calculate_upi(cagr, ulcer)
                 # --- Beta calculation (copied from app.py) ---
                 beta = np.nan
@@ -2886,10 +2913,13 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                         return "N/A"
                     v = scale_pct(val)
                     # Clamp ranges for each stat type
-                    if stat_type in ["CAGR", "Volatility", "MWRR", "Total Return"]:
+                    if stat_type in ["CAGR", "Volatility", "Total Return"]:
                         if v < 0 or v > 100:
                             return "N/A"
-                    if stat_type == "MaxDrawdown":
+                    elif stat_type == "MWRR":
+                        # MWRR can be negative or exceed 100%, so don't clamp it
+                        pass
+                    elif stat_type == "MaxDrawdown":
                         if v < -100 or v > 0:
                             return "N/A"
                     return f"{v:.2f}%" if stat_type in ["CAGR", "MaxDrawdown", "Volatility", "MWRR", "Total Return"] else f"{v:.3f}" if isinstance(v, float) else v
@@ -2953,7 +2983,8 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                     cols.append(mwrr_col)
                     cols.append(total_return_col)
                     stats_df_display = stats_df_display[cols]
-                stats_df_display['MWRR'] = stats_df_display['MWRR'].apply(lambda x: fmt_pct(x))
+                # MWRR values are already percentages, don't multiply by 100
+                stats_df_display['MWRR'] = stats_df_display['MWRR'].apply(lambda x: f"{x:.2f}%" if isinstance(x, (int, float)) and pd.notna(x) else x)
                 stats_df_display['Sharpe'] = stats_df_display['Sharpe'].apply(lambda x: fmt_num(x))
                 stats_df_display['Sortino'] = stats_df_display['Sortino'].apply(lambda x: fmt_num(x))
                 stats_df_display['Ulcer Index'] = stats_df_display['Ulcer Index'].apply(lambda x: fmt_num(x))
@@ -3246,9 +3277,12 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                     v = v * 100
                 
                 # Clamping logic - separate Total Return from other percentage stats
-                if stat_type in ["CAGR", "Volatility", "MWRR"]:
+                if stat_type in ["CAGR", "Volatility"]:
                     if isinstance(v, (int, float)) and (v < 0 or v > 100):
                         return "N/A"
+                elif stat_type == "MWRR":
+                    # MWRR can be negative or exceed 100%, so don't clamp it
+                    pass
                 elif stat_type == "Total Return":
                     if isinstance(v, (int, float)) and v < 0:  # Only check for negative values
                         return "N/A"
@@ -3293,13 +3327,12 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                 cagr = calculate_cagr(stats_values, stats_dates)
                 max_dd, drawdowns = calculate_max_drawdown(stats_values)
                 vol = calculate_volatility(stats_returns)
-                # Avoid division by zero; if std is zero set Sharpe to NaN
-                try:
-                    sharpe = np.nan if stats_returns.std() == 0 else (stats_returns.mean() * 252 / (stats_returns.std() * np.sqrt(252)))
-                except Exception:
-                    sharpe = np.nan
-                sortino = calculate_sortino(stats_returns)
-                ulcer = calculate_ulcer_index(stats_values)
+                
+                # Use 2% annual risk-free rate (same as Backtest_Engine.py default)
+                risk_free_rate = 0.02
+                sharpe = calculate_sharpe(stats_returns, risk_free_rate)
+                sortino = calculate_sortino(stats_returns, risk_free_rate)
+                ulcer = calculate_ulcer_index(pd.Series(stats_values, index=stats_dates))
                 upi = calculate_upi(cagr, ulcer)
                 # Compute Beta based on the no-additions portfolio returns and the portfolio's benchmark (if available)
                 beta = np.nan
