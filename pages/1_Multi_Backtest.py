@@ -2866,8 +2866,16 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         st.plotly_chart(fig1, use_container_width=True, key="multi_performance_chart")
 
         fig2 = go.Figure()
-        for name, series in st.session_state.multi_backtest_all_drawdowns.items():
-            fig2.add_trace(go.Scatter(x=series.index, y=series.values * 100, mode='lines', name=name))
+        for name, series_dict in st.session_state.multi_all_results.items():
+            # Use the no-additions series for drawdown calculation (pure portfolio performance)
+            series_to_plot = series_dict['no_additions'] if isinstance(series_dict, dict) and 'no_additions' in series_dict else series_dict
+            
+            # Calculate drawdown for this series
+            values = series_to_plot.values
+            peak = np.maximum.accumulate(values)
+            drawdowns = (values - peak) / np.where(peak == 0, 1, peak) * 100  # Convert to percentage
+            
+            fig2.add_trace(go.Scatter(x=series_to_plot.index, y=drawdowns, mode='lines', name=name))
         fig2.update_layout(
             title="Backtest Comparison (Max Drawdown)",
             xaxis_title="Date",
