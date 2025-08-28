@@ -442,7 +442,7 @@ def calculate_max_drawdown(values):
 
 def calculate_volatility(returns):
     # Annualized volatility
-    return np.std(returns) * np.sqrt(252) if len(returns) > 1 else np.nan
+    return np.std(returns) * np.sqrt(365) if len(returns) > 1 else np.nan
 
 def calculate_beta(returns, benchmark_returns):
     # Use exact logic from app.py
