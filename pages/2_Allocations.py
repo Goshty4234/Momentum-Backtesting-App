@@ -1575,6 +1575,85 @@ for i in range(len(active_portfolio['stocks'])):
 if st.button("Add Stock", on_click=add_stock_callback):
     pass
 
+# Bulk ticker input section
+with st.expander("📝 Bulk Ticker Input", expanded=False):
+    st.markdown("**Enter multiple tickers separated by spaces or commas:**")
+    
+    # Initialize bulk ticker input in session state
+    if 'alloc_bulk_tickers' not in st.session_state:
+        st.session_state.alloc_bulk_tickers = ""
+    
+    # Auto-populate bulk ticker input with current tickers
+    portfolio_index = st.session_state.alloc_active_portfolio_index
+    current_tickers = [stock['ticker'] for stock in st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'] if stock['ticker']]
+    if current_tickers:
+        current_ticker_string = ' '.join(current_tickers)
+        if st.session_state.alloc_bulk_tickers != current_ticker_string:
+            st.session_state.alloc_bulk_tickers = current_ticker_string
+    
+    # Text area for bulk ticker input
+    bulk_tickers = st.text_area(
+        "Tickers (e.g., SPY QQQ GLD TLT or SPY,QQQ,GLD,TLT)",
+        value=st.session_state.alloc_bulk_tickers,
+        key="alloc_bulk_ticker_input",
+        height=100,
+        help="Enter ticker symbols separated by spaces or commas. Click 'Fill Tickers' to replace tickers (keeps existing allocations)."
+    )
+    
+    if st.button("Fill Tickers", key="alloc_fill_tickers_btn"):
+        if bulk_tickers.strip():
+            # Parse tickers (split by comma or space)
+            ticker_list = []
+            for ticker in bulk_tickers.replace(',', ' ').split():
+                ticker = ticker.strip().upper()
+                if ticker:
+                    ticker_list.append(ticker)
+            
+            if ticker_list:
+                portfolio_index = st.session_state.alloc_active_portfolio_index
+                current_stocks = st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].copy()
+                
+                # Replace tickers - new ones get 0% allocation
+                new_stocks = []
+                
+                for i, ticker in enumerate(ticker_list):
+                    if i < len(current_stocks):
+                        # Use existing allocation if available
+                        new_stocks.append({
+                            'ticker': ticker,
+                            'allocation': current_stocks[i]['allocation'],
+                            'include_dividends': current_stocks[i]['include_dividends']
+                        })
+                    else:
+                        # New tickers get 0% allocation
+                        new_stocks.append({
+                            'ticker': ticker,
+                            'allocation': 0.0,
+                            'include_dividends': True
+                        })
+                
+                # Update the portfolio with new stocks
+                st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'] = new_stocks
+                
+                # Update the active_portfolio reference to match session state
+                active_portfolio['stocks'] = new_stocks
+                
+                # Clear any existing session state keys for individual ticker inputs to force refresh
+                for key in list(st.session_state.keys()):
+                    if key.startswith(f"alloc_ticker_{portfolio_index}_") or key.startswith(f"alloc_input_alloc_{portfolio_index}_"):
+                        del st.session_state[key]
+                
+                st.success(f"✅ Replaced tickers with: {', '.join(ticker_list)}")
+                st.info("💡 **Note:** Existing allocations preserved. Adjust allocations manually if needed.")
+                
+                # Force immediate rerun
+                st.rerun()
+            else:
+                st.error("❌ No valid tickers found. Please enter ticker symbols separated by spaces or commas.")
+        else:
+            st.error("❌ Please enter ticker symbols.")
+
+
 st.subheader("Strategy")
 if "alloc_active_use_momentum" not in st.session_state:
     st.session_state["alloc_active_use_momentum"] = active_portfolio['use_momentum']
@@ -1765,14 +1844,17 @@ if st.sidebar.button("Run Backtests", type='primary'):
                 validation_errors.append(f"Portfolio '{cfg['name']}' is not using momentum, but the total stock allocation is {total_stock_allocation*100:.2f}% (must be 100%)")
                 valid_configs = False
                 
+    # Initialize progress bar
+    progress_bar = st.empty()
+    
     if not valid_configs:
         for error in validation_errors:
             st.error(error)
         # Don't run the backtest, but continue showing the UI
-        pass
+        progress_bar.empty()
+        st.stop()
     else:
-        progress_bar = st.empty()
-    progress_bar.progress(0, text="Starting backtest...")
+        progress_bar.progress(0, text="Starting backtest...")
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         all_tickers = sorted(list(set(s['ticker'] for cfg in portfolio_list for s in cfg['stocks'] if s['ticker']) | set(cfg.get('benchmark_ticker') for cfg in portfolio_list if 'benchmark_ticker' in cfg)))
@@ -2444,7 +2526,7 @@ if st.session_state.get('alloc_backtest_run', False):
             vals_today = [float(today_weights[k]) * 100 for k in labels_today]
             
             if labels_today and vals_today:
-                st.markdown("## Rebalance as of Today")
+                st.markdown(f"## Rebalance as of Today ({pd.Timestamp.now().strftime('%Y-%m-%d')})")
                 fig_today = go.Figure()
                 fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.35))
                 fig_today.update_traces(textinfo='percent+label')
@@ -2547,7 +2629,600 @@ if st.session_state.get('alloc_backtest_run', False):
                     st.dataframe(sty, use_container_width=True)
                 except Exception:
                     st.dataframe(df_display, use_container_width=True)
+                
+                # Add comprehensive portfolio data table right after the main allocation table
+                build_comprehensive_portfolio_table(alloc_dict, portfolio_value)
             
+            # Add comprehensive portfolio data table
+            def build_comprehensive_portfolio_table(alloc_dict, portfolio_value):
+                """
+                Build a comprehensive table with all available financial indicators from Yahoo Finance
+                """
+                st.markdown("### 📊 Comprehensive Portfolio Data")
+                st.markdown("#### Detailed financial indicators for each position")
+                
+                # Get current date for data freshness
+                current_date = pd.Timestamp.now().strftime('%Y-%m-%d')
+                
+                # Create progress bar for data fetching
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                rows = []
+                tickers = [tk for tk in alloc_dict.keys() if tk != 'CASH']
+                total_tickers = len(tickers)
+                
+                for i, ticker in enumerate(tickers):
+                    status_text.text(f"Fetching data for {ticker}... ({i+1}/{total_tickers})")
+                    progress_bar.progress((i + 1) / total_tickers)
+                    
+                    try:
+                        # Fetch comprehensive data from Yahoo Finance
+                        stock = yf.Ticker(ticker)
+                        info = stock.info
+                        
+                        # Get current price
+                        current_price = info.get('currentPrice', info.get('regularMarketPrice', None))
+                        if current_price is None:
+                            # Try to get from historical data
+                            hist = stock.history(period='1d')
+                            if not hist.empty:
+                                current_price = hist['Close'].iloc[-1]
+                        
+                        # Calculate allocation values
+                        alloc_pct = float(alloc_dict.get(ticker, 0))
+                        allocation_value = portfolio_value * alloc_pct
+                        shares = round(allocation_value / current_price, 1) if current_price and current_price > 0 else 0
+                        total_val = shares * current_price if current_price else allocation_value
+                        
+                        # Determine if this is an ETF or stock for intelligent data handling
+                        quote_type = info.get('quoteType', '').lower()
+                        is_etf = quote_type in ['etf', 'fund']
+                        is_commodity = ticker in ['GLD', 'SLV', 'USO', 'UNG'] or 'gold' in info.get('longName', '').lower()
+                        
+                        # Extract all available financial indicators with intelligent handling
+                        row = {
+                            'Ticker': ticker,
+                            'Company Name': info.get('longName', info.get('shortName', 'N/A')),
+                            'Sector': info.get('sector', 'N/A'),
+                            'Industry': info.get('industry', 'N/A'),
+                            'Current Price ($)': current_price,
+                            'Allocation %': alloc_pct * 100,
+                            'Shares': shares,
+                            'Total Value ($)': total_val,
+                            '% of Portfolio': (total_val / portfolio_value * 100) if portfolio_value > 0 else 0,
+                            
+                            # Valuation Metrics (not applicable for commodities/ETFs)
+                            'Market Cap ($B)': info.get('marketCap', 0) / 1e9 if info.get('marketCap') and not is_commodity else None,
+                            'Enterprise Value ($B)': info.get('enterpriseValue', 0) / 1e9 if info.get('enterpriseValue') and not is_commodity else None,
+                            'P/E Ratio': info.get('trailingPE', None) if not is_commodity else None,
+                            'Forward P/E': info.get('forwardPE', None) if not is_commodity else None,
+                            'PEG Ratio': None,  # Will be calculated below with fallback strategies
+                            'Price/Book': None,  # Will be calculated manually below
+                            'Price/Sales': info.get('priceToSalesTrailing12Months', None) if not is_commodity else None,
+                            'Price/Cash Flow': info.get('priceToCashflow', None) if not is_commodity else None,
+                            'EV/EBITDA': info.get('enterpriseToEbitda', None) if not is_commodity else None,
+                            
+                            # Financial Health (not applicable for commodities/ETFs)
+                            'Debt/Equity': info.get('debtToEquity', None) if not is_commodity else None,
+                            'Current Ratio': info.get('currentRatio', None) if not is_commodity else None,
+                            'Quick Ratio': info.get('quickRatio', None) if not is_commodity else None,
+                            'ROE (%)': info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') and not is_commodity else None,
+                            'ROA (%)': info.get('returnOnAssets', 0) * 100 if info.get('returnOnAssets') and not is_commodity else None,
+                            'ROIC (%)': info.get('returnOnInvestedCapital', 0) * 100 if info.get('returnOnInvestedCapital') and not is_commodity else None,
+                            
+                            # Growth Metrics (not applicable for commodities/ETFs)
+                            'Revenue Growth (%)': info.get('revenueGrowth', 0) * 100 if info.get('revenueGrowth') and not is_commodity else None,
+                            'Earnings Growth (%)': info.get('earningsGrowth', 0) * 100 if info.get('earningsGrowth') and not is_commodity else None,
+                            'EPS Growth (%)': info.get('earningsQuarterlyGrowth', 0) * 100 if info.get('earningsQuarterlyGrowth') and not is_commodity else None,
+                            
+                            # Dividend Information (available for ETFs and some stocks)
+                            # Yahoo Finance returns dividend yield as decimal (0.0002 for 0.02%)
+                            'Dividend Yield (%)': info.get('dividendYield', 0) if info.get('dividendYield') else None,
+                            'Dividend Rate ($)': info.get('dividendRate', None),
+                            'Payout Ratio (%)': info.get('payoutRatio', 0) * 100 if info.get('payoutRatio') and not is_commodity else None,
+                            '5Y Dividend Growth (%)': info.get('fiveYearAvgDividendYield', 0) if info.get('fiveYearAvgDividendYield') else None,
+                            
+                            # Trading Metrics (available for all securities)
+                            '52W High ($)': info.get('fiftyTwoWeekHigh', None),
+                            '52W Low ($)': info.get('fiftyTwoWeekLow', None),
+                            '50D MA ($)': info.get('fiftyDayAverage', None),
+                            '200D MA ($)': info.get('twoHundredDayAverage', None),
+                            'Beta': info.get('beta', None),
+                            'Volume': info.get('volume', None),
+                            'Avg Volume': info.get('averageVolume', None),
+                            
+                            # Analyst Ratings (not available for commodities/ETFs)
+                            'Analyst Rating': info.get('recommendationKey', 'N/A').title() if info.get('recommendationKey') and not is_commodity else 'N/A',
+                            'Target Price ($)': info.get('targetMeanPrice', None) if not is_commodity else None,
+                            'Target High ($)': info.get('targetHighPrice', None) if not is_commodity else None,
+                            'Target Low ($)': info.get('targetLowPrice', None) if not is_commodity else None,
+                            
+                            # Additional Metrics (not applicable for commodities/ETFs)
+                            'Book Value ($)': info.get('bookValue', None) if not is_commodity else None,
+                            'Cash per Share ($)': info.get('totalCashPerShare', None) if not is_commodity else None,
+                            'Revenue per Share ($)': info.get('revenuePerShare', None) if not is_commodity else None,
+                            'Profit Margin (%)': info.get('profitMargins', 0) * 100 if info.get('profitMargins') and not is_commodity else None,
+                            'Operating Margin (%)': info.get('operatingMargins', 0) * 100 if info.get('operatingMargins') and not is_commodity else None,
+                            'Gross Margin (%)': info.get('grossMargins', 0) * 100 if info.get('grossMargins') and not is_commodity else None,
+                        }
+                        
+                        # Simple PEG Ratio calculation: P/E ÷ Earnings Growth
+                        pe_ratio = info.get('trailingPE')
+                        earnings_growth = info.get('earningsGrowth')
+                        peg_ratio = None
+                        peg_source = "N/A"
+                        
+                        if not is_commodity and pe_ratio and pe_ratio > 0 and earnings_growth and earnings_growth > 0:
+                            # Simple calculation: P/E ÷ Earnings Growth (in whole numbers)
+                            # Yahoo Finance returns growth as decimal (1.167 = 116.7% growth)
+                            # We need to convert to percentage for PEG calculation
+                            growth_percentage = earnings_growth * 100
+                            
+                            peg_ratio = pe_ratio / growth_percentage
+                            peg_source = "P/E ÷ Earnings Growth"
+                        
+                        # Price/Book will be calculated AFTER dual-class adjustment
+                        
+                        # Calculate EV/EBITDA manually to ensure consistency
+                        enterprise_value = row.get('Enterprise Value ($B)')
+                        ebitda = info.get('ebitda')
+                        if enterprise_value and ebitda and ebitda > 0:
+                            # Convert Enterprise Value from billions to actual value for calculation
+                            ev_actual = enterprise_value * 1e9
+                            row['EV/EBITDA'] = ev_actual / ebitda
+                        
+                        # Update the row with calculated PEG ratio and source
+                        row['PEG Ratio'] = peg_ratio
+                        row['PEG Source'] = peg_source
+                        
+                        # Define per-share fields for dual-class share adjustments
+                        per_share_fields = ['Book Value ($)', 'Cash per Share ($)', 'Revenue per Share ($)']
+                        
+                        # Fix for dual-class shares - detect and adjust for share class differences
+                        # This handles cases where Yahoo Finance returns same per-share data for different share classes
+                        if current_price > 0:
+                            # Store the current row data for comparison with other shares of same company
+                            company_base = ticker.split('-')[0] if '-' in ticker else ticker
+                            if company_base not in st.session_state:
+                                st.session_state[company_base] = {}
+                            
+                            # Store reference data for this share class
+                            st.session_state[company_base][ticker] = {
+                                'price': current_price,
+                                'per_share_data': {field: row[field] for field in per_share_fields if row[field]},
+                                'enterprise_value': row.get('Enterprise Value ($B)')
+                            }
+                            
+                            # Check if we have data for another share class of the same company
+                            for other_ticker, other_data in st.session_state[company_base].items():
+                                if other_ticker != ticker and other_data['price'] > 0:
+                                    price_ratio = current_price / other_data['price']
+                                    
+                                    # If price ratio is significantly different (>10x), adjust per-share metrics
+                                    # Use the higher-priced share class as reference to avoid scaling issues
+                                    if price_ratio > 10 or price_ratio < 0.1:
+                                        # Only adjust if current share class has lower price (use higher price as reference)
+                                        if current_price < other_data['price']:
+                                            for field in per_share_fields:
+                                                if row[field] and other_data['per_share_data'].get(field):
+                                                    # Use the price ratio to adjust the per-share values
+                                                    row[field] = other_data['per_share_data'][field] * price_ratio
+                                            
+                                            # Also ensure Enterprise Value is consistent between share classes
+                                            # Enterprise Value should be the same for both share classes of the same company
+                                            if other_data.get('enterprise_value') is not None:
+                                                row['Enterprise Value ($B)'] = other_data['enterprise_value']
+                                                # Also recalculate EV/EBITDA with the corrected Enterprise Value
+                                                ebitda = info.get('ebitda')
+                                                if ebitda and ebitda > 0:
+                                                    ev_actual = row['Enterprise Value ($B)'] * 1e9
+                                                    row['EV/EBITDA'] = ev_actual / ebitda
+                                        break
+                        
+                        # Calculate Price/Book ratio AFTER dual-class adjustment
+                        book_value = row.get('Book Value ($)')
+                        if current_price and book_value and book_value > 0:
+                            row['Price/Book'] = current_price / book_value
+                        elif current_price and book_value == 0:
+                            row['Price/Book'] = None  # Explicitly set to None if book value is 0
+                        
+                        # Use Yahoo Finance data directly - no manual scaling fixes
+                        # This ensures we get the most accurate data from Yahoo Finance
+                        
+                        # No manual calculations needed - use Yahoo Finance data directly
+                        rows.append(row)
+                        
+                    except Exception as e:
+                        st.warning(f"Error fetching data for {ticker}: {str(e)}")
+                        # Add basic row with available data
+                        alloc_pct = float(alloc_dict.get(ticker, 0))
+                        allocation_value = portfolio_value * alloc_pct
+                        rows.append({
+                            'Ticker': ticker,
+                            'Company Name': 'Error fetching data',
+                            'Current Price ($)': None,
+                            'Allocation %': alloc_pct * 100,
+                            'Shares': 0,
+                            'Total Value ($)': allocation_value,
+                            '% of Portfolio': (allocation_value / portfolio_value * 100) if portfolio_value > 0 else 0,
+                        })
+                
+                # Clear progress indicators
+                progress_bar.empty()
+                status_text.empty()
+                
+                if rows:
+                    df_comprehensive = pd.DataFrame(rows)
+                    
+
+                    
+                    # Calculate portfolio-weighted metrics BEFORE formatting
+                    def weighted_average(df, column, weight_column='% of Portfolio'):
+                        """Calculate weighted average, handling NaN values"""
+                        # Check if columns exist in DataFrame
+                        if column not in df.columns or weight_column not in df.columns:
+                            return None
+                        
+                        valid_mask = df[column].notna() & df[weight_column].notna()
+                        if valid_mask.sum() == 0:
+                            return None
+                        valid_df = df[valid_mask]
+                        result = (valid_df[column] * valid_df[weight_column] / 100).sum() / valid_df[weight_column].sum() * 100
+                        
+                        return result
+                    
+                    # Calculate all portfolio-weighted metrics first
+                    portfolio_pe = weighted_average(df_comprehensive, 'P/E Ratio')
+                    portfolio_pb = weighted_average(df_comprehensive, 'Price/Book')
+                    portfolio_beta = weighted_average(df_comprehensive, 'Beta')
+                    portfolio_peg = weighted_average(df_comprehensive, 'PEG Ratio')
+                    portfolio_ps = weighted_average(df_comprehensive, 'Price/Sales')
+                    portfolio_ev_ebitda = weighted_average(df_comprehensive, 'EV/EBITDA')
+                    portfolio_roe = weighted_average(df_comprehensive, 'ROE (%)')
+                    portfolio_roa = weighted_average(df_comprehensive, 'ROA (%)')
+                    portfolio_roic = weighted_average(df_comprehensive, 'ROIC (%)')
+                    portfolio_debt_equity = weighted_average(df_comprehensive, 'Debt/Equity')
+                    portfolio_current_ratio = weighted_average(df_comprehensive, 'Current Ratio')
+                    portfolio_quick_ratio = weighted_average(df_comprehensive, 'Quick Ratio')
+                    portfolio_profit_margin = weighted_average(df_comprehensive, 'Profit Margin (%)')
+                    portfolio_operating_margin = weighted_average(df_comprehensive, 'Operating Margin (%)')
+                    portfolio_gross_margin = weighted_average(df_comprehensive, 'Gross Margin (%)')
+                    portfolio_revenue_growth = weighted_average(df_comprehensive, 'Revenue Growth (%)')
+                    portfolio_earnings_growth = weighted_average(df_comprehensive, 'Earnings Growth (%)')
+                    portfolio_eps_growth = weighted_average(df_comprehensive, 'EPS Growth (%)')
+                    portfolio_dividend_yield = weighted_average(df_comprehensive, 'Dividend Yield (%)')
+                    
+                    portfolio_payout_ratio = weighted_average(df_comprehensive, 'Payout Ratio (%)')
+                    portfolio_dividend_growth = weighted_average(df_comprehensive, '5Y Dividend Growth (%)')
+                    portfolio_market_cap = weighted_average(df_comprehensive, 'Market Cap ($B)')
+                    portfolio_enterprise_value = weighted_average(df_comprehensive, 'Enterprise Value ($B)')
+                    portfolio_forward_pe = weighted_average(df_comprehensive, 'Forward P/E')
+                    
+                    # Calculate sector and industry breakdowns BEFORE formatting
+                    sector_data = pd.Series(dtype=float)
+                    industry_data = pd.Series(dtype=float)
+                    
+                    if 'Sector' in df_comprehensive.columns and '% of Portfolio' in df_comprehensive.columns:
+                        sector_data = df_comprehensive.groupby('Sector')['% of Portfolio'].sum().sort_values(ascending=False)
+                    
+                    if 'Industry' in df_comprehensive.columns and '% of Portfolio' in df_comprehensive.columns:
+                        industry_data = df_comprehensive.groupby('Industry')['% of Portfolio'].sum().sort_values(ascending=False)
+                    
+                    # Format the dataframe with safe formatting
+                    def safe_format(value, format_str):
+                        """Safely format values, handling NaN and None"""
+                        if pd.isna(value) or value is None:
+                            return 'N/A'
+                        try:
+                            if format_str.startswith('${:,.2f}'):
+                                return f"${value:,.2f}"
+                            elif format_str.startswith('{:,.2f}%'):
+                                return f"{value:,.2f}%"
+                            elif format_str.startswith('{:,.0f}'):
+                                return f"{value:,.0f}"
+                            elif format_str.startswith('{:,.2f}'):
+                                return f"{value:,.2f}"
+                            else:
+                                return str(value)
+                        except (ValueError, TypeError):
+                            return 'N/A'
+                    
+                    # Apply safe formatting to all numeric columns
+                    for col in df_comprehensive.columns:
+                        if col in ['Ticker', 'Company Name', 'Sector', 'Industry', 'Analyst Rating']:
+                            continue
+                        elif col in ['Allocation %', 'ROE (%)', 'ROA (%)', 'ROIC (%)', 'Revenue Growth (%)', 
+                                   'Earnings Growth (%)', 'EPS Growth (%)', 'Dividend Yield (%)', 
+                                   'Payout Ratio (%)', '5Y Dividend Growth (%)', 'Profit Margin (%)', 
+                                   'Operating Margin (%)', 'Gross Margin (%)', '% of Portfolio']:
+                            df_comprehensive[col] = df_comprehensive[col].apply(lambda x: safe_format(x, '{:,.2f}%'))
+                        elif col in ['Current Price ($)', 'Total Value ($)', '52W High ($)', '52W Low ($)', 
+                                   '50D MA ($)', '200D MA ($)', 'Target Price ($)', 'Target High ($)', 
+                                   'Target Low ($)', 'Book Value ($)', 'Cash per Share ($)', 
+                                   'Revenue per Share ($)', 'Dividend Rate ($)']:
+                            df_comprehensive[col] = df_comprehensive[col].apply(lambda x: safe_format(x, '${:,.2f}'))
+                        elif col in ['Market Cap ($B)', 'Enterprise Value ($B)']:
+                            df_comprehensive[col] = df_comprehensive[col].apply(lambda x: safe_format(x, '${:,.2f}B'))
+                        elif col in ['Volume', 'Avg Volume']:
+                            df_comprehensive[col] = df_comprehensive[col].apply(lambda x: safe_format(x, '{:,.0f}'))
+                        else:
+                            df_comprehensive[col] = df_comprehensive[col].apply(lambda x: safe_format(x, '{:,.2f}'))
+                    
+                    # Display the comprehensive table
+                    st.markdown(f"**Data as of {current_date}**")
+                    
+                    # Create tabs for different metric categories
+                    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Overview", "💰 Valuation", "🏥 Financial Health", "📊 Growth & Dividends", "📈 Technical"])
+                    
+                    with tab1:
+                        # Overview tab - basic info and key metrics
+                        overview_cols = ['Ticker', 'Company Name', 'Sector', 'Industry', 'Current Price ($)', 
+                                       'Allocation %', 'Shares', 'Total Value ($)', '% of Portfolio', 
+                                       'Market Cap ($B)', 'P/E Ratio', 'PEG Ratio', 'PEG Source', 'Beta', 'Analyst Rating']
+                        df_overview = df_comprehensive[overview_cols].copy()
+                        st.dataframe(df_overview, use_container_width=True)
+                    
+                    with tab2:
+                        # Valuation tab - all valuation metrics
+                        valuation_cols = ['Ticker', 'Current Price ($)', 'Market Cap ($B)', 'Enterprise Value ($B)',
+                                        'P/E Ratio', 'Forward P/E', 'PEG Ratio', 'PEG Source', 'Price/Book', 'Price/Sales',
+                                        'Price/Cash Flow', 'EV/EBITDA', 'Book Value ($)', 'Cash per Share ($)',
+                                        'Revenue per Share ($)', 'Target Price ($)', 'Target High ($)', 'Target Low ($)']
+                        df_valuation = df_comprehensive[valuation_cols].copy()
+                        st.dataframe(df_valuation, use_container_width=True)
+                    
+                    with tab3:
+                        # Financial Health tab - ratios and margins
+                        health_cols = ['Ticker', 'Debt/Equity', 'Current Ratio', 'Quick Ratio', 'ROE (%)', 
+                                     'ROA (%)', 'ROIC (%)', 'Profit Margin (%)', 'Operating Margin (%)', 
+                                     'Gross Margin (%)']
+                        df_health = df_comprehensive[health_cols].copy()
+                        st.dataframe(df_health, use_container_width=True)
+                    
+                    with tab4:
+                        # Growth & Dividends tab
+                        growth_cols = ['Ticker', 'Revenue Growth (%)', 'Earnings Growth (%)', 'EPS Growth (%)',
+                                     'Dividend Yield (%)', 'Dividend Rate ($)', 'Payout Ratio (%)', 
+                                     '5Y Dividend Growth (%)']
+                        df_growth = df_comprehensive[growth_cols].copy()
+                        st.dataframe(df_growth, use_container_width=True)
+                    
+                    with tab5:
+                        # Technical tab - price levels and volume
+                        technical_cols = ['Ticker', 'Current Price ($)', '52W High ($)', '52W Low ($)', 
+                                        '50D MA ($)', '200D MA ($)', 'Beta', 'Volume', 'Avg Volume']
+                        df_technical = df_comprehensive[technical_cols].copy()
+                        st.dataframe(df_technical, use_container_width=True)
+                    
+                    # Add portfolio-weighted summary statistics in collapsible section
+                    with st.expander("📊 Portfolio-Weighted Summary Statistics", expanded=True):
+                        st.markdown("*Metrics weighted by portfolio allocation - represents the total portfolio characteristics*")
+                        
+                        # Create a comprehensive summary table
+                        summary_data = []
+                        
+                        # Valuation metrics
+                        if portfolio_pe is not None:
+                            summary_data.append({"Category": "Valuation", "Metric": "P/E Ratio", "Value": f"{portfolio_pe:.2f}", "Description": "Price-to-Earnings ratio weighted by portfolio allocation"})
+                        if portfolio_forward_pe is not None:
+                            summary_data.append({"Category": "Valuation", "Metric": "Forward P/E", "Value": f"{portfolio_forward_pe:.2f}", "Description": "Forward Price-to-Earnings ratio weighted by portfolio allocation"})
+                        if portfolio_pb is not None:
+                            summary_data.append({"Category": "Valuation", "Metric": "Price/Book", "Value": f"{portfolio_pb:.2f}", "Description": "Price-to-Book ratio weighted by portfolio allocation"})
+                        if portfolio_peg is not None:
+                            summary_data.append({"Category": "Valuation", "Metric": "PEG Ratio", "Value": f"{portfolio_peg:.2f}", "Description": "P/E to Growth ratio weighted by portfolio allocation (calculated from best available source)"})
+                        if portfolio_ps is not None:
+                            summary_data.append({"Category": "Valuation", "Metric": "Price/Sales", "Value": f"{portfolio_ps:.2f}", "Description": "Price-to-Sales ratio weighted by portfolio allocation"})
+                        if portfolio_ev_ebitda is not None:
+                            summary_data.append({"Category": "Valuation", "Metric": "EV/EBITDA", "Value": f"{portfolio_ev_ebitda:.2f}", "Description": "Enterprise Value to EBITDA ratio weighted by portfolio allocation"})
+                        
+                        # Risk metrics
+                        if portfolio_beta is not None:
+                            summary_data.append({"Category": "Risk", "Metric": "Beta", "Value": f"{portfolio_beta:.2f}", "Description": "Portfolio volatility relative to market (1.0 = market average)"})
+                        
+                        # Profitability metrics
+                        if portfolio_roe is not None:
+                            summary_data.append({"Category": "Profitability", "Metric": "ROE (%)", "Value": f"{portfolio_roe:.2f}%", "Description": "Return on Equity weighted by portfolio allocation"})
+                        if portfolio_roa is not None:
+                            summary_data.append({"Category": "Profitability", "Metric": "ROA (%)", "Value": f"{portfolio_roa:.2f}%", "Description": "Return on Assets weighted by portfolio allocation"})
+                        if portfolio_profit_margin is not None:
+                            summary_data.append({"Category": "Profitability", "Metric": "Profit Margin (%)", "Value": f"{portfolio_profit_margin:.2f}%", "Description": "Net profit margin weighted by portfolio allocation"})
+                        if portfolio_operating_margin is not None:
+                            summary_data.append({"Category": "Profitability", "Metric": "Operating Margin (%)", "Value": f"{portfolio_operating_margin:.2f}%", "Description": "Operating profit margin weighted by portfolio allocation"})
+                        if portfolio_gross_margin is not None:
+                            summary_data.append({"Category": "Profitability", "Metric": "Gross Margin (%)", "Value": f"{portfolio_gross_margin:.2f}%", "Description": "Gross profit margin weighted by portfolio allocation"})
+                        
+                        # Growth metrics
+                        if portfolio_revenue_growth is not None:
+                            summary_data.append({"Category": "Growth", "Metric": "Revenue Growth (%)", "Value": f"{portfolio_revenue_growth:.2f}%", "Description": "Revenue growth rate weighted by portfolio allocation"})
+                        if portfolio_earnings_growth is not None:
+                            summary_data.append({"Category": "Growth", "Metric": "Earnings Growth (%)", "Value": f"{portfolio_earnings_growth:.2f}%", "Description": "Earnings growth rate weighted by portfolio allocation"})
+                        if portfolio_eps_growth is not None:
+                            summary_data.append({"Category": "Growth", "Metric": "EPS Growth (%)", "Value": f"{portfolio_eps_growth:.2f}%", "Description": "Earnings per share growth rate weighted by portfolio allocation"})
+                        
+                        # Dividend metrics
+                        if portfolio_dividend_yield is not None:
+                            summary_data.append({"Category": "Dividends", "Metric": "Dividend Yield (%)", "Value": f"{portfolio_dividend_yield:.2f}%", "Description": "Dividend yield weighted by portfolio allocation"})
+                        if portfolio_payout_ratio is not None:
+                            summary_data.append({"Category": "Dividends", "Metric": "Payout Ratio (%)", "Value": f"{portfolio_payout_ratio:.2f}%", "Description": "Dividend payout ratio weighted by portfolio allocation"})
+                        
+                        # Size metrics
+                        if portfolio_market_cap is not None:
+                            summary_data.append({"Category": "Size", "Metric": "Market Cap ($B)", "Value": f"${portfolio_market_cap:.2f}B", "Description": "Market capitalization weighted by portfolio allocation"})
+                        if portfolio_enterprise_value is not None:
+                            summary_data.append({"Category": "Size", "Metric": "Enterprise Value ($B)", "Value": f"${portfolio_enterprise_value:.2f}B", "Description": "Enterprise value weighted by portfolio allocation"})
+                        
+                        if summary_data:
+                            summary_df = pd.DataFrame(summary_data)
+                            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+                            
+                            # Add interpretation
+                            st.markdown("**📈 Portfolio Interpretation:**")
+                            if portfolio_beta is not None:
+                                if portfolio_beta < 0.8:
+                                    st.success(f"**Low Risk Portfolio** - Beta {portfolio_beta:.2f} indicates lower volatility than market")
+                                elif portfolio_beta < 1.2:
+                                    st.info(f"**Moderate Risk Portfolio** - Beta {portfolio_beta:.2f} indicates market-average volatility")
+                                else:
+                                    st.warning(f"**High Risk Portfolio** - Beta {portfolio_beta:.2f} indicates higher volatility than market")
+                            
+                            if portfolio_pe is not None:
+                                if portfolio_pe < 15:
+                                    st.success(f"**Undervalued Portfolio** - P/E {portfolio_pe:.2f} suggests attractive valuations")
+                                elif portfolio_pe < 25:
+                                    st.info(f"**Fairly Valued Portfolio** - P/E {portfolio_pe:.2f} suggests reasonable valuations")
+                                else:
+                                    st.warning(f"**Potentially Overvalued Portfolio** - P/E {portfolio_pe:.2f} suggests high valuations")
+                        else:
+                            st.warning("No portfolio-weighted metrics available for display.")
+                    
+                    # Add portfolio composition analysis
+                    st.markdown("### 🏢 Portfolio Composition Analysis")
+                    
+                    # Create a nice table for sector and industry breakdown
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Sector breakdown with table and pie chart
+                        if not sector_data.empty:
+                            st.markdown("**📊 Sector Allocation**")
+                            
+                            # Create sector table
+                            sector_df = pd.DataFrame({
+                                'Sector': sector_data.index,
+                                'Allocation (%)': sector_data.values
+                            }).round(2)
+                            
+                            # Display table
+                            st.dataframe(sector_df, use_container_width=True, hide_index=True)
+                            
+                            # Create pie chart for sectors
+                            if len(sector_data) > 0:
+                                fig_sector = px.pie(
+                                    values=sector_data.values,
+                                    names=sector_data.index,
+                                    title="Sector Distribution",
+                                    color_discrete_sequence=px.colors.qualitative.Set3
+                                )
+                                fig_sector.update_traces(textposition='inside', textinfo='percent+label')
+                                fig_sector.update_layout(height=400, showlegend=True)
+                                st.plotly_chart(fig_sector, use_container_width=True)
+                    
+                    with col2:
+                        # Industry breakdown with table and pie chart
+                        if not industry_data.empty:
+                            st.markdown("**🏭 Industry Allocation**")
+                            
+                            # Create industry table
+                            industry_df = pd.DataFrame({
+                                'Industry': industry_data.index,
+                                'Allocation (%)': industry_data.values
+                            }).round(2)
+                            
+                            # Display table
+                            st.dataframe(industry_df, use_container_width=True, hide_index=True)
+                            
+                            # Create pie chart for industries
+                            if len(industry_data) > 0:
+                                fig_industry = px.pie(
+                                    values=industry_data.values,
+                                    names=industry_data.index,
+                                    title="Industry Distribution",
+                                    color_discrete_sequence=px.colors.qualitative.Pastel
+                                )
+                                fig_industry.update_traces(textposition='inside', textinfo='percent+label')
+                                fig_industry.update_layout(height=400, showlegend=True)
+                                st.plotly_chart(fig_industry, use_container_width=True)
+                    
+                    # Portfolio risk metrics
+                    st.markdown("### ⚠️ Portfolio Risk Metrics")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        # Beta analysis
+                        if portfolio_beta is not None:
+                            if portfolio_beta < 0.7:
+                                beta_risk = "Low Risk"
+                                beta_color = "green"
+                            elif portfolio_beta < 1.5:
+                                beta_risk = "Moderate Risk"
+                                beta_color = "orange"
+                            else:
+                                beta_risk = "High Risk"
+                                beta_color = "red"
+                            st.metric("Portfolio Risk Level", beta_risk)
+                            st.markdown(f"<span style='color: {beta_color}'>Beta: {portfolio_beta:.2f}</span>", unsafe_allow_html=True)
+                    
+                    with col2:
+                        # Current P/E analysis
+                        if portfolio_pe is not None:
+                            if portfolio_pe < 15:
+                                pe_rating = "Undervalued"
+                                pe_color = "green"
+                            elif portfolio_pe < 25:
+                                pe_rating = "Fair Value"
+                                pe_color = "orange"
+                            else:
+                                pe_rating = "Overvalued"
+                                pe_color = "red"
+                            st.metric("Current P/E Rating", pe_rating)
+                            st.markdown(f"<span style='color: {pe_color}'>P/E: {portfolio_pe:.2f}</span>", unsafe_allow_html=True)
+                    
+                    with col3:
+                        # Forward P/E analysis
+                        if portfolio_forward_pe is not None:
+                            if portfolio_forward_pe < 15:
+                                fpe_rating = "Undervalued"
+                                fpe_color = "green"
+                            elif portfolio_forward_pe < 25:
+                                fpe_rating = "Fair Value"
+                                fpe_color = "orange"
+                            else:
+                                fpe_rating = "Overvalued"
+                                fpe_color = "red"
+                            st.metric("Forward P/E Rating", fpe_rating)
+                            st.markdown(f"<span style='color: {fpe_color}'>Forward P/E: {portfolio_forward_pe:.2f}</span>", unsafe_allow_html=True)
+                    
+                    with col4:
+                        # Dividend analysis
+                        if portfolio_dividend_yield is not None:
+                            if portfolio_dividend_yield > 4:
+                                div_rating = "High Yield"
+                                div_color = "green"
+                            elif portfolio_dividend_yield > 2:
+                                div_rating = "Moderate Yield"
+                                div_color = "orange"
+                            else:
+                                div_rating = "Low Yield"
+                                div_color = "gray"  # Changed from red to gray - low yield is not necessarily bad
+                            st.metric("Dividend Rating", div_rating)
+                            st.markdown(f"<span style='color: {div_color}'>Yield: {portfolio_dividend_yield:.2f}%</span>", unsafe_allow_html=True)
+                
+                else:
+                    st.warning("No portfolio data available to display.")
+                
+                # Add professional data explanation
+                with st.expander("🔍 Data Sources & Methodology", expanded=False):
+                    st.markdown("### Financial Data Information")
+                    
+                    st.markdown("**📊 Data Source**: All financial metrics are sourced directly from Yahoo Finance API")
+                    st.markdown("**📈 Portfolio Metrics**: Weighted averages calculated based on portfolio allocation percentages")
+                    st.markdown("**📊 Data Availability**: Some metrics may show N/A for securities where data is unavailable")
+                    
+                    st.markdown("**📊 Valuation Guidelines:**")
+                    st.markdown("- **P/E Ratio**: <15 = undervalued, 15-25 = fair, >25 = potentially overvalued")
+                    st.markdown("- **PEG Ratio**: <1 = undervalued, 1-2 = fair, >2 = potentially overvalued")
+                    st.markdown("- **Price/Book**: <1 = potentially undervalued, 1-3 = fair, >3 = potentially overvalued")
+                    st.markdown("- **Dividend Yield**: Low yield is not necessarily bad (growth stocks often have low yields)")
+                    
+                    st.markdown("**🔍 PEG Ratio Calculation:**")
+                    st.markdown("- **Formula**: P/E Ratio ÷ Earnings Growth Rate")
+                    st.markdown("- **What it measures**: Price relative to earnings growth (lower = better value)")
+                    st.markdown("- **Source**: Direct calculation using Yahoo Finance data")
+                    st.markdown("- **Realistic ranges**: <1.0 (undervalued), 1.0-1.5 (fair), >2.0 (overvalued)")
+            
+
+
         # Add timer for next rebalance date
         if allocs_for_portfolio and active_portfolio:
             try:
