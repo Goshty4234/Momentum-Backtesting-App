@@ -19,6 +19,19 @@ pio.kaleido.scope.default_format = "png"
 pio.kaleido.scope.default_width = 1000
 pio.kaleido.scope.default_height = 600
 
+# Set the default renderer to kaleido
+pio.renderers.default = "kaleido"
+
+# Additional Kaleido configuration for headless operation
+import kaleido
+kaleido.scope.default_format = "png"
+kaleido.scope.default_width = 1000
+kaleido.scope.default_height = 600
+
+# Fallback Chrome configuration for Streamlit Cloud
+os.environ['KALEIDO_CHROME_PATH'] = '/usr/bin/google-chrome-stable'
+os.environ['KALEIDO_CHROME_ARGS'] = '--no-sandbox --disable-dev-shm-usage --headless --disable-gpu'
+
 # PDF Generation imports
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle, Image
