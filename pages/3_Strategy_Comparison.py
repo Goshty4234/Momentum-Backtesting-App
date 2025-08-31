@@ -13,8 +13,8 @@ import contextlib
 import os
 
 # Fix for Streamlit Cloud Chrome issue
-os.environ['KALEIDO_CHROME_PATH'] = '/usr/bin/google-chrome'
-os.environ['KALEIDO_CHROME_ARGS'] = '--no-sandbox --disable-dev-shm-usage'
+os.environ['KALEIDO_CHROME_PATH'] = '/usr/bin/google-chrome-stable'
+os.environ['KALEIDO_CHROME_ARGS'] = '--no-sandbox --disable-dev-shm-usage --headless --disable-gpu'
 
 # PDF Generation imports
 from reportlab.lib.pagesizes import letter
@@ -22,10 +22,6 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors as reportlab_colors
-from reportlab.graphics.shapes import Drawing, String, Line, Rect
-from reportlab.graphics.charts.linecharts import HorizontalLineChart
-from reportlab.graphics.charts.barcharts import VerticalBarChart
-from reportlab.graphics.charts.piecharts import Pie
 
 def generate_strategy_comparison_pdf_report():
     """
@@ -277,192 +273,29 @@ def generate_strategy_comparison_pdf_report():
         story.append(Paragraph("2. Portfolio Value and Drawdown Comparison", heading_style))
         story.append(Spacer(1, 20))
         
-        # FAST & SIMPLE TABLES - No hanging charts
-        # Performance comparison table
-        story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
-        story.append(Spacer(1, 10))
+        # Get performance plots from session state
+        fig1 = st.session_state.get('strategy_comparison_fig1')
+        fig2 = st.session_state.get('strategy_comparison_fig2')
         
-        # Get portfolio performance data
-        all_results = st.session_state.get('strategy_comparison_all_results', {})
-        if all_results:
-            # Create simple performance table
-            perf_data = []
-            for name, data in all_results.items():
-                if isinstance(data, dict) and 'with_additions' in data:
-                    final_val = data['with_additions'].iloc[-1]
-                    initial_val = data['with_additions'].iloc[0]
-                    total_ret = ((final_val / initial_val - 1) * 100) if initial_val > 0 else 0
-                    perf_data.append([name[:20], f"${initial_val:,.0f}", f"${final_val:,.0f}", f"{total_ret:.1f}%"])
-                elif isinstance(data, pd.Series):
-                    final_val = data.iloc[-1]
-                    initial_val = data.iloc[0]
-                    total_ret = ((final_val / initial_val - 1) * 100) if initial_val > 0 else 0
-                    perf_data.append([name[:20], f"${initial_val:,.0f}", f"${final_val:,.0f}", f"{total_ret:.1f}%"])
-            
-            if perf_data:
-                table_data = [['Portfolio', 'Start', 'End', 'Return']] + perf_data
-                perf_table = Table(table_data, colWidths=[2.5*inch, 1.2*inch, 1.2*inch, 1.1*inch])
-                perf_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                    ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
-                    ('FONTSIZE', (0, 1), (-1, -1), 7),
-                    ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
-                ]))
-                story.append(perf_table)
-                story.append(Spacer(1, 15))
-        else:
-            story.append(Paragraph("No performance data available.", styles['Normal']))
-            story.append(Spacer(1, 15))
-        
-        # Drawdown comparison table
-        story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
-        story.append(Spacer(1, 10))
-        
-        # Get portfolio drawdown data
-        all_drawdowns = st.session_state.get('strategy_comparison_all_drawdowns', {})
-        if all_drawdowns:
-            # Create simple drawdown table
-            dd_data = []
-            for name, data in all_drawdowns.items():
-                if isinstance(data, pd.Series):
-                    max_dd = data.min() * 100
-                    dd_data.append([name[:20], f"{max_dd:.1f}%"])
-            
-            if dd_data:
-                table_data = [['Portfolio', 'Max DD']] + dd_data
-                dd_table = Table(table_data, colWidths=[4*inch, 1.5*inch])
-                dd_table.setStyle(TableStyle([
-                    ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
-                    ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
-                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                    ('FONTSIZE', (0, 0), (-1, -1), 8),
-                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                    ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
-                    ('FONTSIZE', (0, 1), (-1, -1), 7),
-                    ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
-                ]))
-                story.append(dd_table)
-                story.append(Spacer(1, 15))
-        else:
-            story.append(Paragraph("No drawdown data available.", styles['Normal']))
-            story.append(Spacer(1, 15))
+        if fig1:
             try:
-                # Get portfolio performance data
-                all_results = st.session_state.strategy_comparison_all_results
-                portfolio_names = list(all_results.keys())
-                
-                if portfolio_names:
-                    # Create performance comparison table
-                    story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
-                    story.append(Spacer(1, 10))
-                    
-                    # Get final values for each portfolio
-                    performance_data = []
-                    for name in portfolio_names:
-                        if isinstance(all_results[name], dict) and 'with_additions' in all_results[name]:
-                            final_value = all_results[name]['with_additions'].iloc[-1]
-                            initial_value = all_results[name]['with_additions'].iloc[0]
-                            total_return = ((final_value / initial_value - 1) * 100) if initial_value > 0 else 0
-                            performance_data.append([name, f"${initial_value:,.2f}", f"${final_value:,.2f}", f"{total_return:.2f}%"])
-                        elif isinstance(all_results[name], pd.Series):
-                            final_value = all_results[name].iloc[-1]
-                            initial_value = all_results[name].iloc[0]
-                            total_return = ((final_value / initial_value - 1) * 100) if initial_value > 0 else 0
-                            performance_data.append([name, f"${initial_value:,.2f}", f"${final_value:,.2f}", f"{total_return:.2f}%"])
-                    
-                    if performance_data:
-                        # Create table header
-                        table_data = [['Portfolio', 'Initial Value', 'Final Value', 'Total Return']] + performance_data
-                        
-                        # Create ReportLab table
-                        perf_table = Table(table_data, colWidths=[2*inch, 1.5*inch, 1.5*inch, 1.5*inch])
-                        perf_table.setStyle(TableStyle([
-                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
-                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
-                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0, 0), (-1, 0), 10),
-                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
-                            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                            ('FONTSIZE', (0, 1), (-1, -1), 9),
-                            ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
-                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                        ]))
-                        story.append(perf_table)
-                        story.append(Spacer(1, 20))
-                    else:
-                        story.append(Paragraph("No performance data available for comparison.", styles['Normal']))
-                        story.append(Spacer(1, 20))
-                else:
-                    story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
-                    story.append(Paragraph("No portfolio results available for comparison.", styles['Normal']))
-                    story.append(Spacer(1, 20))
-            except Exception as e:
-                story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
-                story.append(Paragraph(f"Error creating performance table: {str(e)}", styles['Normal']))
+                img_bytes = fig1.to_image(format="png", width=1200, height=600)
+                img_buffer = io.BytesIO(img_bytes)
+                img = Image(img_buffer, width=7.5*inch, height=4.5*inch)  # EXACT same size as Multi-Backtest
+                story.append(img)
                 story.append(Spacer(1, 20))
+            except Exception as e:
+                story.append(Paragraph("Performance comparison plot could not be generated.", styles['Normal']))
         
-        # Create drawdown comparison data table - GUARANTEED WORKING (Chrome-free)
-        if 'strategy_comparison_all_drawdowns' in st.session_state and st.session_state.strategy_comparison_all_drawdowns:
+        if fig2:
             try:
-                # Get portfolio drawdown data
-                all_drawdowns = st.session_state.strategy_comparison_all_drawdowns
-                portfolio_names = list(all_drawdowns.keys())
-                
-                if portfolio_names:
-                    # Create drawdown comparison table
-                    story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
-                    story.append(Spacer(1, 10))
-                    
-                    # Calculate max drawdown for each portfolio
-                    drawdown_data = []
-                    for name in portfolio_names:
-                        if isinstance(all_drawdowns[name], pd.Series):
-                            max_dd = all_drawdowns[name].min() * 100  # Convert to percentage
-                            drawdown_data.append([name, f"{max_dd:.2f}%"])
-                    
-                    if drawdown_data:
-                        # Create table header
-                        table_data = [['Portfolio', 'Maximum Drawdown']] + drawdown_data
-                        
-                        # Create ReportLab table
-                        dd_table = Table(table_data, colWidths=[4*inch, 2*inch])
-                        dd_table.setStyle(TableStyle([
-                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
-                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
-                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0, 0), (-1, -1), 10),
-                            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
-                            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                            ('FONTSIZE', (0, 1), (-1, -1), 9),
-                            ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
-                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                        ]))
-                        story.append(dd_table)
-                        story.append(Spacer(1, 20))
-                    else:
-                        story.append(Paragraph("No drawdown data available for comparison.", styles['Normal']))
-                        story.append(Spacer(1, 20))
-                else:
-                    story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
-                    story.append(Paragraph("No drawdown data available for comparison.", styles['Normal']))
-                    story.append(Spacer(1, 20))
-            except Exception as e:
-                story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
-                story.append(Paragraph(f"Error creating drawdown table: {str(e)}", styles['Normal']))
+                img_bytes = fig2.to_image(format="png", width=1200, height=600)
+                img_buffer = io.BytesIO(img_bytes)
+                img = Image(img_buffer, width=7.5*inch, height=4.5*inch)  # EXACT same size as Multi-Backtest
+                story.append(img)
                 story.append(Spacer(1, 20))
-        else:
-            story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
-            story.append(Paragraph("No drawdown comparison data available.", styles['Normal']))
-            story.append(Spacer(1, 20))
+            except Exception as e:
+                story.append(Paragraph("Drawdown comparison plot could not be generated.", styles['Normal']))
         
         # Update progress
         progress_bar.progress(60)
@@ -485,26 +318,20 @@ def generate_strategy_comparison_pdf_report():
                         row = [portfolio] + [str(stats_df.loc[portfolio, col]) for col in stats_df.columns]
                         table_data.append(row)
                     
-                    # Create ReportLab table with proper page width
-                    available_width = 7.5 * inch  # Standard page width minus margins
-                    portfolio_col_width = 1.5 * inch
-                    remaining_width = available_width - portfolio_col_width
-                    col_width = remaining_width / len(stats_df.columns)
-                    
-                    stats_table = Table(table_data, colWidths=[portfolio_col_width] + [col_width] * len(stats_df.columns))
+                    # Create ReportLab table
+                    stats_table = Table(table_data, colWidths=[1.5*inch] + [1.2*inch] * (len(stats_df.columns)))
                     stats_table.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
                         ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
                         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 10),  # Smaller font to fit
+                        ('FONTSIZE', (0, 0), (-1, 0), 12),
                         ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                         ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
                         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                        ('FONTSIZE', (0, 1), (-1, -1), 8),  # Smaller font to fit
+                        ('FONTSIZE', (0, 1), (-1, -1), 10),
                         ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
                         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                        ('WORDWRAP', (0, 0), (-1, -1), True),  # Enable word wrapping
                     ]))
                     story.append(stats_table)
                     story.append(Spacer(1, 15))
@@ -534,81 +361,47 @@ def generate_strategy_comparison_pdf_report():
             story.append(Paragraph(f"Portfolio: {portfolio_name_key}", subheading_style))
             story.append(Spacer(1, 15))
             
-            # Simple allocation table - No hanging charts
-            story.append(Paragraph(f"Allocation for {portfolio_name_key}:", styles['Heading4']))
-            story.append(Spacer(1, 10))
+            # Get allocation pie chart - Chrome-free approach
+            fig_today = st.session_state.get(f'strategy_comparison_fig_today_{portfolio_name_key}')
             
-            # Get allocation data
-            today_weights = today_weights_map.get(portfolio_name_key, {})
-            if today_weights:
-                # Create simple allocation table
-                alloc_data = []
-                for asset, weight in today_weights.items():
-                    if float(weight) > 0:
-                        alloc_data.append([asset[:15], f"{float(weight)*100:.1f}%"])
-                
-                if alloc_data:
-                    table_data = [['Asset', 'Weight']] + alloc_data
-                    alloc_table = Table(table_data, colWidths=[3*inch, 2*inch])
-                    alloc_table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTSIZE', (0, 0), (-1, -1), 8),
-                        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                        ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
-                        ('FONTSIZE', (0, 1), (-1, -1), 7),
-                        ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
-                    ]))
-                    story.append(alloc_table)
+            if fig_today:
+                try:
+                    # Try Plotly first, fallback to text if it fails
+                    img_bytes = fig_today.to_image(format="png", width=800, height=600)
+                    img_buffer = io.BytesIO(img_bytes)
+                    img = Image(img_buffer, width=5*inch, height=3.8*inch)
+                    story.append(img)
                     story.append(Spacer(1, 15))
-                else:
-                    story.append(Paragraph("No allocation data available.", styles['Normal']))
+                except Exception as e:
+                    # Fallback to text representation (Chrome-free)
+                    story.append(Paragraph(f"Allocation for {portfolio_name_key}:", styles['Heading4']))
+                    today_weights = today_weights_map.get(portfolio_name_key, {})
+                    for asset, weight in today_weights.items():
+                        if float(weight) > 0:
+                            story.append(Paragraph(f"{asset}: {float(weight)*100:.1f}%", styles['Normal']))
                     story.append(Spacer(1, 15))
+            
+            # Add rebalance timer table - Chrome-free approach
+            fig_timer = st.session_state.get(f'strategy_comparison_timer_table_{portfolio_name_key}')
+            
+            if fig_timer:
+                try:
+                    # Try Plotly first, fallback to text if it fails
+                    img_bytes = fig_timer.to_image(format="png", width=800, height=300)
+                    img_buffer = io.BytesIO(img_bytes)
+                    img = Image(img_buffer, width=6*inch, height=2.5*inch)
+                    story.append(img)
+                    story.append(Spacer(1, 2))
+                except Exception as e:
+                    # Fallback to text representation (Chrome-free)
+                    story.append(Paragraph("Next Rebalance Timer:", styles['Heading4']))
+                    story.append(Paragraph("Timer information could not be displayed as image.", styles['Normal']))
+                    story.append(Spacer(1, 2))
             else:
-                story.append(Paragraph("No allocation data available.", styles['Normal']))
-                story.append(Spacer(1, 15))
-            
-            # 100% GUARANTEED TIMER TABLE - Using ReportLab Table
-            story.append(Paragraph("Next Rebalance Timer:", styles['Heading4']))
-            story.append(Spacer(1, 10))
-            
-            try:
-                # Get timer data from session state
-                timer_data = st.session_state.get(f'strategy_comparison_timer_data_{portfolio_name_key}', {})
-                if timer_data:
-                    # Create timer table
-                    timer_rows = []
-                    for key, value in timer_data.items():
-                        if isinstance(value, (int, float)):
-                            timer_rows.append([key.replace('_', ' ').title(), f"{value:.1f}"])
-                        else:
-                            timer_rows.append([key.replace('_', ' ').title(), str(value)])
-                    
-                    if timer_rows:
-                        table_data = [['Timer Info', 'Value']] + timer_rows
-                        timer_table = Table(table_data, colWidths=[3*inch, 2*inch])
-                        timer_table.setStyle(TableStyle([
-                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
-                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
-                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                            ('FONTSIZE', (0, 0), (-1, -1), 8),
-                            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
-                            ('FONTSIZE', (0, 1), (-1, -1), 7),
-                            ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
-                        ]))
-                        story.append(timer_table)
-                        story.append(Spacer(1, 15))
-                    else:
-                        story.append(Paragraph("No timer data available.", styles['Normal']))
-                        story.append(Spacer(1, 15))
-                else:
-                    story.append(Paragraph("No timer data available.", styles['Normal']))
-                    story.append(Spacer(1, 15))
-            except Exception as e:
-                story.append(Paragraph("Timer table created successfully!", styles['Normal']))
-                story.append(Spacer(1, 15))
+                # Timer table not found
+                story.append(Paragraph("Next Rebalance Timer:", styles['Heading4']))
+                story.append(Paragraph("No timer information available.", styles['Normal']))
+                story.append(Spacer(1, 2))
             
             # Add page break after pie plot + timer to separate from allocation table (same as Multi-Backtest)
             story.append(PageBreak())
