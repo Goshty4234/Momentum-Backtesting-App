@@ -468,7 +468,7 @@ def calculate_sortino(returns, risk_free_rate=0):
     downside_returns = returns[returns < target_return]
     if len(downside_returns) < 2:
         return np.nan
-    downside_std = np.std(downside_returns) * np.sqrt(252)
+    downside_std = np.std(downside_returns) * np.sqrt(365)
     if downside_std == 0:
         return np.nan
     expected_return = returns.mean() * 252
@@ -758,7 +758,7 @@ def single_backtest(config, sim_index, reindexed_data):
                     if len(returns_t_vol) < 2:
                         vol_vals[t] = np.nan
                     else:
-                        vol_vals[t] = returns_t_vol.std() * np.sqrt(252)
+                        vol_vals[t] = returns_t_vol.std() * np.sqrt(365)
                     metrics[t]['Volatility'] = vol_vals[t]
         
         for t in rets:
@@ -1818,8 +1818,8 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
 _TOTAL_TOL = 1.0
 _ALLOC_TOL = 1.0
 
-# Move Run Backtests to the left sidebar to make it conspicuous and separate from config
-if st.sidebar.button("Run Backtests", type='primary'):
+# Move Run Backtest to the left sidebar to make it conspicuous and separate from config
+if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=True):
     
     # Pre-backtest validation check for all portfolios
     # Prefer the allocations page configs when present so this page's edits are included
@@ -2065,7 +2065,7 @@ if st.sidebar.button("Run Backtests", type='primary'):
                 cagr = calculate_cagr(stats_values, stats_dates)
                 max_dd, drawdowns = calculate_max_drawdown(stats_values)
                 vol = calculate_volatility(stats_returns)
-                sharpe = np.nan if stats_returns.std() == 0 else stats_returns.mean() * 252 / (stats_returns.std() * np.sqrt(252))
+                sharpe = np.nan if stats_returns.std() == 0 else stats_returns.mean() * 365 / (stats_returns.std() * np.sqrt(365))
                 sortino = calculate_sortino(stats_returns)
                 ulcer = calculate_ulcer_index(stats_values)
                 upi = calculate_upi(cagr, ulcer)
