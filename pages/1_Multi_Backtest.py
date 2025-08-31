@@ -310,19 +310,39 @@ def generate_simple_pdf_report():
         story.append(Paragraph("3. Final Performance Statistics", heading_style))
         story.append(Spacer(1, 15))
         
-        # Use the EXACT same approach as plots - fetch the Plotly table figure
-        if 'fig_stats' in st.session_state:
+        # Use Chrome-free approach for statistics table
+        if 'multi_backtest_stats_df_display' in st.session_state:
             try:
-                # Convert the Plotly table to image and add to PDF
-                fig_stats = st.session_state.fig_stats
-                img_data = fig_stats.to_image(format="png", width=2000, height=600)
-                img_buffer = io.BytesIO(img_data)
-                img = Image(img_buffer, width=8*inch, height=3*inch)  # Much wider to fit all columns
-                story.append(img)
-                story.append(Spacer(1, 15))
+                # Create ReportLab table instead of Plotly image (Chrome-free)
+                stats_df = st.session_state.multi_backtest_stats_df_display
+                if not stats_df.empty:
+                    # Convert DataFrame to table data
+                    table_data = [['Portfolio'] + list(stats_df.columns)]
+                    for portfolio in stats_df.index:
+                        row = [portfolio] + [str(stats_df.loc[portfolio, col]) for col in stats_df.columns]
+                        table_data.append(row)
+                    
+                    # Create ReportLab table
+                    stats_table = Table(table_data, colWidths=[1.5*inch] + [1.2*inch] * (len(stats_df.columns)))
+                    stats_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 12),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
+                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 10),
+                        ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ]))
+                    story.append(stats_table)
+                    story.append(Spacer(1, 15))
+                else:
+                    story.append(Paragraph("No statistics data available.", styles['Normal']))
             except Exception as e:
-                story.append(Paragraph(f"Error converting statistics table: {str(e)}", styles['Normal']))
-                story.append(Spacer(1, 15))
+                story.append(Paragraph(f"Error creating statistics table: {str(e)}", styles['Normal']))
         else:
             story.append(Paragraph("Statistics table not available. Please run the backtest first.", styles['Normal']))
             story.append(Spacer(1, 15))
