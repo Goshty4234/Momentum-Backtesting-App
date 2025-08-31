@@ -425,7 +425,7 @@ def calculate_periodic_performance(portfolio_values: pd.Series, period: str = "Y
     if portfolio_values.empty:
         return pd.DataFrame(), pd.DataFrame()
     df = portfolio_values.to_frame(name="Value")
-    df['Period'] = df.index.to_period('ME').astype(str) if period == "Month" else df.index.year
+    df['Period'] = df.index.to_period('M').astype(str) if period == "Month" else df.index.year
     if period not in ["Year", "Month"]:
         raise ValueError("period must be 'Year' or 'Month'")
     summary = []
