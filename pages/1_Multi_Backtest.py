@@ -10,12 +10,6 @@ import io
 import contextlib
 from datetime import datetime, timedelta, date
 import warnings
-import os
-
-# Fix for Streamlit Cloud Chrome issue
-os.environ['KALEIDO_CHROME_PATH'] = '/usr/bin/google-chrome'
-os.environ['KALEIDO_CHROME_ARGS'] = '--no-sandbox --disable-dev-shm-usage'
-
 warnings.filterwarnings('ignore')
 
 # PDF Generation imports
@@ -310,39 +304,19 @@ def generate_simple_pdf_report():
         story.append(Paragraph("3. Final Performance Statistics", heading_style))
         story.append(Spacer(1, 15))
         
-        # Use Chrome-free approach for statistics table
-        if 'multi_backtest_stats_df_display' in st.session_state:
+        # Use the EXACT same approach as plots - fetch the Plotly table figure
+        if 'fig_stats' in st.session_state:
             try:
-                # Create ReportLab table instead of Plotly image (Chrome-free)
-                stats_df = st.session_state.multi_backtest_stats_df_display
-                if not stats_df.empty:
-                    # Convert DataFrame to table data
-                    table_data = [['Portfolio'] + list(stats_df.columns)]
-                    for portfolio in stats_df.index:
-                        row = [portfolio] + [str(stats_df.loc[portfolio, col]) for col in stats_df.columns]
-                        table_data.append(row)
-                    
-                    # Create ReportLab table
-                    stats_table = Table(table_data, colWidths=[1.5*inch] + [1.2*inch] * (len(stats_df.columns)))
-                    stats_table.setStyle(TableStyle([
-                        ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
-                        ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
-                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 12),
-                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-                        ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
-                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                        ('FONTSIZE', (0, 1), (-1, -1), 10),
-                        ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
-                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ]))
-                    story.append(stats_table)
-                    story.append(Spacer(1, 15))
-                else:
-                    story.append(Paragraph("No statistics data available.", styles['Normal']))
+                # Convert the Plotly table to image and add to PDF
+                fig_stats = st.session_state.fig_stats
+                img_data = fig_stats.to_image(format="png", width=2000, height=600)
+                img_buffer = io.BytesIO(img_data)
+                img = Image(img_buffer, width=8*inch, height=3*inch)  # Much wider to fit all columns
+                story.append(img)
+                story.append(Spacer(1, 15))
             except Exception as e:
-                story.append(Paragraph(f"Error creating statistics table: {str(e)}", styles['Normal']))
+                story.append(Paragraph(f"Error converting statistics table: {str(e)}", styles['Normal']))
+                story.append(Spacer(1, 15))
         else:
             story.append(Paragraph("Statistics table not available. Please run the backtest first.", styles['Normal']))
             story.append(Spacer(1, 15))
@@ -404,11 +378,12 @@ def generate_simple_pdf_report():
                             
                             # Add Next Rebalance Timer information - fetch the stored timer table figure
                             timer_table_key = f"timer_table_{portfolio_name}"
-                                    # Looking for timer table
+                            print(f"[PDF DEBUG] Looking for timer table: {timer_table_key}")
+                            print(f"[PDF DEBUG] Available timer tables: {[k for k in st.session_state.keys() if k.startswith('timer_table_')]}")
                             
                             if timer_table_key in st.session_state:
                                 try:
-                                    # Timer table found
+                                    print(f"[PDF DEBUG] Found timer table for {portfolio_name}, adding to PDF")
                                     # Convert the Plotly timer table to image and add to PDF
                                     fig_timer = st.session_state[timer_table_key]
                                     img_data = fig_timer.to_image(format="png", width=1000, height=350)
@@ -416,14 +391,13 @@ def generate_simple_pdf_report():
                                     img = Image(img_buffer, width=7*inch, height=2.2*inch)
                                     story.append(img)
                                     story.append(Spacer(1, 2))
-                                    # Timer table added successfully
+                                    print(f"[PDF DEBUG] Successfully added timer table for {portfolio_name} to PDF")
                                 except Exception as e:
-                                    # Error adding timer table
+                                    print(f"[PDF DEBUG] Error adding timer table for {portfolio_name}: {e}")
                                     # Silently ignore timer table conversion errors
                                     pass
                             else:
-                                # Timer table not found
-                                pass
+                                print(f"[PDF DEBUG] Timer table NOT found for {portfolio_name}")
                             
                             # Add page break after pie plot + timer to separate from allocation table
                             story.append(PageBreak())
@@ -691,7 +665,7 @@ st.markdown("""
 
 
 
-# ...rest of the code...
+# ...existing code...
 
 # Handle rerun flag for smooth UI updates - must be at the very top
 if st.session_state.get('multi_backtest_rerun_flag', False):
@@ -1183,7 +1157,7 @@ def single_backtest(config, sim_index, reindexed_data):
     available_tickers = [t for t in tickers if t in reindexed_data]
     if len(available_tickers) < len(tickers):
         missing = set(tickers) - set(available_tickers)
-        # Warning: Some tickers not found in price data
+        print(f"[WARN] The following tickers were not found in price data and will be ignored: {sorted(list(missing))}")
     tickers = available_tickers
     # Recompute allocations and include_dividends to only include valid tickers
     # Handle duplicate tickers by summing their allocations
@@ -1399,8 +1373,7 @@ def single_backtest(config, sim_index, reindexed_data):
         if calc_beta or calc_volatility:
             try:
                 for t in rets_keys:
-                    # Momentum calculation completed
-                    pass
+                    print(f"[MOM DEBUG] Date: {date} | Ticker: {t} | Momentum: {metrics[t].get('Momentum')} | Beta: {metrics[t].get('Beta')} | Vol: {metrics[t].get('Volatility')} | Weight: {metrics[t].get('Calculated_Weight')}")
             except Exception:
                 pass
 
@@ -3360,25 +3333,25 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     if allocs_for_portfolio:
                         # Get sorted allocation dates (same logic as real code)
                         alloc_dates = sorted(list(allocs_for_portfolio.keys()))
-                        # Portfolio allocation dates determined
+                        print(f"[PDF DEBUG] Portfolio {portfolio_name} has {len(alloc_dates)} allocation dates: {alloc_dates}")
                         if len(alloc_dates) > 1:
                             # Use second to last date (same as real timer code)
                             last_rebalance_dates[portfolio_name] = alloc_dates[-2]
-                            # Using second to last date
+                            print(f"[PDF DEBUG] Using second to last date: {alloc_dates[-2]}")
                         elif len(alloc_dates) == 1:
                             # Use the only available date
                             last_rebalance_dates[portfolio_name] = alloc_dates[-1]
-                            # Using only available date
+                            print(f"[PDF DEBUG] Using only available date: {alloc_dates[-1]}")
                         else:
                             # No allocation data available
                             last_rebalance_dates[portfolio_name] = None
-                            # No allocation dates available
+                            print(f"[PDF DEBUG] No allocation dates available")
                     else:
                         last_rebalance_dates[portfolio_name] = None
-                        # No allocation data for portfolio
+                        print(f"[PDF DEBUG] No allocation data for {portfolio_name}")
                 else:
                     last_rebalance_dates[portfolio_name] = None
-                    # Portfolio not found in allocations
+                    print(f"[PDF DEBUG] Portfolio {portfolio_name} not found in all_allocations")
             
             st.session_state.multi_backtest_snapshot_data = {
                 'raw_data': data_reindexed,
@@ -3503,22 +3476,21 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             )
                             table_key = f"alloc_table_{portfolio_name}"
                             st.session_state[table_key] = fig_alloc_table
-                            # Auto-created allocation table
+                            print(f"[PDF DEBUG] Auto-created allocation table for {portfolio_name}")
             except Exception as e:
-                # Failed to auto-create allocation tables
-                pass
+                print(f"[PDF DEBUG] Failed to auto-create allocation tables: {e}")
             
             # Create timer tables for ALL portfolios automatically for PDF export
             try:
                 snapshot = st.session_state.get('multi_backtest_snapshot_data', {})
                 last_rebalance_dates = snapshot.get('last_rebalance_dates', {})
                 
-                # Creating timer tables for portfolios
-                # Available last rebalance dates
+                print(f"[PDF DEBUG] Creating timer tables for {len(st.session_state.multi_backtest_portfolio_configs)} portfolios")
+                print(f"[PDF DEBUG] Available last_rebalance_dates: {list(last_rebalance_dates.keys())}")
                 
                 for portfolio_cfg in st.session_state.multi_backtest_portfolio_configs:
                     portfolio_name = portfolio_cfg.get('name', 'Unknown')
-                    # Processing portfolio
+                    print(f"[PDF DEBUG] Processing portfolio: {portfolio_name}")
                     
                     # Get rebalancing frequency for this portfolio
                     rebal_freq = portfolio_cfg.get('rebalancing_frequency', 'none')
@@ -3541,11 +3513,11 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         'none': 'none'
                     }
                     rebal_freq = frequency_mapping.get(rebal_freq, rebal_freq)
-                    # Rebalancing frequency determined
+                    print(f"[PDF DEBUG] Rebalancing frequency for {portfolio_name}: {rebal_freq}")
                     
                     # Get last rebalance date for this portfolio
                     last_rebal_date = last_rebalance_dates.get(portfolio_name)
-                    # Last rebalance date determined
+                    print(f"[PDF DEBUG] Last rebalance date for {portfolio_name}: {last_rebal_date}")
                     
                     if last_rebal_date and rebal_freq != 'none':
                         # Ensure last_rebal_date is a naive datetime object
@@ -3559,7 +3531,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             rebal_freq, last_rebal_date
                         )
                         
-                        # Next rebalance calculated
+                        print(f"[PDF DEBUG] Calculated for {portfolio_name}: next_date={next_date_port}, time_until={time_until_port}")
                         
                         if next_date_port and time_until_port:
                             # Create timer data for this portfolio
@@ -3599,15 +3571,13 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             
                             # Store in session state for PDF export
                             st.session_state[f'timer_table_{portfolio_name}'] = fig_timer_port
-                            # Timer table created successfully
+                            print(f"[PDF DEBUG] Successfully created timer table for {portfolio_name}")
                         else:
-                            # Failed to calculate timer
-                            pass
+                            print(f"[PDF DEBUG] Failed to calculate timer for {portfolio_name}: missing next_date or time_until")
                     else:
-                        # Skipping portfolio
-                        pass
+                        print(f"[PDF DEBUG] Skipping {portfolio_name}: last_rebal_date={last_rebal_date}, rebal_freq={rebal_freq}")
             except Exception as e:
-                # Failed to auto-create timer tables
+                print(f"[PDF DEBUG] Failed to auto-create timer tables: {e}")
                 import traceback
                 traceback.print_exc()
             
@@ -4670,9 +4640,9 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             try:
                 series_obj = st.session_state.multi_all_results.get(name)
                 if isinstance(series_obj, dict) and 'no_additions' in series_obj:
-                    ser_noadd = series_obj['no_additions'].resample('ME').last()
+                    ser_noadd = series_obj['no_additions'].resample('M').last()
                 elif isinstance(series_obj, pd.Series):
-                    ser_noadd = series_obj.resample('ME').last()
+                    ser_noadd = series_obj.resample('M').last()
             except Exception:
                 ser_noadd = None
 
@@ -5501,10 +5471,9 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                 )
                                                 table_key = f"alloc_table_{selected_portfolio_detail}"
                                                 st.session_state[table_key] = fig_alloc_table
-                                                # Allocation table stored
+                                                print(f"[PDF DEBUG] Stored allocation table for {selected_portfolio_detail}")
                                             except Exception as e:
-                                                # Failed to store allocation table
-                                                pass
+                                                print(f"[PDF DEBUG] Failed to store allocation table for {selected_portfolio_detail}: {e}")
                                             
                                 except Exception as e:
                                     print(f"[REBALANCE TODAY TABLE DEBUG] Failed to render rebalance today table for {selected_portfolio_detail}: {e}")
