@@ -306,19 +306,39 @@ def generate_strategy_comparison_pdf_report():
         story.append(Paragraph("3. Final Performance Statistics", heading_style))
         story.append(Spacer(1, 20))
         
-        # Get statistics table from session state - EXACT same as Multi-Backtest
-        if 'fig_stats' in st.session_state:
+        # Get statistics table from session state - Chrome-free approach
+        if 'strategy_comparison_stats_df_display' in st.session_state:
             try:
-                # Convert the Plotly table to image and add to PDF - EXACT same as Multi-Backtest
-                fig_stats = st.session_state.fig_stats
-                img_data = fig_stats.to_image(format="png", width=2000, height=600)
-                img_buffer = io.BytesIO(img_data)
-                img = Image(img_buffer, width=8*inch, height=3*inch)  # Much wider to fit all columns
-                story.append(img)
-                story.append(Spacer(1, 15))
+                # Create ReportLab table instead of Plotly image (Chrome-free)
+                stats_df = st.session_state.strategy_comparison_stats_df_display
+                if not stats_df.empty:
+                    # Convert DataFrame to table data
+                    table_data = [['Portfolio'] + list(stats_df.columns)]
+                    for portfolio in stats_df.index:
+                        row = [portfolio] + [str(stats_df.loc[portfolio, col]) for col in stats_df.columns]
+                        table_data.append(row)
+                    
+                    # Create ReportLab table
+                    stats_table = Table(table_data, colWidths=[1.5*inch] + [1.2*inch] * (len(stats_df.columns)))
+                    stats_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 12),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                        ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
+                        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                        ('FONTSIZE', (0, 1), (-1, -1), 10),
+                        ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                    ]))
+                    story.append(stats_table)
+                    story.append(Spacer(1, 15))
+                else:
+                    story.append(Paragraph("No statistics data available.", styles['Normal']))
             except Exception as e:
-                story.append(Paragraph(f"Error converting statistics table: {str(e)}", styles['Normal']))
-                story.append(Spacer(1, 15))
+                story.append(Paragraph(f"Error creating statistics table: {str(e)}", styles['Normal']))
         else:
             story.append(Paragraph("Statistics table not available. Please run the backtest first.", styles['Normal']))
             story.append(Spacer(1, 15))
@@ -341,37 +361,47 @@ def generate_strategy_comparison_pdf_report():
             story.append(Paragraph(f"Portfolio: {portfolio_name_key}", subheading_style))
             story.append(Spacer(1, 15))
             
-            # Get allocation pie chart
+            # Get allocation pie chart - Chrome-free approach
             fig_today = st.session_state.get(f'strategy_comparison_fig_today_{portfolio_name_key}')
             
             if fig_today:
                 try:
+                    # Try Plotly first, fallback to text if it fails
                     img_bytes = fig_today.to_image(format="png", width=800, height=600)
                     img_buffer = io.BytesIO(img_bytes)
                     img = Image(img_buffer, width=5*inch, height=3.8*inch)
                     story.append(img)
                     story.append(Spacer(1, 15))
                 except Exception as e:
-                    story.append(Paragraph("Allocation pie chart could not be generated.", styles['Normal']))
+                    # Fallback to text representation (Chrome-free)
+                    story.append(Paragraph(f"Allocation for {portfolio_name_key}:", styles['Heading4']))
+                    today_weights = today_weights_map.get(portfolio_name_key, {})
+                    for asset, weight in today_weights.items():
+                        if float(weight) > 0:
+                            story.append(Paragraph(f"{asset}: {float(weight)*100:.1f}%", styles['Normal']))
+                    story.append(Spacer(1, 15))
             
-            # Add rebalance timer table on SAME PAGE as pie chart (same as Multi-Backtest)
+            # Add rebalance timer table - Chrome-free approach
             fig_timer = st.session_state.get(f'strategy_comparison_timer_table_{portfolio_name_key}')
             
             if fig_timer:
                 try:
+                    # Try Plotly first, fallback to text if it fails
                     img_bytes = fig_timer.to_image(format="png", width=800, height=300)
                     img_buffer = io.BytesIO(img_bytes)
                     img = Image(img_buffer, width=6*inch, height=2.5*inch)
                     story.append(img)
                     story.append(Spacer(1, 2))
-                    # Timer table added successfully
                 except Exception as e:
-                    # Error adding timer table
-                    # Silently ignore timer table conversion errors
-                    pass
+                    # Fallback to text representation (Chrome-free)
+                    story.append(Paragraph("Next Rebalance Timer:", styles['Heading4']))
+                    story.append(Paragraph("Timer information could not be displayed as image.", styles['Normal']))
+                    story.append(Spacer(1, 2))
             else:
                 # Timer table not found
-                pass
+                story.append(Paragraph("Next Rebalance Timer:", styles['Heading4']))
+                story.append(Paragraph("No timer information available.", styles['Normal']))
+                story.append(Spacer(1, 2))
             
             # Add page break after pie plot + timer to separate from allocation table (same as Multi-Backtest)
             story.append(PageBreak())
@@ -380,20 +410,19 @@ def generate_strategy_comparison_pdf_report():
             story.append(Paragraph(f"Allocation Details for {portfolio_name_key}", subheading_style))
             story.append(Spacer(1, 10))
             
-            # Get allocation table
+            # Get allocation table - Chrome-free approach
             fig_alloc_table = st.session_state.get(f'strategy_comparison_fig_alloc_table_{portfolio_name_key}')
             
             if fig_alloc_table:
                 try:
-                    # Convert the Plotly table to image and add to PDF (EXACT same as Multi-Backtest)
+                    # Try Plotly first, fallback to text if it fails
                     img_bytes = fig_alloc_table.to_image(format="png", width=2000, height=600)
                     img_buffer = io.BytesIO(img_bytes)
-                    img = Image(img_buffer, width=8*inch, height=2.5*inch)  # Reduced height to fit better
+                    img = Image(img_buffer, width=8*inch, height=2.5*inch)
                     story.append(img)
                     story.append(Spacer(1, 5))
                 except Exception as e:
-                    story.append(Paragraph(f"Error converting allocation table: {str(e)}", styles['Normal']))
-                    # Fallback to simple text representation
+                    # Fallback to text representation (Chrome-free)
                     story.append(Paragraph("Target Allocation if Rebalanced Today:", styles['Heading4']))
                     today_weights = today_weights_map.get(portfolio_name_key, {})
                     for asset, weight in today_weights.items():
@@ -405,7 +434,7 @@ def generate_strategy_comparison_pdf_report():
                 today_weights = today_weights_map.get(portfolio_name_key, {})
                 for asset, weight in today_weights.items():
                     if float(weight) > 0:
-                        story.append(Paragraph(f"{asset}: {float(weight)*100:.1f}", styles['Normal']))
+                        story.append(Paragraph(f"{asset}: {float(weight)*100:.1f}%", styles['Normal']))
             
             story.append(Spacer(1, 5))
             
