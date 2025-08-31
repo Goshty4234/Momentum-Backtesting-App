@@ -273,29 +273,49 @@ def generate_strategy_comparison_pdf_report():
         story.append(Paragraph("2. Portfolio Value and Drawdown Comparison", heading_style))
         story.append(Spacer(1, 20))
         
-        # Get performance plots from session state
+        # Get performance plots from session state - Chrome-free approach
         fig1 = st.session_state.get('strategy_comparison_fig1')
         fig2 = st.session_state.get('strategy_comparison_fig2')
         
+        # Performance comparison plot
         if fig1:
             try:
+                # Try Plotly first, fallback to text if it fails
                 img_bytes = fig1.to_image(format="png", width=1200, height=600)
                 img_buffer = io.BytesIO(img_bytes)
-                img = Image(img_buffer, width=7.5*inch, height=4.5*inch)  # EXACT same size as Multi-Backtest
+                img = Image(img_buffer, width=7.5*inch, height=4.5*inch)
                 story.append(img)
                 story.append(Spacer(1, 20))
             except Exception as e:
-                story.append(Paragraph("Performance comparison plot could not be generated.", styles['Normal']))
+                # Fallback to text representation (Chrome-free)
+                story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
+                story.append(Paragraph("Performance comparison chart could not be displayed as image.", styles['Normal']))
+                story.append(Paragraph("Please view the interactive chart in the web interface.", styles['Normal']))
+                story.append(Spacer(1, 20))
+        else:
+            story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
+            story.append(Paragraph("No performance comparison data available.", styles['Normal']))
+            story.append(Spacer(1, 20))
         
+        # Drawdown comparison plot
         if fig2:
             try:
+                # Try Plotly first, fallback to text if it fails
                 img_bytes = fig2.to_image(format="png", width=1200, height=600)
                 img_buffer = io.BytesIO(img_bytes)
-                img = Image(img_buffer, width=7.5*inch, height=4.5*inch)  # EXACT same size as Multi-Backtest
+                img = Image(img_buffer, width=7.5*inch, height=4.5*inch)
                 story.append(img)
                 story.append(Spacer(1, 20))
             except Exception as e:
-                story.append(Paragraph("Drawdown comparison plot could not be generated.", styles['Normal']))
+                # Fallback to text representation (Chrome-free)
+                story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
+                story.append(Paragraph("Drawdown comparison chart could not be displayed as image.", styles['Normal']))
+                story.append(Paragraph("Please view the interactive chart in the web interface.", styles['Normal']))
+                story.append(Spacer(1, 20))
+        else:
+            story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
+            story.append(Paragraph("No drawdown comparison data available.", styles['Normal']))
+            story.append(Spacer(1, 20))
         
         # Update progress
         progress_bar.progress(60)
@@ -318,20 +338,26 @@ def generate_strategy_comparison_pdf_report():
                         row = [portfolio] + [str(stats_df.loc[portfolio, col]) for col in stats_df.columns]
                         table_data.append(row)
                     
-                    # Create ReportLab table
-                    stats_table = Table(table_data, colWidths=[1.5*inch] + [1.2*inch] * (len(stats_df.columns)))
+                    # Create ReportLab table with proper page width
+                    available_width = 7.5 * inch  # Standard page width minus margins
+                    portfolio_col_width = 1.5 * inch
+                    remaining_width = available_width - portfolio_col_width
+                    col_width = remaining_width / len(stats_df.columns)
+                    
+                    stats_table = Table(table_data, colWidths=[portfolio_col_width] + [col_width] * len(stats_df.columns))
                     stats_table.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
                         ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
                         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                        ('FONTSIZE', (0, 0), (-1, 0), 12),
+                        ('FONTSIZE', (0, 0), (-1, 0), 10),  # Smaller font to fit
                         ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                         ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
                         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                        ('FONTSIZE', (0, 1), (-1, -1), 10),
+                        ('FONTSIZE', (0, 1), (-1, -1), 8),  # Smaller font to fit
                         ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
                         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                        ('WORDWRAP', (0, 0), (-1, -1), True),  # Enable word wrapping
                     ]))
                     story.append(stats_table)
                     story.append(Spacer(1, 15))
