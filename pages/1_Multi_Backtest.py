@@ -12,6 +12,452 @@ from datetime import datetime, timedelta, date
 import warnings
 warnings.filterwarnings('ignore')
 
+# PDF Generation imports
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors as reportlab_colors
+
+def generate_simple_pdf_report():
+    """
+    Generate a simple PDF report with exactly 4 sections using existing Streamlit data
+    """
+    try:
+        # Show progress bar for PDF generation
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # Create PDF buffer
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=letter)
+        story = []
+        
+        # Update progress
+        progress_bar.progress(10)
+        status_text.text("📄 Initializing PDF document...")
+        
+        # Get styles
+        styles = getSampleStyleSheet()
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading1'],
+            fontSize=16,
+            spaceAfter=20,
+            textColor=reportlab_colors.Color(0.2, 0.4, 0.6)
+        )
+        subheading_style = ParagraphStyle(
+            'CustomSubHeading',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=15,
+            textColor=reportlab_colors.Color(0.3, 0.5, 0.7)
+        )
+        
+        # Update progress
+        progress_bar.progress(20)
+        status_text.text("📊 Adding portfolio configurations...")
+        
+        # Title page (no page break before)
+        title_style = ParagraphStyle(
+            'TitlePage',
+            parent=styles['Title'],
+            fontSize=24,
+            spaceAfter=30,
+            textColor=reportlab_colors.Color(0.2, 0.4, 0.6),
+            alignment=1  # Center alignment
+        )
+        
+        subtitle_style = ParagraphStyle(
+            'SubtitlePage',
+            parent=styles['Normal'],
+            fontSize=16,
+            spaceAfter=40,
+            textColor=reportlab_colors.Color(0.4, 0.6, 0.8),
+            alignment=1  # Center alignment
+        )
+        
+        # Main title
+        story.append(Paragraph("Multi-Portfolio Backtest Report", title_style))
+        story.append(Paragraph("Comprehensive Investment Portfolio Analysis", subtitle_style))
+        
+        # Set document title for PDF viewer
+        doc.title = "Multi-Portfolio Backtest Report"
+        doc.author = "Momentum Backtest System"
+        doc.subject = "Investment Portfolio Analysis Report"
+        
+        # Report metadata
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        story.append(Paragraph(f"Generated on: {current_time}", styles['Normal']))
+        story.append(Spacer(1, 10))
+        
+        # Get backtest period from data if available
+        if 'multi_backtest_snapshot_data' in st.session_state:
+            snapshot = st.session_state.multi_backtest_snapshot_data
+            raw_data = snapshot.get('raw_data', {})
+            if raw_data:
+                # Get first and last dates from any available data
+                all_dates = []
+                for ticker_data in raw_data.values():
+                    if isinstance(ticker_data, pd.DataFrame) and 'Close' in ticker_data.columns:
+                        all_dates.extend(ticker_data.index.tolist())
+                
+                if all_dates:
+                    start_date = min(all_dates)
+                    end_date = max(all_dates)
+                    total_days = (end_date - start_date).days
+                    
+                    story.append(Paragraph(f"Backtest Period: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}", styles['Normal']))
+                    story.append(Paragraph(f"Total Days Analyzed: {total_days:,}", styles['Normal']))
+                    story.append(Spacer(1, 20))
+        
+        # Table of contents first (correct order)
+        toc_style = ParagraphStyle(
+            'TOC',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=15,
+            textColor=reportlab_colors.Color(0.3, 0.5, 0.7)
+        )
+        
+        story.append(Paragraph("Table of Contents", toc_style))
+        toc_points = [
+            "Portfolio Configurations & Parameters",
+            "Performance Charts & Analysis", 
+            "Final Performance Statistics",
+            "Portfolio Allocations & Rebalancing Timers"
+        ]
+        
+        for i, point in enumerate(toc_points, 1):
+            story.append(Paragraph(f"{i}. {point}", styles['Normal']))
+        
+        story.append(Spacer(1, 30))
+        
+        # Report overview (after TOC, correct order)
+        overview_style = ParagraphStyle(
+            'Overview',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=15,
+            textColor=reportlab_colors.Color(0.3, 0.5, 0.7)
+        )
+        
+        story.append(Paragraph("Report Overview", overview_style))
+        story.append(Paragraph("This report provides comprehensive analysis of investment portfolios, including:", styles['Normal']))
+        
+        # Overview bullet points (non-personal, clear descriptions)
+        overview_points = [
+            "Detailed portfolio configurations with all parameters and strategies",
+            "Performance analysis with value comparison and drawdown charts",
+            "Comprehensive performance statistics and risk metrics",
+            "Current allocations and rebalancing countdown timers"
+        ]
+        
+        for point in overview_points:
+            story.append(Paragraph(f"• {point}", styles['Normal']))
+        
+        story.append(PageBreak())
+        
+        # SECTION 1: Portfolio Configurations & Parameters
+        story.append(Paragraph("1. Portfolio Configurations & Parameters", heading_style))
+        story.append(Spacer(1, 20))
+        
+        # Get portfolio configs from session state
+        portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+        
+        for i, config in enumerate(portfolio_configs):
+            # Add page break for all portfolios except the first one
+            if i > 0:
+                story.append(PageBreak())
+            
+            story.append(Paragraph(f"Portfolio: {config.get('name', 'Unknown')}", subheading_style))
+            story.append(Spacer(1, 10))
+            
+            # Create configuration table with all parameters
+            config_data = [
+                ['Parameter', 'Value', 'Description'],
+                ['Initial Value', f"${config.get('initial_value', 0):,.2f}", 'Starting portfolio value'],
+                ['Added Amount', f"${config.get('added_amount', 0):,.2f}", 'Regular contribution amount'],
+                ['Added Frequency', config.get('added_frequency', 'N/A'), 'How often contributions are made'],
+                ['Rebalancing Frequency', config.get('rebalancing_frequency', 'N/A'), 'How often portfolio is rebalanced'],
+                ['Benchmark', config.get('benchmark_ticker', 'N/A'), 'Performance comparison index'],
+                ['Use Momentum', 'Yes' if config.get('use_momentum', False) else 'No', 'Whether momentum strategy is enabled'],
+                ['Momentum Strategy', config.get('momentum_strategy', 'N/A'), 'Type of momentum calculation'],
+                ['Negative Momentum Strategy', config.get('negative_momentum_strategy', 'N/A'), 'How to handle negative momentum'],
+                ['Use Relative Momentum', 'Yes' if config.get('use_relative_momentum', False) else 'No', 'Whether to use relative momentum'],
+                ['Equal if All Negative', 'Yes' if config.get('equal_if_all_negative', False) else 'No', 'Equal weight when all momentum is negative'],
+                ['Calculate Beta', 'Yes' if config.get('calc_beta', False) else 'No', 'Include beta in momentum weighting'],
+                ['Calculate Volatility', 'Yes' if config.get('calc_volatility', False) else 'No', 'Include volatility in momentum weighting'],
+                ['Start Strategy', config.get('start_with', 'N/A'), 'Initial allocation strategy'],
+                                 ['First Rebalance Strategy', 
+                  "rebalancing date" if config.get('first_rebalance_strategy', 'rebalancing_date') == 'rebalancing_date' else "momentum window complete", 
+                  'Initial rebalancing approach'],
+                ['Collect Dividends as Cash', 'Yes' if config.get('collect_dividends_as_cash', False) else 'No', 'Dividend handling method'],
+                ['Beta Lookback', f"{config.get('beta_window_days', 0)} days", 'Days for beta calculation'],
+                ['Beta Exclude', f"{config.get('exclude_days_beta', 0)} days", 'Days excluded from beta calculation'],
+                ['Volatility Lookback', f"{config.get('vol_window_days', 0)} days", 'Days for volatility calculation'],
+                ['Volatility Exclude', f"{config.get('exclude_days_vol', 0)} days", 'Days excluded from volatility calculation']
+            ]
+            
+            # Add momentum windows if they exist
+            momentum_windows = config.get('momentum_windows', [])
+            if momentum_windows:
+                for i, window in enumerate(momentum_windows, 1):
+                    lookback = window.get('lookback', 0)
+                    weight = window.get('weight', 0)
+                    config_data.append([
+                        f'Momentum Window {i}',
+                        f"{lookback} days, {weight:.2f}",
+                        f"Lookback: {lookback} days, Weight: {weight:.2f}"
+                    ])
+            
+            # Add stocks with enhanced information
+            stocks_data = [['Ticker', 'Allocation %', 'Include Dividends']]
+            for stock in config.get('stocks', []):
+                stocks_data.append([
+                    stock['ticker'],
+                    f"{stock['allocation']*100:.1f}%",
+                    "✓" if stock['include_dividends'] else "✗"
+                ])
+            
+            # Create tables with proper column widths to prevent text overflow
+            config_table = Table(config_data, colWidths=[2.2*inch, 1.8*inch, 2.5*inch])
+            config_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('WORDWRAP', (0, 0), (-1, -1), True),
+                ('LEFTPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+                ('TOPPADDING', (0, 0), (-1, -1), 3),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 3)
+            ]))
+            
+            stocks_table = Table(stocks_data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch])
+            stocks_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
+            ]))
+            
+            story.append(config_table)
+            story.append(Spacer(1, 10))
+            story.append(Paragraph("Stock Allocations:", styles['Heading3']))
+            story.append(stocks_table)
+            story.append(Spacer(1, 15))
+        
+        # Update progress
+        progress_bar.progress(40)
+        status_text.text("📈 Adding performance charts...")
+        
+        # SECTION 2: Portfolio Value and Drawdown Comparison Plots
+        story.append(PageBreak())
+        story.append(Paragraph("2. Portfolio Value and Drawdown Comparison", heading_style))
+        story.append(Spacer(1, 20))
+        
+        # Get the EXISTING Plotly figures from session state - these are the literal plots from your UI
+        if 'fig1' in st.session_state:
+            # Convert the existing Plotly figure to image for PDF
+            try:
+                fig1 = st.session_state.fig1
+                # Convert Plotly figure to image
+                img_bytes = fig1.to_image(format="png", width=1200, height=600)
+                img_buffer = io.BytesIO(img_bytes)
+                img_buffer.seek(0)
+                
+                # Add to PDF
+                story.append(Image(img_buffer, width=7.5*inch, height=4.5*inch))  # Full page width
+                story.append(Spacer(1, 15))
+            except Exception as e:
+                story.append(Paragraph(f"Error converting performance plot: {str(e)}", styles['Normal']))
+        
+        # Add Max Drawdown plot
+        if 'fig2' in st.session_state:
+            try:
+                fig2 = st.session_state.fig2
+                # Convert Plotly figure to image
+                img_bytes = fig2.to_image(format="png", width=1200, height=600)
+                img_buffer = io.BytesIO(img_bytes)
+                img_buffer.seek(0)
+                
+                # Add to PDF
+                story.append(Image(img_buffer, width=7.5*inch, height=4.5*inch))  # Full page width
+                story.append(Spacer(1, 15))
+            except Exception as e:
+                story.append(Paragraph(f"Error converting drawdown plot: {str(e)}", styles['Normal']))
+        
+        # Update progress
+        progress_bar.progress(60)
+        status_text.text("📋 Adding performance statistics...")
+        
+        # SECTION 3: Final Performance Statistics Table
+        story.append(PageBreak())
+        story.append(Paragraph("3. Final Performance Statistics", heading_style))
+        story.append(Spacer(1, 15))
+        
+        # Use the EXACT same approach as plots - fetch the Plotly table figure
+        if 'fig_stats' in st.session_state:
+            try:
+                # Convert the Plotly table to image and add to PDF
+                fig_stats = st.session_state.fig_stats
+                img_data = fig_stats.to_image(format="png", width=2000, height=600)
+                img_buffer = io.BytesIO(img_data)
+                img = Image(img_buffer, width=8*inch, height=3*inch)  # Much wider to fit all columns
+                story.append(img)
+                story.append(Spacer(1, 15))
+            except Exception as e:
+                story.append(Paragraph(f"Error converting statistics table: {str(e)}", styles['Normal']))
+                story.append(Spacer(1, 15))
+        else:
+            story.append(Paragraph("Statistics table not available. Please run the backtest first.", styles['Normal']))
+            story.append(Spacer(1, 15))
+        
+        # Update progress
+        progress_bar.progress(80)
+        status_text.text("🎯 Adding allocation charts and timers...")
+        
+        # SECTION 4: Target Allocation if Rebalanced Today
+        story.append(PageBreak())
+        story.append(Paragraph("4. Target Allocation if Rebalanced Today", heading_style))
+        story.append(Spacer(1, 10))
+        
+        # Get the allocation data from your existing UI - fetch the existing allocation data
+        if 'multi_backtest_snapshot_data' in st.session_state:
+            snapshot = st.session_state.multi_backtest_snapshot_data
+            today_weights_map = snapshot.get('today_weights_map', {})
+            
+            # Process ALL portfolios, not just the active one
+            portfolio_count = 0
+            for portfolio_name, today_weights in today_weights_map.items():
+                if today_weights:
+                    # Add page break for all portfolios except the first one
+                    if portfolio_count > 0:
+                        story.append(PageBreak())
+                    
+                    portfolio_count += 1
+                    
+                    # Add portfolio header
+                    story.append(Paragraph(f"Portfolio: {portfolio_name}", subheading_style))
+                    story.append(Spacer(1, 10))
+                    
+                    # Create pie chart for this portfolio (since we need ALL portfolios, not just the selected one)
+                    try:
+                        # Create labels and values for the plot
+                        labels_today = [k for k, v in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])) if v > 0]
+                        vals_today = [float(today_weights[k]) * 100 for k in labels_today]
+                        
+                        if labels_today and vals_today:
+                            # Create the pie chart
+                            fig_today = go.Figure()
+                            fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
+                            fig_today.update_traces(textinfo='percent+label')
+                            fig_today.update_layout(
+                                template='plotly_dark', 
+                                margin=dict(t=30),
+                                height=600,
+                                showlegend=True
+                            )
+                            
+                            # Convert Plotly figure to image
+                            pie_img_bytes = fig_today.to_image(format="png", width=600, height=600)
+                            pie_img_buffer = io.BytesIO(pie_img_bytes)
+                            pie_img_buffer.seek(0)
+                            
+                            # Add to PDF
+                            story.append(Image(pie_img_buffer, width=5*inch, height=5*inch))
+                            story.append(Spacer(1, 2))
+                            
+                            # Add Next Rebalance Timer information - fetch the stored timer table figure
+                            timer_table_key = f"timer_table_{portfolio_name}"
+                            print(f"[PDF DEBUG] Looking for timer table: {timer_table_key}")
+                            print(f"[PDF DEBUG] Available timer tables: {[k for k in st.session_state.keys() if k.startswith('timer_table_')]}")
+                            
+                            if timer_table_key in st.session_state:
+                                try:
+                                    print(f"[PDF DEBUG] Found timer table for {portfolio_name}, adding to PDF")
+                                    # Convert the Plotly timer table to image and add to PDF
+                                    fig_timer = st.session_state[timer_table_key]
+                                    img_data = fig_timer.to_image(format="png", width=1000, height=350)
+                                    img_buffer = io.BytesIO(img_data)
+                                    img = Image(img_buffer, width=7*inch, height=2.2*inch)
+                                    story.append(img)
+                                    story.append(Spacer(1, 2))
+                                    print(f"[PDF DEBUG] Successfully added timer table for {portfolio_name} to PDF")
+                                except Exception as e:
+                                    print(f"[PDF DEBUG] Error adding timer table for {portfolio_name}: {e}")
+                                    # Silently ignore timer table conversion errors
+                                    pass
+                            else:
+                                print(f"[PDF DEBUG] Timer table NOT found for {portfolio_name}")
+                            
+                            # Add page break after pie plot + timer to separate from allocation table
+                            story.append(PageBreak())
+                            
+                            # Now add the allocation table on the next page
+                            story.append(Paragraph(f"Allocation Details for {portfolio_name}", subheading_style))
+                            story.append(Spacer(1, 10))
+                            
+                            # Use the EXACT same approach as Performance Statistics table - fetch the Plotly table figure
+                            alloc_table_key = f"alloc_table_{portfolio_name}"
+                            if alloc_table_key in st.session_state:
+                                try:
+                                    # Convert the Plotly table to image and add to PDF (EXACT same as fig_stats)
+                                    fig_alloc = st.session_state[alloc_table_key]
+                                    img_data = fig_alloc.to_image(format="png", width=2000, height=600)
+                                    img_buffer = io.BytesIO(img_data)
+                                    img = Image(img_buffer, width=8*inch, height=2.5*inch)  # Reduced height to fit better
+                                    story.append(img)
+                                    story.append(Spacer(1, 5))
+                                except Exception as e:
+                                    story.append(Paragraph(f"Error converting allocation table: {str(e)}", styles['Normal']))
+                                    # Fallback to simple text representation
+                                    story.append(Paragraph("Target Allocation if Rebalanced Today:", styles['Heading4']))
+                                    for asset, weight in today_weights.items():
+                                        if float(weight) > 0:
+                                            story.append(Paragraph(f"{asset}: {float(weight)*100:.1f}%", styles['Normal']))
+                            else:
+                                # Fallback: simple text representation if no stored table found
+                                story.append(Paragraph("Target Allocation if Rebalanced Today:", styles['Heading4']))
+                                for asset, weight in today_weights.items():
+                                    if float(weight) > 0:
+                                        story.append(Paragraph(f"{asset}: {float(weight)*100:.1f}%", styles['Normal']))
+                            
+                            story.append(Spacer(1, 5))
+                        else:
+                            story.append(Paragraph(f"No allocation data available for {portfolio_name}", styles['Normal']))
+                    except Exception as e:
+                        story.append(Paragraph(f"Error creating pie chart for {portfolio_name}: {str(e)}", styles['Normal']))
+        else:
+            story.append(Paragraph("Allocation data not available. Please run the backtest first.", styles['Normal']))
+            story.append(Spacer(1, 5))
+        
+        # Update progress
+        progress_bar.progress(95)
+        status_text.text("🔨 Building PDF document...")
+        
+        # Build PDF
+        doc.build(story)
+        buffer.seek(0)
+        
+        # Complete progress
+        progress_bar.progress(100)
+        status_text.text("✅ PDF generation complete! Downloading...")
+        
+        return buffer
+        
+    except Exception as e:
+        st.error(f"Error generating PDF: {str(e)}")
+        return None
+
 def check_currency_warning(tickers):
     """
     Check if any tickers are non-USD and display a warning.
@@ -859,7 +1305,7 @@ def single_backtest(config, sim_index, reindexed_data):
                 if len(returns_t_vol) < 2:
                     vol_vals[t] = np.nan
                 else:
-                    vol_vals[t] = returns_t_vol.std() * np.sqrt(252)
+                    vol_vals[t] = returns_t_vol.std() * np.sqrt(365)
                 metrics[t]['Volatility'] = vol_vals[t]
 
         # attach raw momentum
@@ -2365,8 +2811,8 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
 _TOTAL_TOL = 1.0
 _ALLOC_TOL = 1.0
 
-# Move Run Backtests to the left sidebar to make it conspicuous and separate from config
-if st.sidebar.button("Run Backtests", type='primary'):
+# Move Run Backtest to the left sidebar to make it conspicuous and separate from config
+if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=True):
     
     # Pre-backtest validation check for all portfolios
     configs_to_run = st.session_state.multi_backtest_portfolio_configs
@@ -2876,13 +3322,264 @@ if st.sidebar.button("Run Backtests", type='primary'):
                     if 'today_weights_map' in results:
                         today_weights_map[unique_name] = results['today_weights_map']
             
+            # Get last rebalance dates for all portfolios from actual allocation data
+            last_rebalance_dates = {}
+            for portfolio_name in st.session_state.multi_backtest_portfolio_configs:
+                portfolio_name = portfolio_name.get('name', 'Unknown')
+                
+                # Get the actual allocation data for this portfolio
+                if portfolio_name in all_allocations:
+                    allocs_for_portfolio = all_allocations[portfolio_name]
+                    if allocs_for_portfolio:
+                        # Get sorted allocation dates (same logic as real code)
+                        alloc_dates = sorted(list(allocs_for_portfolio.keys()))
+                        print(f"[PDF DEBUG] Portfolio {portfolio_name} has {len(alloc_dates)} allocation dates: {alloc_dates}")
+                        if len(alloc_dates) > 1:
+                            # Use second to last date (same as real timer code)
+                            last_rebalance_dates[portfolio_name] = alloc_dates[-2]
+                            print(f"[PDF DEBUG] Using second to last date: {alloc_dates[-2]}")
+                        elif len(alloc_dates) == 1:
+                            # Use the only available date
+                            last_rebalance_dates[portfolio_name] = alloc_dates[-1]
+                            print(f"[PDF DEBUG] Using only available date: {alloc_dates[-1]}")
+                        else:
+                            # No allocation data available
+                            last_rebalance_dates[portfolio_name] = None
+                            print(f"[PDF DEBUG] No allocation dates available")
+                    else:
+                        last_rebalance_dates[portfolio_name] = None
+                        print(f"[PDF DEBUG] No allocation data for {portfolio_name}")
+                else:
+                    last_rebalance_dates[portfolio_name] = None
+                    print(f"[PDF DEBUG] Portfolio {portfolio_name} not found in all_allocations")
+            
             st.session_state.multi_backtest_snapshot_data = {
                 'raw_data': data_reindexed,
                 'portfolio_configs': st.session_state.multi_backtest_portfolio_configs,
                 'all_allocations': all_allocations,
                 'all_metrics': all_metrics,
-                'today_weights_map': today_weights_map
+                'today_weights_map': today_weights_map,
+                'last_rebalance_dates': last_rebalance_dates
             }
+            
+            # Create allocation tables for ALL portfolios automatically for PDF export
+            try:
+                raw_data = st.session_state.get('multi_backtest_raw_data', {})
+                
+                for portfolio_name, today_weights in today_weights_map.items():
+                    if today_weights:
+                        # Get portfolio configuration for calculations
+                        portfolio_configs = st.session_state.multi_backtest_portfolio_configs
+                        portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == portfolio_name), None)
+                        
+                        if portfolio_cfg:
+                            # Get portfolio value
+                            portfolio_value = float(portfolio_cfg.get('initial_value', 0) or 0)
+                            
+                            # Get current portfolio value from backtest results
+                            if 'multi_all_results' in st.session_state and st.session_state.multi_all_results:
+                                portfolio_results = st.session_state.multi_all_results.get(portfolio_name)
+                                if portfolio_results:
+                                    if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
+                                        final_value = portfolio_results['with_additions'].iloc[-1]
+                                        if not pd.isna(final_value) and final_value > 0:
+                                            portfolio_value = float(final_value)
+                                    elif isinstance(portfolio_results, dict) and 'no_additions' in portfolio_results:
+                                        final_value = portfolio_results['no_additions'].iloc[-1]
+                                        if not pd.isna(final_value) and final_value > 0:
+                                            portfolio_value = float(final_value)
+                                    elif isinstance(portfolio_results, pd.Series):
+                                        latest_value = portfolio_results.iloc[-1]
+                                        if not pd.isna(latest_value) and latest_value > 0:
+                                            portfolio_value = float(latest_value)
+                            
+                            # Create allocation table data
+                            rows = []
+                            for tk in sorted(today_weights.keys()):
+                                alloc_pct = float(today_weights.get(tk, 0))
+                                if tk == 'CASH':
+                                    price = None
+                                    shares = 0
+                                    total_val = portfolio_value * alloc_pct
+                                else:
+                                    df = raw_data.get(tk)
+                                    price = None
+                                    if isinstance(df, pd.DataFrame) and 'Close' in df.columns and not df['Close'].dropna().empty:
+                                        try:
+                                            price = float(df['Close'].iloc[-1])
+                                        except Exception:
+                                            price = None
+                                    try:
+                                        if price and price > 0:
+                                            allocation_value = portfolio_value * alloc_pct
+                                            shares = round(allocation_value / price, 1)
+                                            total_val = shares * price
+                                        else:
+                                            shares = 0.0
+                                            total_val = portfolio_value * alloc_pct
+                                    except Exception:
+                                        shares = 0
+                                        total_val = portfolio_value * alloc_pct
+
+                                pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
+                                rows.append({
+                                    'Ticker': tk,
+                                    'Allocation %': round(alloc_pct * 100, 2),
+                                    'Price ($)': round(price, 2) if price is not None else float('nan'),
+                                    'Shares': round(shares, 2),
+                                    'Total Value ($)': round(total_val, 2),
+                                    '% of Portfolio': round(pct_of_port, 2),
+                                })
+
+                            df_table = pd.DataFrame(rows).set_index('Ticker')
+                            df_display = df_table.copy()
+                            
+                            # Remove CASH if it has zero value
+                            if 'CASH' in df_display.index:
+                                cash_val = df_display.at['CASH', 'Total Value ($)']
+                                if not (cash_val and not pd.isna(cash_val) and cash_val != 0):
+                                    df_display = df_display.drop('CASH')
+                            
+                            # Create Plotly table figure with ticker column included
+                            df_display_with_ticker = df_display.reset_index()
+                            
+                            # Format the data to ensure 2 decimal places for display
+                            formatted_values = []
+                            for col in df_display_with_ticker.columns:
+                                if col in ['Price ($)', 'Total Value ($)', '% of Portfolio']:
+                                    # Format monetary and percentage values to 2 decimal places
+                                    formatted_values.append([f"{df_display_with_ticker[col][i]:.2f}" if pd.notna(df_display_with_ticker[col][i]) else "" for i in range(len(df_display_with_ticker))])
+                                elif col == 'Shares':
+                                    # Format shares to 1 decimal place
+                                    formatted_values.append([f"{df_display_with_ticker[col][i]:.1f}" if pd.notna(df_display_with_ticker[col][i]) else "" for i in range(len(df_display_with_ticker))])
+                                elif col == 'Allocation %':
+                                    # Format allocation to 2 decimal places
+                                    formatted_values.append([f"{df_display_with_ticker[col][i]:.2f}" if pd.notna(df_display_with_ticker[col][i]) else "" for i in range(len(df_display_with_ticker))])
+                                else:
+                                    # Keep other columns as is
+                                    formatted_values.append([str(df_display_with_ticker[col][i]) if pd.notna(df_display_with_ticker[col][i]) else "" for i in range(len(df_display_with_ticker))])
+                            
+                            fig_alloc_table = go.Figure(data=[go.Table(
+                                header=dict(values=list(df_display_with_ticker.columns),
+                                           fill_color='paleturquoise',
+                                           align='left',
+                                           font=dict(size=12)),
+                                cells=dict(values=formatted_values,
+                                          fill_color='lavender',
+                                          align='left',
+                                          font=dict(size=11))
+                            )])
+                            fig_alloc_table.update_layout(
+                                title=f"Target Allocation if Rebalanced Today - {portfolio_name}",
+                                margin=dict(t=30, b=10, l=10, r=10),
+                                height=400
+                            )
+                            table_key = f"alloc_table_{portfolio_name}"
+                            st.session_state[table_key] = fig_alloc_table
+                            print(f"[PDF DEBUG] Auto-created allocation table for {portfolio_name}")
+            except Exception as e:
+                print(f"[PDF DEBUG] Failed to auto-create allocation tables: {e}")
+            
+            # Create timer tables for ALL portfolios automatically for PDF export
+            try:
+                snapshot = st.session_state.get('multi_backtest_snapshot_data', {})
+                last_rebalance_dates = snapshot.get('last_rebalance_dates', {})
+                
+                print(f"[PDF DEBUG] Creating timer tables for {len(st.session_state.multi_backtest_portfolio_configs)} portfolios")
+                print(f"[PDF DEBUG] Available last_rebalance_dates: {list(last_rebalance_dates.keys())}")
+                
+                for portfolio_cfg in st.session_state.multi_backtest_portfolio_configs:
+                    portfolio_name = portfolio_cfg.get('name', 'Unknown')
+                    print(f"[PDF DEBUG] Processing portfolio: {portfolio_name}")
+                    
+                    # Get rebalancing frequency for this portfolio
+                    rebal_freq = portfolio_cfg.get('rebalancing_frequency', 'none')
+                    rebal_freq = rebal_freq.lower()
+                    
+                    # Map frequency names to what the function expects
+                    frequency_mapping = {
+                        'monthly': 'month',
+                        'weekly': 'week',
+                        'bi-weekly': '2weeks',
+                        'biweekly': '2weeks',
+                        'quarterly': '3months',
+                        'semi-annually': '6months',
+                        'semiannually': '6months',
+                        'annually': 'year',
+                        'yearly': 'year',
+                        'market_day': 'market_day',
+                        'calendar_day': 'calendar_day',
+                        'never': 'none',
+                        'none': 'none'
+                    }
+                    rebal_freq = frequency_mapping.get(rebal_freq, rebal_freq)
+                    print(f"[PDF DEBUG] Rebalancing frequency for {portfolio_name}: {rebal_freq}")
+                    
+                    # Get last rebalance date for this portfolio
+                    last_rebal_date = last_rebalance_dates.get(portfolio_name)
+                    print(f"[PDF DEBUG] Last rebalance date for {portfolio_name}: {last_rebal_date}")
+                    
+                    if last_rebal_date and rebal_freq != 'none':
+                        # Ensure last_rebal_date is a naive datetime object
+                        if isinstance(last_rebal_date, str):
+                            last_rebal_date = pd.to_datetime(last_rebal_date)
+                        if hasattr(last_rebal_date, 'tzinfo') and last_rebal_date.tzinfo is not None:
+                            last_rebal_date = last_rebal_date.replace(tzinfo=None)
+                        
+                        # Calculate next rebalance for this portfolio
+                        next_date_port, time_until_port, next_rebalance_datetime_port = calculate_next_rebalance_date(
+                            rebal_freq, last_rebal_date
+                        )
+                        
+                        print(f"[PDF DEBUG] Calculated for {portfolio_name}: next_date={next_date_port}, time_until={time_until_port}")
+                        
+                        if next_date_port and time_until_port:
+                            # Create timer data for this portfolio
+                            timer_data_port = [
+                                ['Time Until Next Rebalance', format_time_until(time_until_port)],
+                                ['Target Rebalance Date', next_date_port.strftime("%B %d, %Y")],
+                                ['Rebalancing Frequency', rebal_freq.replace('_', ' ').title()]
+                            ]
+                            
+                            # Create timer table figure for this portfolio
+                            fig_timer_port = go.Figure(data=[go.Table(
+                                header=dict(
+                                    values=['Parameter', 'Value'],
+                                    fill_color='#2E86AB',
+                                    align='center',
+                                    font=dict(color='white', size=16, family='Arial Black')
+                                ),
+                                cells=dict(
+                                    values=[[row[0] for row in timer_data_port], [row[1] for row in timer_data_port]],
+                                    fill_color=[['#F8F9FA', '#FFFFFF'] * 2, ['#F8F9FA', '#FFFFFF'] * 2],
+                                    align='center',
+                                    font=dict(color='black', size=14, family='Arial'),
+                                    height=40
+                                )
+                            )])
+                            
+                            fig_timer_port.update_layout(
+                                title=dict(
+                                    text=f"⏰ Next Rebalance Timer - {portfolio_name}",
+                                    x=0.5,
+                                    font=dict(size=18, color='#2E86AB', family='Arial Black')
+                                ),
+                                width=700,
+                                height=250,
+                                margin=dict(l=20, r=20, t=60, b=20)
+                            )
+                            
+                            # Store in session state for PDF export
+                            st.session_state[f'timer_table_{portfolio_name}'] = fig_timer_port
+                            print(f"[PDF DEBUG] Successfully created timer table for {portfolio_name}")
+                        else:
+                            print(f"[PDF DEBUG] Failed to calculate timer for {portfolio_name}: missing next_date or time_until")
+                    else:
+                        print(f"[PDF DEBUG] Skipping {portfolio_name}: last_rebal_date={last_rebal_date}, rebal_freq={rebal_freq}")
+            except Exception as e:
+                print(f"[PDF DEBUG] Failed to auto-create timer tables: {e}")
+                import traceback
+                traceback.print_exc()
             
             st.session_state.multi_all_results = all_results
             st.session_state.multi_backtest_all_drawdowns = all_drawdowns
@@ -3148,19 +3845,49 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         for name, series_dict in st.session_state.multi_all_results.items():
             # Plot the series that includes added cash (with_additions) for comparison
             series_to_plot = series_dict['with_additions'] if isinstance(series_dict, dict) and 'with_additions' in series_dict else series_dict
-            fig1.add_trace(go.Scatter(x=series_to_plot.index, y=series_to_plot.values, mode='lines', name=name))
+            # Convert timestamp index to proper datetime for plotting - ensure it's actually datetime format
+            if hasattr(series_to_plot.index, 'to_pydatetime'):
+                x_dates = series_to_plot.index.to_pydatetime()
+            else:
+                x_dates = pd.to_datetime(series_to_plot.index)
+            fig1.add_trace(go.Scatter(x=x_dates, y=series_to_plot.values, mode='lines', name=name))
         fig1.update_layout(
             title="Backtest Comparison — Portfolio Value (with cash additions)",
             xaxis_title="Date",
-            yaxis=dict(title="Portfolio Value ($)", title_standoff=20),
             legend_title="Portfolios",
             hovermode="x unified",
             template="plotly_dark",
             yaxis_tickprefix="$",
             yaxis_tickformat=",.0f",
-            margin=dict(l=100, r=20, t=80, b=60)
+            # No width/height restrictions - let them be responsive like other plots
+            xaxis=dict(
+                type='date',  # Explicitly set as date type
+                tickformat="%Y-%m-%d",  # Proper date format
+                tickmode="auto",
+                nticks=10,  # Reasonable number of ticks
+                tickangle=45,  # Angle labels for better readability
+                automargin=True,  # Ensure labels fit
+                range=None  # Let Plotly auto-range to ensure perfect alignment
+            ),
+            legend=dict(
+                orientation="h",  # Horizontal legend
+                yanchor="top",
+                y=1.15,
+                xanchor="center",
+                x=0.5
+            ),
+            margin=dict(l=80, r=80, t=120, b=80),  # EXACT same margins as Strategy Comparison Chart 1
+            height=600,  # Taller height to prevent crushing
+            yaxis=dict(
+                title="Portfolio Value ($)", 
+                title_standoff=20,
+                side="left",
+                position=0.0  # Force left alignment for perfect positioning
+            )
         )
         st.plotly_chart(fig1, use_container_width=True, key="multi_performance_chart")
+        # Store in session state for PDF export
+        st.session_state.fig1 = fig1
 
         fig2 = go.Figure()
         for name, series_dict in st.session_state.multi_all_results.items():
@@ -3172,17 +3899,47 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             peak = np.maximum.accumulate(values)
             drawdowns = (values - peak) / np.where(peak == 0, 1, peak) * 100  # Convert to percentage
             
-            fig2.add_trace(go.Scatter(x=series_to_plot.index, y=drawdowns, mode='lines', name=name))
+            # Convert timestamp index to proper datetime for plotting - ensure it's actually datetime format
+            if hasattr(series_to_plot.index, 'to_pydatetime'):
+                x_dates = series_to_plot.index.to_pydatetime()
+            else:
+                x_dates = pd.to_datetime(series_to_plot.index)
+            fig2.add_trace(go.Scatter(x=x_dates, y=drawdowns, mode='lines', name=name))
         fig2.update_layout(
             title="Backtest Comparison (Max Drawdown)",
             xaxis_title="Date",
-            yaxis=dict(title="Drawdown (%)", title_standoff=20),
             legend_title="Portfolios",
             hovermode="x unified",
             template="plotly_dark",
-            margin=dict(l=100, r=20, t=80, b=60)
+            # No width/height restrictions - let them be responsive like other plots
+            xaxis=dict(
+                type='date',  # Explicitly set as date type
+                tickformat="%Y-%m-%d",  # Proper date format
+                tickmode="auto",
+                nticks=10,  # Reasonable number of ticks
+                tickangle=45,  # Angle labels for better readability
+                automargin=True,  # Ensure labels fit
+                range=None  # Let Plotly auto-range to ensure perfect alignment
+            ),
+            legend=dict(
+                orientation="h",  # Horizontal legend
+                yanchor="top",
+                y=1.15,
+                xanchor="center",
+                x=0.5
+            ),
+            margin=dict(l=80, r=80, t=120, b=80),  # EXACT same margins as Strategy Comparison
+            height=600,  # Taller height to prevent crushing
+            yaxis=dict(
+                title="Drawdown (%)", 
+                title_standoff=20,
+                side="left",
+                position=0.0  # Force left alignment for perfect positioning
+            )
         )
         st.plotly_chart(fig2, use_container_width=True, key="multi_drawdown_chart")
+        # Store in session state for PDF export
+        st.session_state.fig2 = fig2
 
         # --- Variation summary chart: compares total return, CAGR, volatility and max drawdown across portfolios ---
         try:
@@ -3268,6 +4025,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     yaxis=dict(
                         title='Percent (Log Scale)', 
                         ticksuffix='%',
+                        showticklabels=False,  # Remove Y-axis tick labels
                         # Linear scale since we transformed the values manually
                     ),
                     legend=dict(
@@ -3344,9 +4102,11 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             recomputed_stats = {}
 
             def scale_pct(val):
-                if val is None or np.isnan(val):
+                if val is None or (isinstance(val, (int, float)) and np.isnan(val)):
                     return np.nan
-                if -1.5 < val < 1.5:
+                if isinstance(val, str):
+                    return val  # Return strings as-is (like "N/A")
+                if isinstance(val, (int, float)) and -1.5 < val < 1.5:
                     return val * 100
                 return val
 
@@ -3354,6 +4114,10 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 if val is None or (isinstance(val, float) and np.isnan(val)):
                     return "N/A"
                 v = scale_pct(val)
+                
+                # If scale_pct returned a string (like "N/A"), return it as-is
+                if isinstance(v, str):
+                    return v
                 
                 # Apply specific scaling for Total Return before clamping
                 if stat_type == "Total Return":
@@ -3593,6 +4357,53 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     st.dataframe(stats_df_display, use_container_width=True)
             else:
                 st.dataframe(stats_df_display, use_container_width=True)
+            
+            # Store the statistics table as a Plotly figure for PDF export
+            try:
+                import plotly.graph_objects as go
+                # Create a Plotly table from the stats DataFrame with MUCH better formatting
+                # Format the values to remove excessive decimals
+                formatted_values = []
+                for col in stats_df_display.columns:
+                    if 'Portfolio Value' in col or 'Final Value' in col:
+                        # Portfolio values: full numbers only (no decimals)
+                        formatted_values.append([f"${float(stats_df_display.loc[name, col]):,.0f}" for name in stats_df_display.index])
+                    elif 'MWRR' in col:
+                        # MWRR: max 2 decimal places
+                        formatted_values.append([f"{float(stats_df_display.loc[name, col]):.2f}%" for name in stats_df_display.index])
+                    elif 'Total Money Added' in col:
+                        # Money added: full numbers only
+                        formatted_values.append([f"${float(stats_df_display.loc[name, col]):,.0f}" for name in stats_df_display.index])
+                    else:
+                        # Keep other values as they are
+                        formatted_values.append([stats_df_display.loc[name, col] for name in stats_df_display.index])
+                
+                fig_stats = go.Figure(data=[go.Table(
+                    header=dict(
+                        values=['Portfolio'] + list(stats_df_display.columns),
+                        fill_color='rgb(51, 102, 153)',
+                        align='center',
+                        font=dict(color='white', size=14, family='Arial Black')  # Bigger, bolder font
+                    ),
+                    cells=dict(
+                        values=[stats_df_display.index] + formatted_values,
+                        fill_color='rgb(242, 242, 242)',
+                        align='center',
+                        font=dict(color='black', size=12, family='Arial'),  # Bigger font
+                        height=35  # Taller cells for better readability
+                    ),
+                    columnwidth=[0.15] + [0.85/len(stats_df_display.columns)] * len(stats_df_display.columns)  # Portfolio column wider, others equal
+                )])
+                fig_stats.update_layout(
+                    title="Final Performance Statistics",
+                    title_x=0.5,
+                    width=2000,  # Much wider to fit all columns
+                    height=600,   # Taller for better spacing
+                    margin=dict(l=20, r=20, t=50, b=20)  # Better margins
+                )
+                st.session_state.fig_stats = fig_stats
+            except Exception as e:
+                print(f"Could not create stats table figure: {e}")
 
         # Portfolio Configuration Comparison Table
         st.subheader("Portfolio Configuration Comparison")
@@ -4295,6 +5106,117 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                 progress = min(max(elapsed_period / total_period, 0), 1)
                                                 
                                                 st.progress(progress, text=f"Progress to next rebalance: {progress:.1%}")
+                                            
+                                            # Create and store timer table figure for PDF export
+                                            try:
+                                                timer_data = [
+                                                    ['Time Until Next Rebalance', format_time_until(time_until)],
+                                                    ['Target Rebalance Date', next_date.strftime("%B %d, %Y")],
+                                                    ['Rebalancing Frequency', rebalancing_frequency.replace('_', ' ').title()]
+                                                ]
+                                                
+                                                fig_timer = go.Figure(data=[go.Table(
+                                                    header=dict(
+                                                        values=['Parameter', 'Value'],
+                                                        fill_color='#2E86AB',
+                                                        align='center',
+                                                        font=dict(color='white', size=16, family='Arial Black')
+                                                    ),
+                                                    cells=dict(
+                                                        values=[[row[0] for row in timer_data], [row[1] for row in timer_data]],
+                                                        fill_color=[['#F8F9FA', '#FFFFFF'] * 2, ['#F8F9FA', '#FFFFFF'] * 2],
+                                                        align='center',
+                                                        font=dict(color='black', size=14, family='Arial'),
+                                                        height=40
+                                                    )
+                                                )])
+                                                
+                                                fig_timer.update_layout(
+                                                    title=dict(
+                                                        text="⏰ Next Rebalance Timer",
+                                                        x=0.5,
+                                                        font=dict(size=18, color='#2E86AB', family='Arial Black')
+                                                    ),
+                                                    width=700,
+                                                    height=250,
+                                                    margin=dict(l=20, r=20, t=60, b=20)
+                                                )
+                                                
+                                                # Store in session state for PDF export
+                                                st.session_state[f'timer_table_{selected_portfolio_detail}'] = fig_timer
+                                            except Exception as e:
+                                                pass  # Silently ignore timer table creation errors
+                                            
+                                            # Also create timer tables for ALL portfolios for PDF export
+                                            try:
+                                                # Get all portfolio configs
+                                                all_portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                                                snapshot = st.session_state.get('multi_backtest_snapshot_data', {})
+                                                last_rebalance_dates = snapshot.get('last_rebalance_dates', {})
+                                                
+                                                for portfolio_cfg in all_portfolio_configs:
+                                                    portfolio_name = portfolio_cfg.get('name', 'Unknown')
+                                                    
+                                                    # Get rebalancing frequency for this portfolio
+                                                    rebal_freq = portfolio_cfg.get('rebalancing_frequency', 'none')
+                                                    rebal_freq = rebal_freq.lower()
+                                                    rebal_freq = frequency_mapping.get(rebal_freq, rebal_freq)
+                                                    
+                                                    # Get last rebalance date for this portfolio
+                                                    last_rebal_date = last_rebalance_dates.get(portfolio_name)
+                                                    
+                                                    if last_rebal_date and rebal_freq != 'none':
+                                                        # Ensure last_rebal_date is a naive datetime object
+                                                        if isinstance(last_rebal_date, str):
+                                                            last_rebal_date = pd.to_datetime(last_rebal_date)
+                                                        if hasattr(last_rebal_date, 'tzinfo') and last_rebal_date.tzinfo is not None:
+                                                            last_rebal_date = last_rebal_date.replace(tzinfo=None)
+                                                        
+                                                        # Calculate next rebalance for this portfolio
+                                                        next_date_port, time_until_port, next_rebalance_datetime_port = calculate_next_rebalance_date(
+                                                            rebal_freq, last_rebal_date
+                                                        )
+                                                        
+                                                        if next_date_port and time_until_port:
+                                                            # Create timer data for this portfolio
+                                                            timer_data_port = [
+                                                                ['Time Until Next Rebalance', format_time_until(time_until_port)],
+                                                                ['Target Rebalance Date', next_date_port.strftime("%B %d, %Y")],
+                                                                ['Rebalancing Frequency', rebal_freq.replace('_', ' ').title()]
+                                                            ]
+                                                            
+                                                            # Create timer table figure for this portfolio
+                                                            fig_timer_port = go.Figure(data=[go.Table(
+                                                                header=dict(
+                                                                    values=['Parameter', 'Value'],
+                                                                    fill_color='#2E86AB',
+                                                                    align='center',
+                                                                    font=dict(color='white', size=16, family='Arial Black')
+                                                                ),
+                                                                cells=dict(
+                                                                    values=[[row[0] for row in timer_data_port], [row[1] for row in timer_data_port]],
+                                                                    fill_color=[['#F8F9FA', '#FFFFFF'] * 2, ['#F8F9FA', '#FFFFFF'] * 2],
+                                                                    align='center',
+                                                                    font=dict(color='black', size=14, family='Arial'),
+                                                                    height=40
+                                                                )
+                                                            )])
+                                                            
+                                                            fig_timer_port.update_layout(
+                                                                title=dict(
+                                                                    text=f"⏰ Next Rebalance Timer - {portfolio_name}",
+                                                                    x=0.5,
+                                                                    font=dict(size=18, color='#2E86AB', family='Arial Black')
+                                                                ),
+                                                                width=700,
+                                                                height=250,
+                                                                margin=dict(l=20, r=20, t=60, b=20)
+                                                            )
+                                                            
+                                                            # Store in session state for PDF export
+                                                            st.session_state[f'timer_table_{portfolio_name}'] = fig_timer_port
+                                            except Exception as e:
+                                                pass  # Silently ignore timer table creation errors
                                 except Exception as e:
                                     pass  # Silently ignore timer calculation errors
 
@@ -4331,6 +5253,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     showlegend=True
                                 )
                                 st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
+                                # Store in session state for PDF export
+                                st.session_state[f'pie_chart_{selected_portfolio_detail}'] = fig_today
                                 
                                 # Table moved under the plot
                                 # Add the "Rebalance as of today" table
@@ -4458,6 +5382,98 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                             
                                             # "Rebalance as of today" table (use momentum-based calculated weights)
                                             build_table_from_alloc(today_weights, None, f"Target Allocation if Rebalanced Today")
+                                            
+                                            # Store the table for PDF export AFTER the function call
+                                            # Create a Plotly table figure for PDF export (EXACT same approach as fig_stats)
+                                            try:
+                                                # Get the DataFrame that was just created by build_table_from_alloc
+                                                # We need to recreate it here since it's not returned by the function
+                                                rows = []
+                                                for tk in sorted(today_weights.keys()):
+                                                    alloc_pct = float(today_weights.get(tk, 0))
+                                                    if tk == 'CASH':
+                                                        price = None
+                                                        shares = 0
+                                                        total_val = portfolio_value * alloc_pct
+                                                    else:
+                                                        df = raw_data.get(tk)
+                                                        price = None
+                                                        if isinstance(df, pd.DataFrame) and 'Close' in df.columns and not df['Close'].dropna().empty:
+                                                            try:
+                                                                price = float(df['Close'].iloc[-1])
+                                                            except Exception:
+                                                                price = None
+                                                        try:
+                                                            if price and price > 0:
+                                                                allocation_value = portfolio_value * alloc_pct
+                                                                shares = round(allocation_value / price, 1)
+                                                                total_val = shares * price
+                                                            else:
+                                                                shares = 0.0
+                                                                total_val = portfolio_value * alloc_pct
+                                                        except Exception:
+                                                            shares = 0
+                                                            total_val = portfolio_value * alloc_pct
+
+                                                    pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
+                                                    rows.append({
+                                                        'Ticker': tk,
+                                                        'Allocation %': alloc_pct * 100,
+                                                        'Price ($)': price if price is not None else float('nan'),
+                                                        'Shares': shares,
+                                                        'Total Value ($)': total_val,
+                                                        '% of Portfolio': pct_of_port,
+                                                    })
+
+                                                df_table = pd.DataFrame(rows).set_index('Ticker')
+                                                df_display = df_table.copy()
+                                                
+                                                # Remove CASH if it has zero value
+                                                if 'CASH' in df_display.index:
+                                                    cash_val = df_display.at['CASH', 'Total Value ($)']
+                                                    if not (cash_val and not pd.isna(cash_val) and cash_val != 0):
+                                                        df_display = df_display.drop('CASH')
+                                                
+                                                # Create Plotly table figure with ticker column included
+                                                # Reset index to include ticker as a column
+                                                df_display_with_ticker = df_display.reset_index()
+                                                
+                                                # Format the data to ensure 2 decimal places for display (same as PDF tables)
+                                                formatted_values = []
+                                                for col in df_display_with_ticker.columns:
+                                                    if col in ['Price ($)', 'Total Value ($)', '% of Portfolio']:
+                                                        # Format monetary and percentage values to 2 decimal places
+                                                        formatted_values.append([f"{df_display_with_ticker[col][i]:.2f}" if pd.notna(df_display_with_ticker[col][i]) else "" for i in range(len(df_display_with_ticker))])
+                                                    elif col == 'Shares':
+                                                        # Format shares to 1 decimal place
+                                                        formatted_values.append([f"{df_display_with_ticker[col][i]:.1f}" if pd.notna(df_display_with_ticker[col][i]) else "" for i in range(len(df_display_with_ticker))])
+                                                    elif col == 'Allocation %':
+                                                        # Format allocation to 2 decimal places
+                                                        formatted_values.append([f"{df_display_with_ticker[col][i]:.2f}" if pd.notna(df_display_with_ticker[col][i]) else "" for i in range(len(df_display_with_ticker))])
+                                                    else:
+                                                        # Keep other columns as is
+                                                        formatted_values.append([str(df_display_with_ticker[col][i]) if pd.notna(df_display_with_ticker[col][i]) else "" for i in range(len(df_display_with_ticker))])
+                                                
+                                                fig_alloc_table = go.Figure(data=[go.Table(
+                                                    header=dict(values=list(df_display_with_ticker.columns),
+                                                               fill_color='paleturquoise',
+                                                               align='left',
+                                                               font=dict(size=12)),
+                                                    cells=dict(values=formatted_values,
+                                                              fill_color='lavender',
+                                                              align='left',
+                                                              font=dict(size=11))
+                                                )])
+                                                fig_alloc_table.update_layout(
+                                                    title=f"Target Allocation if Rebalanced Today - {selected_portfolio_detail}",
+                                                    margin=dict(t=30, b=10, l=10, r=10),
+                                                    height=400
+                                                )
+                                                table_key = f"alloc_table_{selected_portfolio_detail}"
+                                                st.session_state[table_key] = fig_alloc_table
+                                                print(f"[PDF DEBUG] Stored allocation table for {selected_portfolio_detail}")
+                                            except Exception as e:
+                                                print(f"[PDF DEBUG] Failed to store allocation table for {selected_portfolio_detail}: {e}")
                                             
                                 except Exception as e:
                                     print(f"[REBALANCE TODAY TABLE DEBUG] Failed to render rebalance today table for {selected_portfolio_detail}: {e}")
@@ -4602,8 +5618,15 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                             return ['background-color: #006400; color: white; font-weight: bold;' for _ in s]
                                                     sty = sty.apply(_highlight_cash_row, axis=1)
                                                 st.dataframe(sty, use_container_width=True)
+                                                
+                                                # Table storage is now handled outside this function
+                                                pass
+                                                    
                                             except Exception:
                                                 st.dataframe(df_display, use_container_width=True)
+                                                
+                                                # Table storage is now handled outside this function (fallback case)
+                                                pass
                                         
                                         # Last rebalance table (use last_rebal_date)
                                         build_table_from_alloc(rebal_alloc, last_rebal_date, f"Target Allocation at Last Rebalance ({last_rebal_date.date()})")
@@ -4697,6 +5720,31 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                             print(f"[ALLOC PLOT DEBUG] Fallback allocation plots failed: {e}")
 
         else:
-            st.info("Configuration is ready. Press 'Run Backtests' to see results.")
+            st.info("Configuration is ready. Press 'Run Backtest' to see results.")
     
     # Console log UI removed
+    
+    # PDF Export Section
+    st.markdown("---")
+    st.subheader("📄 PDF Export")
+    
+    if st.button("Generate PDF Report", type="primary", use_container_width=True):
+        try:
+            pdf_buffer = generate_simple_pdf_report()
+            if pdf_buffer:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"Multi_Backtest_Report_{timestamp}.pdf"
+                
+                st.success("✅ PDF Report Generated Successfully!")
+                st.download_button(
+                    label="📥 Download PDF Report",
+                    data=pdf_buffer.getvalue(),
+                    file_name=filename,
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            else:
+                st.error("❌ Failed to generate PDF report")
+        except Exception as e:
+            st.error(f"❌ Error generating PDF: {str(e)}")
+            st.exception(e)
