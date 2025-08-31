@@ -1,41 +1,20 @@
-# Core Streamlit and Data Science Libraries
-streamlit==1.28.0
-pandas==2.0.0
-numpy==1.24.0
-yfinance==0.2.18
+# Core dependencies - minimal set for Streamlit Cloud
+streamlit
+pandas
+numpy
+yfinance
 
-# Financial and Statistical Libraries
-scipy==1.11.0
-pandas-market-calendars==4.0.0
+# Essential visualization
+plotly
+kaleido
 
-# Visualization Libraries
-plotly==5.17.0
-matplotlib==3.7.0
-mplcursors==0.5.0
-seaborn==0.12.0
+# PDF generation
+reportlab
+Pillow
 
-# PDF Generation and Image Conversion
-reportlab==4.0.0
-kaleido==0.2.1
-Pillow==10.0.0
+# Date handling
+python-dateutil
 
-# Date and Time Handling
-python-dateutil==2.8.0
-
-# Optional: Enhanced plotting for Streamlit
-streamlit-plotly-events==0.0.4
-
-# Additional useful libraries for financial analysis
-scikit-learn==1.3.0
-
-# Data manipulation and analysis
-openpyxl==3.1.0  # For Excel file support
-xlrd==2.0.0      # For Excel file reading
-
-# Performance optimization
-numba==0.58.0    # For JIT compilation of numerical functions
-
-# Development and testing (optional)
-pytest==7.0.0
-black==23.0.0    # Code formatting
-flake8==6.0.0    # Linting
+# Data processing
+scipy
+pandas-market-calendars
