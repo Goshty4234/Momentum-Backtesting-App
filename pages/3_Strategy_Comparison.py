@@ -277,143 +277,76 @@ def generate_strategy_comparison_pdf_report():
         story.append(Paragraph("2. Portfolio Value and Drawdown Comparison", heading_style))
         story.append(Spacer(1, 20))
         
-        # 100% GUARANTEED PLOTS - Using ReportLab Drawing
-        
-        # Performance comparison plot - ALWAYS WORKS
+        # FAST & SIMPLE TABLES - No hanging charts
+        # Performance comparison table
         story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
         story.append(Spacer(1, 10))
         
         # Get portfolio performance data
         all_results = st.session_state.get('strategy_comparison_all_results', {})
         if all_results:
-            # Create a simple bar chart showing final values
-            try:
-                # Extract final values for each portfolio
-                portfolio_names = []
-                final_values = []
-                for name, data in all_results.items():
-                    if isinstance(data, dict) and 'with_additions' in data:
-                        final_val = data['with_additions'].iloc[-1]
-                        portfolio_names.append(name[:15])  # Truncate long names
-                        final_values.append(final_val)
-                    elif isinstance(data, pd.Series):
-                        final_val = data.iloc[-1]
-                        portfolio_names.append(name[:15])
-                        final_values.append(final_val)
-                
-                if final_values and len(final_values) > 1:
-                    # Create bar chart
-                    chart = VerticalBarChart()
-                    chart.x = 1*inch
-                    chart.y = 1*inch
-                    chart.height = 3*inch
-                    chart.width = 5*inch
-                    chart.data = [final_values]
-                    chart.categoryAxis.categoryNames = portfolio_names
-                    chart.valueAxis.valueMin = 0
-                    chart.valueAxis.valueMax = max(final_values) * 1.1
-                    chart.bars[0].fillColor = reportlab_colors.Color(0.2, 0.4, 0.6)
-                    chart.bars[0].strokeColor = reportlab_colors.Color(0.1, 0.2, 0.3)
-                    
-                    # Add chart to drawing
-                    d = Drawing(6*inch, 4*inch)
-                    d.add(chart)
-                    story.append(d)
-                    story.append(Spacer(1, 15))
-                else:
-                    # Fallback to table if not enough data
-                    perf_data = []
-                    for name, data in all_results.items():
-                        if isinstance(data, dict) and 'with_additions' in data:
-                            final_val = data['with_additions'].iloc[-1]
-                            initial_val = data['with_additions'].iloc[0]
-                            total_ret = ((final_val / initial_val - 1) * 100) if initial_val > 0 else 0
-                            perf_data.append([name[:20], f"${initial_val:,.0f}", f"${final_val:,.0f}", f"{total_ret:.1f}%"])
-                    
-                    if perf_data:
-                        table_data = [['Portfolio', 'Start', 'End', 'Return']] + perf_data
-                        perf_table = Table(table_data, colWidths=[2.5*inch, 1.2*inch, 1.2*inch, 1.1*inch])
-                        perf_table.setStyle(TableStyle([
-                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
-                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
-                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0, 0), (-1, -1), 8),
-                            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
-                            ('FONTSIZE', (0, 1), (-1, -1), 7),
-                            ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
-                        ]))
-                        story.append(perf_table)
-                        story.append(Spacer(1, 15))
-            except Exception as e:
-                story.append(Paragraph(f"Performance chart created successfully!", styles['Normal']))
+            # Create simple performance table
+            perf_data = []
+            for name, data in all_results.items():
+                if isinstance(data, dict) and 'with_additions' in data:
+                    final_val = data['with_additions'].iloc[-1]
+                    initial_val = data['with_additions'].iloc[0]
+                    total_ret = ((final_val / initial_val - 1) * 100) if initial_val > 0 else 0
+                    perf_data.append([name[:20], f"${initial_val:,.0f}", f"${final_val:,.0f}", f"{total_ret:.1f}%"])
+                elif isinstance(data, pd.Series):
+                    final_val = data.iloc[-1]
+                    initial_val = data.iloc[0]
+                    total_ret = ((final_val / initial_val - 1) * 100) if initial_val > 0 else 0
+                    perf_data.append([name[:20], f"${initial_val:,.0f}", f"${final_val:,.0f}", f"{total_ret:.1f}%"])
+            
+            if perf_data:
+                table_data = [['Portfolio', 'Start', 'End', 'Return']] + perf_data
+                perf_table = Table(table_data, colWidths=[2.5*inch, 1.2*inch, 1.2*inch, 1.1*inch])
+                perf_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
+                    ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
+                ]))
+                story.append(perf_table)
                 story.append(Spacer(1, 15))
         else:
             story.append(Paragraph("No performance data available.", styles['Normal']))
             story.append(Spacer(1, 15))
         
-        # Drawdown comparison plot - ALWAYS WORKS
+        # Drawdown comparison table
         story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
         story.append(Spacer(1, 10))
         
         # Get portfolio drawdown data
         all_drawdowns = st.session_state.get('strategy_comparison_all_drawdowns', {})
         if all_drawdowns:
-            try:
-                # Create a simple bar chart showing max drawdowns
-                portfolio_names = []
-                max_drawdowns = []
-                for name, data in all_drawdowns.items():
-                    if isinstance(data, pd.Series):
-                        max_dd = abs(data.min()) * 100  # Convert to positive percentage
-                        portfolio_names.append(name[:15])
-                        max_drawdowns.append(max_dd)
-                
-                if max_drawdowns and len(max_drawdowns) > 1:
-                    # Create horizontal bar chart for drawdowns
-                    chart = HorizontalLineChart()
-                    chart.x = 1*inch
-                    chart.y = 1*inch
-                    chart.height = 3*inch
-                    chart.width = 5*inch
-                    chart.data = [max_drawdowns]
-                    chart.categoryAxis.categoryNames = portfolio_names
-                    chart.valueAxis.valueMin = 0
-                    chart.valueAxis.valueMax = max(max_drawdowns) * 1.1
-                    chart.lines[0].fillColor = reportlab_colors.Color(0.8, 0.2, 0.2)
-                    chart.lines[0].strokeColor = reportlab_colors.Color(0.6, 0.1, 0.1)
-                    
-                    # Add chart to drawing
-                    d = Drawing(6*inch, 4*inch)
-                    d.add(chart)
-                    story.append(d)
-                    story.append(Spacer(1, 15))
-                else:
-                    # Fallback to table
-                    dd_data = []
-                    for name, data in all_drawdowns.items():
-                        if isinstance(data, pd.Series):
-                            max_dd = data.min() * 100
-                            dd_data.append([name[:20], f"{max_dd:.1f}%"])
-                    
-                    if dd_data:
-                        table_data = [['Portfolio', 'Max DD']] + dd_data
-                        dd_table = Table(table_data, colWidths=[4*inch, 1.5*inch])
-                        dd_table.setStyle(TableStyle([
-                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
-                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
-                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                            ('FONTSIZE', (0, 0), (-1, -1), 8),
-                            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
-                            ('FONTSIZE', (0, 1), (-1, -1), 7),
-                            ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
-                        ]))
-                        story.append(dd_table)
-                        story.append(Spacer(1, 15))
-            except Exception as e:
-                story.append(Paragraph(f"Drawdown chart created successfully!", styles['Normal']))
+            # Create simple drawdown table
+            dd_data = []
+            for name, data in all_drawdowns.items():
+                if isinstance(data, pd.Series):
+                    max_dd = data.min() * 100
+                    dd_data.append([name[:20], f"{max_dd:.1f}%"])
+            
+            if dd_data:
+                table_data = [['Portfolio', 'Max DD']] + dd_data
+                dd_table = Table(table_data, colWidths=[4*inch, 1.5*inch])
+                dd_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
+                    ('FONTSIZE', (0, 1), (-1, -1), 7),
+                    ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
+                ]))
+                story.append(dd_table)
                 story.append(Spacer(1, 15))
         else:
             story.append(Paragraph("No drawdown data available.", styles['Normal']))
@@ -601,62 +534,39 @@ def generate_strategy_comparison_pdf_report():
             story.append(Paragraph(f"Portfolio: {portfolio_name_key}", subheading_style))
             story.append(Spacer(1, 15))
             
-            # 100% GUARANTEED ALLOCATION CHART - Using ReportLab Pie Chart
+            # Simple allocation table - No hanging charts
             story.append(Paragraph(f"Allocation for {portfolio_name_key}:", styles['Heading4']))
             story.append(Spacer(1, 10))
             
-            try:
-                # Get allocation data
-                today_weights = today_weights_map.get(portfolio_name_key, {})
-                if today_weights:
-                    # Create pie chart using ReportLab
-                    pie = Pie()
-                    pie.x = 2*inch
-                    pie.y = 1*inch
-                    pie.width = 3*inch
-                    pie.height = 3*inch
-                    
-                    # Prepare data for pie chart
-                    labels = []
-                    data = []
-                    colors = [
-                        reportlab_colors.Color(0.2, 0.4, 0.6),
-                        reportlab_colors.Color(0.8, 0.2, 0.2),
-                        reportlab_colors.Color(0.2, 0.8, 0.2),
-                        reportlab_colors.Color(0.8, 0.8, 0.2),
-                        reportlab_colors.Color(0.8, 0.2, 0.8),
-                        reportlab_colors.Color(0.2, 0.8, 0.8),
-                        reportlab_colors.Color(0.6, 0.6, 0.6),
-                        reportlab_colors.Color(0.4, 0.2, 0.6)
-                    ]
-                    
-                    for i, (asset, weight) in enumerate(today_weights.items()):
-                        if float(weight) > 0:
-                            labels.append(f"{asset[:10]}")  # Truncate long names
-                            data.append(float(weight) * 100)
-                    
-                    if data:
-                        pie.data = data
-                        pie.labels = labels
-                        pie.slices.strokeWidth = 0.5
-                        
-                        # Apply colors
-                        for i, slice_obj in enumerate(pie.slices):
-                            slice_obj.fillColor = colors[i % len(colors)]
-                        
-                        # Add pie chart to drawing
-                        d = Drawing(5*inch, 4*inch)
-                        d.add(pie)
-                        story.append(d)
-                        story.append(Spacer(1, 15))
-                    else:
-                        story.append(Paragraph("No allocation data available.", styles['Normal']))
-                        story.append(Spacer(1, 15))
+            # Get allocation data
+            today_weights = today_weights_map.get(portfolio_name_key, {})
+            if today_weights:
+                # Create simple allocation table
+                alloc_data = []
+                for asset, weight in today_weights.items():
+                    if float(weight) > 0:
+                        alloc_data.append([asset[:15], f"{float(weight)*100:.1f}%"])
+                
+                if alloc_data:
+                    table_data = [['Asset', 'Weight']] + alloc_data
+                    alloc_table = Table(table_data, colWidths=[3*inch, 2*inch])
+                    alloc_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 8),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                        ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
+                        ('FONTSIZE', (0, 1), (-1, -1), 7),
+                        ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
+                    ]))
+                    story.append(alloc_table)
+                    story.append(Spacer(1, 15))
                 else:
                     story.append(Paragraph("No allocation data available.", styles['Normal']))
                     story.append(Spacer(1, 15))
-            except Exception as e:
-                story.append(Paragraph(f"Allocation chart created successfully!", styles['Normal']))
+            else:
+                story.append(Paragraph("No allocation data available.", styles['Normal']))
                 story.append(Spacer(1, 15))
             
             # 100% GUARANTEED TIMER TABLE - Using ReportLab Table
