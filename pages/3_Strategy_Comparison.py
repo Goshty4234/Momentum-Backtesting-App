@@ -10,6 +10,11 @@ import warnings
 import json
 import io
 import contextlib
+import os
+
+# Fix for Streamlit Cloud Chrome issue
+os.environ['KALEIDO_CHROME_PATH'] = '/usr/bin/google-chrome'
+os.environ['KALEIDO_CHROME_ARGS'] = '--no-sandbox --disable-dev-shm-usage'
 
 # PDF Generation imports
 from reportlab.lib.pagesizes import letter
@@ -359,13 +364,14 @@ def generate_strategy_comparison_pdf_report():
                     img = Image(img_buffer, width=6*inch, height=2.5*inch)
                     story.append(img)
                     story.append(Spacer(1, 2))
-                    print(f"[PDF DEBUG] Successfully added timer table for {portfolio_name_key} to PDF")
+                    # Timer table added successfully
                 except Exception as e:
-                    print(f"[PDF DEBUG] Error adding timer table for {portfolio_name_key}: {e}")
+                    # Error adding timer table
                     # Silently ignore timer table conversion errors
                     pass
             else:
-                print(f"[PDF DEBUG] Timer table NOT found for {portfolio_name_key}")
+                # Timer table not found
+                pass
             
             # Add page break after pie plot + timer to separate from allocation table (same as Multi-Backtest)
             story.append(PageBreak())
@@ -740,7 +746,7 @@ st.markdown("""
 
 
 
-# ...existing code...
+# ...rest of the code...
 
 # Place rerun logic after first portfolio input widget
 active_portfolio = st.session_state.strategy_comparison_portfolio_configs[st.session_state.strategy_comparison_active_portfolio_index] if 'strategy_comparison_portfolio_configs' in st.session_state and 'strategy_comparison_active_portfolio_index' in st.session_state else None
@@ -1089,7 +1095,7 @@ def single_backtest(config, sim_index, reindexed_data):
     available_tickers = [t for t in tickers if t in reindexed_data]
     if len(available_tickers) < len(tickers):
         missing = set(tickers) - set(available_tickers)
-        print(f"[WARN] The following tickers were not found in price data and will be ignored: {sorted(list(missing))}")
+        # Warning: Some tickers not found in price data
     tickers = available_tickers
     # Recompute allocations and include_dividends to only include valid tickers
     # Handle duplicate tickers by summing their allocations
@@ -1305,7 +1311,7 @@ def single_backtest(config, sim_index, reindexed_data):
         if calc_beta or calc_volatility:
             try:
                 for t in rets_keys:
-                    print(f"[MOM DEBUG] Date: {date} | Ticker: {t} | Momentum: {metrics[t].get('Momentum')} | Beta: {metrics[t].get('Beta')} | Vol: {metrics[t].get('Volatility')} | Weight: {metrics[t].get('Calculated_Weight')}")
+                    pass  # Momentum calculation completed
             except Exception:
                 pass
 
@@ -3402,7 +3408,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
     with contextlib.redirect_stdout(buffer):
         all_tickers = sorted(list(set(s['ticker'] for cfg in st.session_state.strategy_comparison_portfolio_configs for s in cfg['stocks'] if s['ticker']) | set(cfg['benchmark_ticker'] for cfg in st.session_state.strategy_comparison_portfolio_configs if 'benchmark_ticker' in cfg)))
         all_tickers = [t for t in all_tickers if t]
-        print("Downloading data for all tickers...")
+        # Downloading data for all tickers
         data = {}
         invalid_tickers = []
         for i, t in enumerate(all_tickers):
@@ -3412,7 +3418,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 ticker = yf.Ticker(t)
                 hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
                 if hist.empty:
-                    print(f"No data available for {t}")
+                    # No data available for ticker
                     invalid_tickers.append(t)
                     continue
                 
@@ -3422,9 +3428,9 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 
                 hist["Price_change"] = hist["Close"].pct_change(fill_method=None).fillna(0)
                 data[t] = hist
-                print(f"Data loaded for {t} from {data[t].index[0].date()}")
+                # Data loaded successfully
             except Exception as e:
-                print(f"Error loading {t}: {e}")
+                # Error loading ticker data
                 invalid_tickers.append(t)
         # Display invalid ticker warnings in Streamlit UI
         if invalid_tickers:
@@ -3456,17 +3462,14 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             st.session_state.strategy_comparison_raw_data = data
             common_start = max(df.first_valid_index() for df in data.values())
             common_end = min(df.last_valid_index() for df in data.values())
-            print()
-            all_results = {}
-            all_drawdowns = {}
             # Determine common date range for all portfolios
             common_start = max(df.first_valid_index() for df in data.values())
             common_end = min(df.last_valid_index() for df in data.values())
-            print(f"Common date range: {common_start.date()} to {common_end.date()}")
+            all_results = {}
+            all_drawdowns = {}
             
             # Override with global start_with selection
             global_start_with = st.session_state.get('strategy_comparison_start_with', 'all')
-            print(f"Using global start_with: {global_start_with}")
             
             # Get all portfolio tickers (excluding benchmarks)
             all_portfolio_tickers = set()
@@ -3491,10 +3494,10 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             
             if global_start_with == 'all':
                 final_start = max(data[t].first_valid_index() for t in valid_portfolio_tickers)
-                print(f"All portfolio assets start date: {final_start.date()}")
+                # All portfolio assets start date determined
             else:  # global_start_with == 'oldest'
                 final_start = min(data[t].first_valid_index() for t in valid_portfolio_tickers)
-                print(f"Oldest portfolio asset start date: {final_start.date()}")
+                # Oldest portfolio asset start date determined
             
             # Initialize final_end with the common end date
             final_end = common_end
@@ -3514,7 +3517,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             
             # Create simulation index for the entire period
             simulation_index = pd.date_range(start=final_start, end=final_end, freq='D')
-            print(f"Simulation period: {final_start.date()} to {final_end.date()}")
+            # Simulation period determined
             
             # Reindex all data to the simulation period (only valid tickers)
             data_reindexed = {}
@@ -3537,7 +3540,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             
             for i, cfg in enumerate(st.session_state.strategy_comparison_portfolio_configs, start=1):
                 name = cfg.get('name', f'Backtest {i}')
-                print(f"\nProcessing strategy {i}/{len(st.session_state.strategy_comparison_portfolio_configs)}: {name}")
+                # Processing strategy
                 
                 # Ensure unique key for storage to avoid overwriting when duplicate names exist
                 base_name = name
@@ -3742,9 +3745,8 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                 all_drawdowns[unique_name] = pd.Series(drawdowns, index=stats_dates)
             progress_bar.progress(100, text="Multi-strategy backtest analysis complete!")
             progress_bar.empty()
-            print("\n" + "="*80)
-            print(" " * 25 + "FINAL PERFORMANCE STATISTICS")
-            print("="*80 + "\n")
+            
+            # Final Performance Statistics
             stats_df = pd.DataFrame(all_stats).T
             def fmt_pct(x):
                 if isinstance(x, (int, float)) and pd.notna(x):
@@ -3788,9 +3790,10 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                     stats_df_display['Beta'] = stats_df_display['Beta'].apply(lambda x: fmt_num(x))
                 
                 # REMOVED - Extra formatting logic not in Multi-Backtest.py
-                print(stats_df_display.to_string())
+                # Statistics displayed
             else:
-                print("No stats to display.")
+                # No stats to display
+                pass
             # Yearly performance section (interactive table below)
             all_years = {}
             for name, ser in all_results.items():
@@ -3805,10 +3808,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             header_format = "{:<6} |" + "".join([" {:^" + str(col_width*2+1) + "} |" for _ in names])
             row_format = "{:<6} |" + "".join([" {:>" + str(col_width) + "} {:>" + str(col_width) + "} |" for _ in names])
             
-            print(header_format.format("Year", *names))
-            print("-" * (6 + 3 + (col_width*2+1 + 3)*len(names)))
-            print(row_format.format(" ", *[item for pair in [('% Change', 'Final Value')] * len(names) for item in pair]))
-            print("=" * (6 + 3 + (col_width*2+1 + 3)*len(names)))
+            # Yearly performance table header
             
             for y in years:
                 row_items = [f"{y}"]
@@ -3843,8 +3843,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
                         final_val = "N/A"
                         
                     row_items.extend([pct, final_val])
-                print(row_format.format(*row_items))
-            print("\n" + "="*80)
+                # Yearly performance row displayed
     
             # console output captured previously is no longer shown on the page
             st.session_state.strategy_comparison_all_results = all_results
@@ -4112,7 +4111,8 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
 
                 st.plotly_chart(fig_metrics, use_container_width=True, key="multi_metrics_chart")
         except Exception as e:
-            print(f"[VARIATION CHART DEBUG] Failed to build metrics summary chart: {e}")
+            # Failed to build metrics summary chart
+            pass
 
         # --- Monthly returns heatmap: rows = portfolios, columns = Year-Month, values = monthly % change ---
         try:
@@ -4159,7 +4159,8 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                 )
                 st.plotly_chart(fig_heat, use_container_width=True, key="multi_heatmap_chart")
         except Exception as e:
-            print(f"[MONTHLY HEATMAP DEBUG] Failed to build monthly heatmap: {e}")
+            # Failed to build monthly heatmap
+            pass
 
         # Recompute Final Performance Statistics from stored results to ensure they use the no-additions series - EXACT same as Multi-Backtest
         if 'strategy_comparison_all_results' in st.session_state and st.session_state.strategy_comparison_all_results:
@@ -4275,7 +4276,8 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                                     var = br.loc[common_idx2].var()
                                     beta = cov / var
                         except Exception as e:
-                            print(f"[BETA DEBUG] Failed to compute beta for {name}: {e}")
+                            # Failed to compute beta
+                            pass
                 
                 # Calculate MWRR for this portfolio using the complete cash flow series
                 mwrr_val = "N/A"
@@ -5385,10 +5387,10 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                                                     
                                                     # Store in session state for PDF export
                                                     st.session_state[f'strategy_comparison_timer_table_{portfolio_name}'] = fig_timer_port
-                                                    print(f"[PDF DEBUG] Created timer table for {portfolio_name} using EXACT same logic as main window")
+                                                    # Timer table created successfully
                                             
                                             except Exception as e:
-                                                print(f"[PDF DEBUG] Error creating timer tables for all portfolios: {e}")
+                                                # Error creating timer tables
                                                 pass  # Silently ignore timer table creation errors
                                             
                                             # Also create allocation charts and tables for ALL portfolios for PDF export
