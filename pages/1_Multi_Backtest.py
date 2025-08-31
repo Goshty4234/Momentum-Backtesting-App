@@ -10,7 +10,14 @@ import io
 import contextlib
 from datetime import datetime, timedelta, date
 import warnings
+import os
+import plotly.io as pio
 warnings.filterwarnings('ignore')
+
+# Force Kaleido to use its headless engine (no Chrome needed)
+pio.kaleido.scope.default_format = "png"
+pio.kaleido.scope.default_width = 1000
+pio.kaleido.scope.default_height = 600
 
 # PDF Generation imports
 from reportlab.lib.pagesizes import letter
@@ -270,7 +277,7 @@ def generate_simple_pdf_report():
             try:
                 fig1 = st.session_state.fig1
                 # Convert Plotly figure to image
-                img_bytes = fig1.to_image(format="png", width=1200, height=600)
+                img_bytes = fig1.to_image(format="png", width=1200, height=600, engine="kaleido")
                 img_buffer = io.BytesIO(img_bytes)
                 img_buffer.seek(0)
                 
@@ -285,7 +292,7 @@ def generate_simple_pdf_report():
             try:
                 fig2 = st.session_state.fig2
                 # Convert Plotly figure to image
-                img_bytes = fig2.to_image(format="png", width=1200, height=600)
+                img_bytes = fig2.to_image(format="png", width=1200, height=600, engine="kaleido")
                 img_buffer = io.BytesIO(img_bytes)
                 img_buffer.seek(0)
                 
@@ -309,7 +316,7 @@ def generate_simple_pdf_report():
             try:
                 # Convert the Plotly table to image and add to PDF
                 fig_stats = st.session_state.fig_stats
-                img_data = fig_stats.to_image(format="png", width=2000, height=600)
+                img_data = fig_stats.to_image(format="png", width=2000, height=600, engine="kaleido")
                 img_buffer = io.BytesIO(img_data)
                 img = Image(img_buffer, width=8*inch, height=3*inch)  # Much wider to fit all columns
                 story.append(img)
@@ -368,7 +375,7 @@ def generate_simple_pdf_report():
                             )
                             
                             # Convert Plotly figure to image
-                            pie_img_bytes = fig_today.to_image(format="png", width=600, height=600)
+                            pie_img_bytes = fig_today.to_image(format="png", width=600, height=600, engine="kaleido")
                             pie_img_buffer = io.BytesIO(pie_img_bytes)
                             pie_img_buffer.seek(0)
                             
@@ -386,7 +393,7 @@ def generate_simple_pdf_report():
                                     print(f"[PDF DEBUG] Found timer table for {portfolio_name}, adding to PDF")
                                     # Convert the Plotly timer table to image and add to PDF
                                     fig_timer = st.session_state[timer_table_key]
-                                    img_data = fig_timer.to_image(format="png", width=1000, height=350)
+                                    img_data = fig_timer.to_image(format="png", width=1000, height=350, engine="kaleido")
                                     img_buffer = io.BytesIO(img_data)
                                     img = Image(img_buffer, width=7*inch, height=2.2*inch)
                                     story.append(img)
@@ -412,7 +419,7 @@ def generate_simple_pdf_report():
                                 try:
                                     # Convert the Plotly table to image and add to PDF (EXACT same as fig_stats)
                                     fig_alloc = st.session_state[alloc_table_key]
-                                    img_data = fig_alloc.to_image(format="png", width=2000, height=600)
+                                    img_data = fig_alloc.to_image(format="png", width=2000, height=600, engine="kaleido")
                                     img_buffer = io.BytesIO(img_data)
                                     img = Image(img_buffer, width=8*inch, height=2.5*inch)  # Reduced height to fit better
                                     story.append(img)
