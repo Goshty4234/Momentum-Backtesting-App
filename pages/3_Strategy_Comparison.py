@@ -273,8 +273,109 @@ def generate_strategy_comparison_pdf_report():
         story.append(Paragraph("2. Portfolio Value and Drawdown Comparison", heading_style))
         story.append(Spacer(1, 20))
         
-        # Create performance comparison data table - GUARANTEED WORKING (Chrome-free)
-        if 'strategy_comparison_all_results' in st.session_state and st.session_state.strategy_comparison_all_results:
+        # HYBRID APPROACH: Try Plotly first, fallback to compact tables
+        # Performance comparison plot
+        fig1 = st.session_state.get('strategy_comparison_fig1')
+        if fig1:
+            try:
+                # Try to convert Plotly to PNG using kaleido
+                img_bytes = fig1.to_image(format="png", width=800, height=400)
+                img_buffer = io.BytesIO(img_bytes)
+                img = Image(img_buffer, width=6*inch, height=3*inch)
+                story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
+                story.append(Spacer(1, 10))
+                story.append(img)
+                story.append(Spacer(1, 20))
+            except Exception as e:
+                # Fallback to compact table
+                story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
+                story.append(Spacer(1, 10))
+                
+                # Get portfolio performance data
+                all_results = st.session_state.get('strategy_comparison_all_results', {})
+                if all_results:
+                    # Create compact performance table
+                    perf_data = []
+                    for name, data in all_results.items():
+                        if isinstance(data, dict) and 'with_additions' in data:
+                            final_val = data['with_additions'].iloc[-1]
+                            initial_val = data['with_additions'].iloc[0]
+                            total_ret = ((final_val / initial_val - 1) * 100) if initial_val > 0 else 0
+                            perf_data.append([name[:20], f"${initial_val:,.0f}", f"${final_val:,.0f}", f"{total_ret:.1f}%"])
+                    
+                    if perf_data:
+                        table_data = [['Portfolio', 'Start', 'End', 'Return']] + perf_data
+                        perf_table = Table(table_data, colWidths=[2.5*inch, 1.2*inch, 1.2*inch, 1.1*inch])
+                        perf_table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
+                            ('FONTSIZE', (0, 1), (-1, -1), 7),
+                            ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
+                        ]))
+                        story.append(perf_table)
+                        story.append(Spacer(1, 15))
+                else:
+                    story.append(Paragraph("No performance data available.", styles['Normal']))
+                    story.append(Spacer(1, 15))
+        else:
+            story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
+            story.append(Paragraph("No performance data available.", styles['Normal']))
+            story.append(Spacer(1, 15))
+        
+        # Drawdown comparison plot
+        fig2 = st.session_state.get('strategy_comparison_fig2')
+        if fig2:
+            try:
+                # Try to convert Plotly to PNG using kaleido
+                img_bytes = fig2.to_image(format="png", width=800, height=400)
+                img_buffer = io.BytesIO(img_bytes)
+                img = Image(img_buffer, width=6*inch, height=3*inch)
+                story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
+                story.append(Spacer(1, 10))
+                story.append(img)
+                story.append(Spacer(1, 20))
+            except Exception as e:
+                # Fallback to compact table
+                story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
+                story.append(Spacer(1, 10))
+                
+                # Get portfolio drawdown data
+                all_drawdowns = st.session_state.get('strategy_comparison_all_drawdowns', {})
+                if all_drawdowns:
+                    # Create compact drawdown table
+                    dd_data = []
+                    for name, data in all_drawdowns.items():
+                        if isinstance(data, pd.Series):
+                            max_dd = data.min() * 100
+                            dd_data.append([name[:20], f"{max_dd:.1f}%"])
+                    
+                    if dd_data:
+                        table_data = [['Portfolio', 'Max DD']] + dd_data
+                        dd_table = Table(table_data, colWidths=[4*inch, 1.5*inch])
+                        dd_table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.2, 0.4, 0.6)),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
+                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
+                            ('FONTSIZE', (0, 1), (-1, -1), 7),
+                            ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
+                        ]))
+                        story.append(dd_table)
+                        story.append(Spacer(1, 15))
+                else:
+                    story.append(Paragraph("No drawdown data available.", styles['Normal']))
+                    story.append(Spacer(1, 15))
+        else:
+            story.append(Paragraph("Portfolio Drawdown Comparison", styles['Heading3']))
+            story.append(Paragraph("No drawdown data available.", styles['Normal']))
+            story.append(Spacer(1, 15))
             try:
                 # Get portfolio performance data
                 all_results = st.session_state.strategy_comparison_all_results
@@ -331,10 +432,6 @@ def generate_strategy_comparison_pdf_report():
                 story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
                 story.append(Paragraph(f"Error creating performance table: {str(e)}", styles['Normal']))
                 story.append(Spacer(1, 20))
-        else:
-            story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
-            story.append(Paragraph("No performance comparison data available.", styles['Normal']))
-            story.append(Spacer(1, 20))
         
         # Create drawdown comparison data table - GUARANTEED WORKING (Chrome-free)
         if 'strategy_comparison_all_drawdowns' in st.session_state and st.session_state.strategy_comparison_all_drawdowns:
@@ -366,7 +463,7 @@ def generate_strategy_comparison_pdf_report():
                             ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.white),
                             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                            ('FONTSIZE', (0, 0), (-1, 0), 10),
+                            ('FONTSIZE', (0, 0), (-1, -1), 10),
                             ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
                             ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.95, 0.95, 0.95)),
                             ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
