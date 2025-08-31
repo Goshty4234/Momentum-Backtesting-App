@@ -4640,9 +4640,9 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             try:
                 series_obj = st.session_state.multi_all_results.get(name)
                 if isinstance(series_obj, dict) and 'no_additions' in series_obj:
-                    ser_noadd = series_obj['no_additions'].resample('M').last()
+                    ser_noadd = series_obj['no_additions'].resample('ME').last()
                 elif isinstance(series_obj, pd.Series):
-                    ser_noadd = series_obj.resample('M').last()
+                    ser_noadd = series_obj.resample('ME').last()
             except Exception:
                 ser_noadd = None
 
