@@ -10,6 +10,12 @@ import io
 import contextlib
 from datetime import datetime, timedelta, date
 import warnings
+import os
+
+# Fix for Streamlit Cloud Chrome issue
+os.environ['KALEIDO_CHROME_PATH'] = '/usr/bin/google-chrome'
+os.environ['KALEIDO_CHROME_ARGS'] = '--no-sandbox --disable-dev-shm-usage'
+
 warnings.filterwarnings('ignore')
 
 # PDF Generation imports
@@ -378,12 +384,11 @@ def generate_simple_pdf_report():
                             
                             # Add Next Rebalance Timer information - fetch the stored timer table figure
                             timer_table_key = f"timer_table_{portfolio_name}"
-                            print(f"[PDF DEBUG] Looking for timer table: {timer_table_key}")
-                            print(f"[PDF DEBUG] Available timer tables: {[k for k in st.session_state.keys() if k.startswith('timer_table_')]}")
+                                    # Looking for timer table
                             
                             if timer_table_key in st.session_state:
                                 try:
-                                    print(f"[PDF DEBUG] Found timer table for {portfolio_name}, adding to PDF")
+                                    # Timer table found
                                     # Convert the Plotly timer table to image and add to PDF
                                     fig_timer = st.session_state[timer_table_key]
                                     img_data = fig_timer.to_image(format="png", width=1000, height=350)
@@ -391,13 +396,14 @@ def generate_simple_pdf_report():
                                     img = Image(img_buffer, width=7*inch, height=2.2*inch)
                                     story.append(img)
                                     story.append(Spacer(1, 2))
-                                    print(f"[PDF DEBUG] Successfully added timer table for {portfolio_name} to PDF")
+                                    # Timer table added successfully
                                 except Exception as e:
-                                    print(f"[PDF DEBUG] Error adding timer table for {portfolio_name}: {e}")
+                                    # Error adding timer table
                                     # Silently ignore timer table conversion errors
                                     pass
                             else:
-                                print(f"[PDF DEBUG] Timer table NOT found for {portfolio_name}")
+                                # Timer table not found
+                                pass
                             
                             # Add page break after pie plot + timer to separate from allocation table
                             story.append(PageBreak())
@@ -665,7 +671,7 @@ st.markdown("""
 
 
 
-# ...existing code...
+# ...rest of the code...
 
 # Handle rerun flag for smooth UI updates - must be at the very top
 if st.session_state.get('multi_backtest_rerun_flag', False):
@@ -1157,7 +1163,7 @@ def single_backtest(config, sim_index, reindexed_data):
     available_tickers = [t for t in tickers if t in reindexed_data]
     if len(available_tickers) < len(tickers):
         missing = set(tickers) - set(available_tickers)
-        print(f"[WARN] The following tickers were not found in price data and will be ignored: {sorted(list(missing))}")
+        # Warning: Some tickers not found in price data
     tickers = available_tickers
     # Recompute allocations and include_dividends to only include valid tickers
     # Handle duplicate tickers by summing their allocations
@@ -1373,7 +1379,8 @@ def single_backtest(config, sim_index, reindexed_data):
         if calc_beta or calc_volatility:
             try:
                 for t in rets_keys:
-                    print(f"[MOM DEBUG] Date: {date} | Ticker: {t} | Momentum: {metrics[t].get('Momentum')} | Beta: {metrics[t].get('Beta')} | Vol: {metrics[t].get('Volatility')} | Weight: {metrics[t].get('Calculated_Weight')}")
+                    # Momentum calculation completed
+                    pass
             except Exception:
                 pass
 
@@ -3333,25 +3340,25 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     if allocs_for_portfolio:
                         # Get sorted allocation dates (same logic as real code)
                         alloc_dates = sorted(list(allocs_for_portfolio.keys()))
-                        print(f"[PDF DEBUG] Portfolio {portfolio_name} has {len(alloc_dates)} allocation dates: {alloc_dates}")
+                        # Portfolio allocation dates determined
                         if len(alloc_dates) > 1:
                             # Use second to last date (same as real timer code)
                             last_rebalance_dates[portfolio_name] = alloc_dates[-2]
-                            print(f"[PDF DEBUG] Using second to last date: {alloc_dates[-2]}")
+                            # Using second to last date
                         elif len(alloc_dates) == 1:
                             # Use the only available date
                             last_rebalance_dates[portfolio_name] = alloc_dates[-1]
-                            print(f"[PDF DEBUG] Using only available date: {alloc_dates[-1]}")
+                            # Using only available date
                         else:
                             # No allocation data available
                             last_rebalance_dates[portfolio_name] = None
-                            print(f"[PDF DEBUG] No allocation dates available")
+                            # No allocation dates available
                     else:
                         last_rebalance_dates[portfolio_name] = None
-                        print(f"[PDF DEBUG] No allocation data for {portfolio_name}")
+                        # No allocation data for portfolio
                 else:
                     last_rebalance_dates[portfolio_name] = None
-                    print(f"[PDF DEBUG] Portfolio {portfolio_name} not found in all_allocations")
+                    # Portfolio not found in allocations
             
             st.session_state.multi_backtest_snapshot_data = {
                 'raw_data': data_reindexed,
@@ -3476,21 +3483,22 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             )
                             table_key = f"alloc_table_{portfolio_name}"
                             st.session_state[table_key] = fig_alloc_table
-                            print(f"[PDF DEBUG] Auto-created allocation table for {portfolio_name}")
+                            # Auto-created allocation table
             except Exception as e:
-                print(f"[PDF DEBUG] Failed to auto-create allocation tables: {e}")
+                # Failed to auto-create allocation tables
+                pass
             
             # Create timer tables for ALL portfolios automatically for PDF export
             try:
                 snapshot = st.session_state.get('multi_backtest_snapshot_data', {})
                 last_rebalance_dates = snapshot.get('last_rebalance_dates', {})
                 
-                print(f"[PDF DEBUG] Creating timer tables for {len(st.session_state.multi_backtest_portfolio_configs)} portfolios")
-                print(f"[PDF DEBUG] Available last_rebalance_dates: {list(last_rebalance_dates.keys())}")
+                # Creating timer tables for portfolios
+                # Available last rebalance dates
                 
                 for portfolio_cfg in st.session_state.multi_backtest_portfolio_configs:
                     portfolio_name = portfolio_cfg.get('name', 'Unknown')
-                    print(f"[PDF DEBUG] Processing portfolio: {portfolio_name}")
+                    # Processing portfolio
                     
                     # Get rebalancing frequency for this portfolio
                     rebal_freq = portfolio_cfg.get('rebalancing_frequency', 'none')
@@ -3513,11 +3521,11 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         'none': 'none'
                     }
                     rebal_freq = frequency_mapping.get(rebal_freq, rebal_freq)
-                    print(f"[PDF DEBUG] Rebalancing frequency for {portfolio_name}: {rebal_freq}")
+                    # Rebalancing frequency determined
                     
                     # Get last rebalance date for this portfolio
                     last_rebal_date = last_rebalance_dates.get(portfolio_name)
-                    print(f"[PDF DEBUG] Last rebalance date for {portfolio_name}: {last_rebal_date}")
+                    # Last rebalance date determined
                     
                     if last_rebal_date and rebal_freq != 'none':
                         # Ensure last_rebal_date is a naive datetime object
@@ -3531,7 +3539,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             rebal_freq, last_rebal_date
                         )
                         
-                        print(f"[PDF DEBUG] Calculated for {portfolio_name}: next_date={next_date_port}, time_until={time_until_port}")
+                        # Next rebalance calculated
                         
                         if next_date_port and time_until_port:
                             # Create timer data for this portfolio
@@ -3571,13 +3579,15 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             
                             # Store in session state for PDF export
                             st.session_state[f'timer_table_{portfolio_name}'] = fig_timer_port
-                            print(f"[PDF DEBUG] Successfully created timer table for {portfolio_name}")
+                            # Timer table created successfully
                         else:
-                            print(f"[PDF DEBUG] Failed to calculate timer for {portfolio_name}: missing next_date or time_until")
+                            # Failed to calculate timer
+                            pass
                     else:
-                        print(f"[PDF DEBUG] Skipping {portfolio_name}: last_rebal_date={last_rebal_date}, rebal_freq={rebal_freq}")
+                        # Skipping portfolio
+                        pass
             except Exception as e:
-                print(f"[PDF DEBUG] Failed to auto-create timer tables: {e}")
+                # Failed to auto-create timer tables
                 import traceback
                 traceback.print_exc()
             
@@ -5471,9 +5481,10 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                 )
                                                 table_key = f"alloc_table_{selected_portfolio_detail}"
                                                 st.session_state[table_key] = fig_alloc_table
-                                                print(f"[PDF DEBUG] Stored allocation table for {selected_portfolio_detail}")
+                                                # Allocation table stored
                                             except Exception as e:
-                                                print(f"[PDF DEBUG] Failed to store allocation table for {selected_portfolio_detail}: {e}")
+                                                # Failed to store allocation table
+                                                pass
                                             
                                 except Exception as e:
                                     print(f"[REBALANCE TODAY TABLE DEBUG] Failed to render rebalance today table for {selected_portfolio_detail}: {e}")
