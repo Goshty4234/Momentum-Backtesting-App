@@ -22,6 +22,10 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors as reportlab_colors
+from reportlab.graphics.shapes import Drawing, String, Line, Rect
+from reportlab.graphics.charts.linecharts import HorizontalLineChart
+from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.charts.piecharts import Pie
 
 def generate_strategy_comparison_pdf_report():
     """
@@ -274,11 +278,6 @@ def generate_strategy_comparison_pdf_report():
         story.append(Spacer(1, 20))
         
         # 100% GUARANTEED PLOTS - Using ReportLab Drawing
-        from reportlab.graphics.shapes import Drawing, String, Line, Rect
-        from reportlab.graphics.charts.linecharts import HorizontalLineChart
-        from reportlab.graphics.charts.barcharts import VerticalBarChart
-        from reportlab.graphics.charts.piecharts import Pie
-        from reportlab.lib.units import inch
         
         # Performance comparison plot - ALWAYS WORKS
         story.append(Paragraph("Portfolio Performance Comparison", styles['Heading3']))
