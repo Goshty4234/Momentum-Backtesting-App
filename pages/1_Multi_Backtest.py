@@ -14,23 +14,21 @@ import os
 import plotly.io as pio
 warnings.filterwarnings('ignore')
 
-# Force Kaleido to use its headless engine (no Chrome needed)
-pio.kaleido.scope.default_format = "png"
-pio.kaleido.scope.default_width = 1000
-pio.kaleido.scope.default_height = 600
-
-# Set the default renderer to kaleido
-pio.renderers.default = "kaleido"
-
-# Additional Kaleido configuration for headless operation
-import kaleido
-kaleido.scope.default_format = "png"
-kaleido.scope.default_width = 1000
-kaleido.scope.default_height = 600
-
-# Fallback Chrome configuration for Streamlit Cloud
-os.environ['KALEIDO_CHROME_PATH'] = '/usr/bin/google-chrome-stable'
-os.environ['KALEIDO_CHROME_ARGS'] = '--no-sandbox --disable-dev-shm-usage --headless --disable-gpu'
+# Matplotlib configuration for high-quality PDF generation
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.patches import Rectangle
+import matplotlib.patches as mpatches
+plt.style.use('default')
+plt.rcParams['figure.dpi'] = 300
+plt.rcParams['savefig.dpi'] = 300
+plt.rcParams['font.size'] = 10
+plt.rcParams['axes.titlesize'] = 12
+plt.rcParams['axes.labelsize'] = 10
+plt.rcParams['xtick.labelsize'] = 9
+plt.rcParams['ytick.labelsize'] = 9
+plt.rcParams['legend.fontsize'] = 9
+plt.rcParams['figure.titlesize'] = 14
 
 # PDF Generation imports
 from reportlab.lib.pagesizes import letter
@@ -38,6 +36,168 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors as reportlab_colors
+
+def plotly_to_matplotlib_figure(plotly_fig, title="", width_inches=8, height_inches=6):
+    """
+    Convert a Plotly figure to a matplotlib figure for PDF generation
+    """
+    try:
+        # Extract data from Plotly figure
+        fig_data = plotly_fig.data
+        
+        # Create matplotlib figure
+        fig, ax = plt.subplots(figsize=(width_inches, height_inches))
+        
+        # Set title
+        if title:
+            ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+        
+        # Define a color palette for different traces
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        color_index = 0
+        
+        # Process each trace
+        for trace in fig_data:
+            if trace.type == 'scatter':
+                x_data = trace.x
+                y_data = trace.y
+                name = trace.name if hasattr(trace, 'name') and trace.name else f'Trace {color_index}'
+                
+                # Get color from trace or use palette
+                if hasattr(trace, 'line') and hasattr(trace.line, 'color') and trace.line.color:
+                    color = trace.line.color
+                else:
+                    color = colors[color_index % len(colors)]
+                
+                # Plot the line
+                ax.plot(x_data, y_data, label=name, linewidth=2, color=color)
+                color_index += 1
+                
+            elif trace.type == 'bar':
+                x_data = trace.x
+                y_data = trace.y
+                name = trace.name if hasattr(trace, 'name') and trace.name else f'Bar {color_index}'
+                
+                # Get color from trace or use palette
+                if hasattr(trace, 'marker') and hasattr(trace.marker, 'color') and trace.marker.color:
+                    color = trace.marker.color
+                else:
+                    color = colors[color_index % len(colors)]
+                
+                # Plot the bars
+                ax.bar(x_data, y_data, label=name, color=color, alpha=0.7)
+                color_index += 1
+                
+            elif trace.type == 'pie':
+                # Handle pie charts
+                labels = trace.labels if hasattr(trace, 'labels') else []
+                values = trace.values if hasattr(trace, 'values') else []
+                
+                if labels and values:
+                    # Create a new figure for pie chart with square aspect ratio
+                    fig_pie, ax_pie = plt.subplots(figsize=(8, 8))  # Force square aspect ratio
+                    ax_pie.set_title(title, fontsize=14, fontweight='bold', pad=20)
+                    
+                    # Create pie chart with colors - only show percentages for larger slices
+                    def autopct_format(pct):
+                        return f'{pct:.1f}%' if pct > 5 else ''
+                    
+                    wedges, texts, autotexts = ax_pie.pie(values, labels=labels, autopct=autopct_format, 
+                                                         startangle=90, colors=colors[:len(values)])
+                    ax_pie.axis('equal')  # This ensures the pie chart is perfectly circular
+                    
+                    # Add legend
+                    ax_pie.legend(wedges, labels, title="Categories", loc="center left", bbox_to_anchor=(1, 0, 0.5, 1))
+                    
+                    plt.tight_layout()
+                    return fig_pie
+        
+        # Format the plot
+        ax.grid(True, alpha=0.3)
+        if ax.get_legend_handles_labels()[0]:  # Only add legend if there are labels
+            ax.legend(loc='best', frameon=True, fancybox=True, shadow=True)
+        
+        # Format x-axis for dates if needed
+        if fig_data and len(fig_data) > 0 and hasattr(fig_data[0], 'x') and fig_data[0].x is not None:
+            try:
+                # Try to parse as dates
+                dates = pd.to_datetime(fig_data[0].x)
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+                ax.xaxis.set_major_locator(mdates.YearLocator(interval=2))  # Show every 2 years
+                plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+            except:
+                pass
+        
+        # Adjust layout
+        plt.tight_layout()
+        
+        return fig
+        
+    except Exception as e:
+        # Return a simple error figure
+        fig, ax = plt.subplots(figsize=(width_inches, height_inches))
+        ax.text(0.5, 0.5, f'Error converting plot: {str(e)}', 
+                ha='center', va='center', transform=ax.transAxes)
+        return fig
+
+def create_matplotlib_table(data, headers, title="", width_inches=10, height_inches=4):
+    """
+    Create a matplotlib table for PDF generation
+    """
+    try:
+        # Ensure data is properly formatted
+        if not data or not headers:
+            raise ValueError("Data or headers are empty")
+        
+        # Convert data to strings and ensure proper format
+        formatted_data = []
+        for row in data:
+            formatted_row = []
+            for cell in row:
+                if cell is None:
+                    formatted_row.append('')
+                else:
+                    formatted_row.append(str(cell))
+            formatted_data.append(formatted_row)
+        
+        fig, ax = plt.subplots(figsize=(width_inches, height_inches))
+        ax.axis('tight')
+        ax.axis('off')
+        
+        # Create table
+        table = ax.table(cellText=formatted_data, colLabels=headers, 
+                        cellLoc='center', loc='center',
+                        bbox=[0, 0, 1, 1])
+        
+        # Style the table
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1, 2)
+        
+        # Color header row
+        for i in range(len(headers)):
+            table[(0, i)].set_facecolor('#4CAF50')
+            table[(0, i)].set_text_props(weight='bold', color='white')
+        
+        # Color alternating rows
+        for i in range(1, len(formatted_data) + 1):
+            for j in range(len(headers)):
+                if i % 2 == 0:
+                    table[(i, j)].set_facecolor('#f0f0f0')
+        
+        # Add title
+        if title:
+            ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
+        
+        plt.tight_layout()
+        return fig
+        
+    except Exception as e:
+        # Return a simple error figure
+        fig, ax = plt.subplots(figsize=(width_inches, height_inches))
+        ax.text(0.5, 0.5, f'Error creating table: {str(e)}', 
+                ha='center', va='center', transform=ax.transAxes)
+        return fig
 
 def generate_simple_pdf_report():
     """
@@ -270,7 +430,7 @@ def generate_simple_pdf_report():
             ]))
             
             story.append(config_table)
-            story.append(Spacer(1, 10))
+            story.append(PageBreak())
             story.append(Paragraph("Stock Allocations:", styles['Heading3']))
             story.append(stocks_table)
             story.append(Spacer(1, 15))
@@ -286,13 +446,17 @@ def generate_simple_pdf_report():
         
         # Get the EXISTING Plotly figures from session state - these are the literal plots from your UI
         if 'fig1' in st.session_state:
-            # Convert the existing Plotly figure to image for PDF
+            # Convert the existing Plotly figure to matplotlib for PDF
             try:
                 fig1 = st.session_state.fig1
-                # Convert Plotly figure to image
-                img_bytes = fig1.to_image(format="png", width=1200, height=600, engine="kaleido")
-                img_buffer = io.BytesIO(img_bytes)
+                # Convert Plotly figure to matplotlib
+                mpl_fig = plotly_to_matplotlib_figure(fig1, title="Portfolio Value Comparison", width_inches=10, height_inches=6)
+                
+                # Save matplotlib figure to buffer
+                img_buffer = io.BytesIO()
+                mpl_fig.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
                 img_buffer.seek(0)
+                plt.close(mpl_fig)  # Close to free memory
                 
                 # Add to PDF
                 story.append(Image(img_buffer, width=7.5*inch, height=4.5*inch))  # Full page width
@@ -304,10 +468,14 @@ def generate_simple_pdf_report():
         if 'fig2' in st.session_state:
             try:
                 fig2 = st.session_state.fig2
-                # Convert Plotly figure to image
-                img_bytes = fig2.to_image(format="png", width=1200, height=600, engine="kaleido")
-                img_buffer = io.BytesIO(img_bytes)
+                # Convert Plotly figure to matplotlib
+                mpl_fig = plotly_to_matplotlib_figure(fig2, title="Portfolio Drawdown Comparison", width_inches=10, height_inches=6)
+                
+                # Save matplotlib figure to buffer
+                img_buffer = io.BytesIO()
+                mpl_fig.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
                 img_buffer.seek(0)
+                plt.close(mpl_fig)  # Close to free memory
                 
                 # Add to PDF
                 story.append(Image(img_buffer, width=7.5*inch, height=4.5*inch))  # Full page width
@@ -324,21 +492,270 @@ def generate_simple_pdf_report():
         story.append(Paragraph("3. Final Performance Statistics", heading_style))
         story.append(Spacer(1, 15))
         
-        # Use the EXACT same approach as plots - fetch the Plotly table figure
-        if 'fig_stats' in st.session_state:
+        # GUARANTEED statistics table creation - use multiple data sources
+        table_created = False
+        
+        # Method 1: NUKE APPROACH - Extract from fig_stats with proper data handling
+        if 'fig_stats' in st.session_state and not table_created:
             try:
-                # Convert the Plotly table to image and add to PDF
                 fig_stats = st.session_state.fig_stats
-                img_data = fig_stats.to_image(format="png", width=2000, height=600, engine="kaleido")
-                img_buffer = io.BytesIO(img_data)
-                img = Image(img_buffer, width=8*inch, height=3*inch)  # Much wider to fit all columns
-                story.append(img)
-                story.append(Spacer(1, 15))
+                if hasattr(fig_stats, 'data') and fig_stats.data:
+                    for trace in fig_stats.data:
+                        if trace.type == 'table':
+                            # Get headers
+                            if hasattr(trace, 'header') and trace.header and hasattr(trace.header, 'values'):
+                                headers = trace.header.values
+                            else:
+                                headers = ['Portfolio', 'CAGR (%)', 'Max Drawdown (%)', 'Volatility (%)', 'Sharpe Ratio', 'Sortino Ratio']
+                            
+                            # Get cell data
+                            if hasattr(trace, 'cells') and trace.cells and hasattr(trace.cells, 'values'):
+                                cell_data = trace.cells.values
+                                if cell_data and len(cell_data) > 0:
+                                    # Convert to proper table format with header wrapping
+                                    num_rows = len(cell_data[0]) if cell_data[0] else 0
+                                    table_rows = []
+                                    
+                                    # Improved header wrapping with better line breaks and dynamic sizing
+                                    wrapped_headers = []
+                                    common_words = ['Portfolio', 'Volatility', 'Drawdown', 'Sharpe', 'Sortino', 'Ulcer', 'Index', 'Return', 'Value', 'Money', 'Added', 'Contributions']
+                                    
+                                    for header in headers:
+                                        if len(header) > 8:  # More aggressive wrapping for better readability
+                                            # Split on spaces and create multi-line header
+                                            words = header.split()
+                                            if len(words) > 1:
+                                                # Smart splitting: try to balance lines
+                                                if len(words) == 2:
+                                                    wrapped_header = '\n'.join(words)
+                                                elif len(words) == 3:
+                                                    wrapped_header = '\n'.join([words[0], ' '.join(words[1:])])
+                                                elif len(words) == 4:
+                                                    wrapped_header = '\n'.join([' '.join(words[:2]), ' '.join(words[2:])])
+                                                else:
+                                                    # For longer headers, split more aggressively
+                                                    mid = len(words) // 2
+                                                    wrapped_header = '\n'.join([' '.join(words[:mid]), ' '.join(words[mid:])])
+                                            else:
+                                                # Single long word - split more aggressively
+                                                if header not in common_words and len(header) > 10:
+                                                    mid = len(header) // 2
+                                                    wrapped_header = header[:mid] + '\n' + header[mid:]
+                                                else:
+                                                    wrapped_header = header
+                                        else:
+                                            wrapped_header = header
+                                        wrapped_headers.append(wrapped_header)
+                                    
+                                    for row_idx in range(num_rows):
+                                        row = []
+                                        for col_idx in range(len(cell_data)):
+                                            if col_idx < len(cell_data) and row_idx < len(cell_data[col_idx]):
+                                                value = cell_data[col_idx][row_idx]
+                                                # Wrap long portfolio names in the first column
+                                                if col_idx == 0 and len(str(value)) > 20:
+                                                    # Split long portfolio names at spaces
+                                                    words = str(value).split()
+                                                    if len(words) > 2:
+                                                        # Split in the middle
+                                                        mid = len(words) // 2
+                                                        wrapped_value = '\n'.join([' '.join(words[:mid]), ' '.join(words[mid:])])
+                                                    else:
+                                                        wrapped_value = str(value)
+                                                else:
+                                                    wrapped_value = str(value) if value is not None else ''
+                                                row.append(wrapped_value)
+                                            else:
+                                                row.append('')
+                                        table_rows.append(row)
+                                    
+                                    # Create table with smart column widths for statistics table
+                                    page_width = 7.5*inch
+                                    
+                                    # Smart column width distribution for statistics table
+                                    if len(headers) > 8:  # If we have many columns, use smaller widths
+                                        # First column (Portfolio name) gets more space, others get less
+                                        col_widths = [1.2*inch] + [(page_width - 1.2*inch)/(len(headers)-1)] * (len(headers)-1)
+                                    else:
+                                        # Equal width distribution for fewer columns
+                                        col_widths = [page_width/len(headers)] * len(headers)
+                                    
+                                    stats_table = Table([wrapped_headers] + table_rows, colWidths=col_widths)
+                                    # Dynamic font sizing based on number of columns and header complexity
+                                    num_columns = len(headers)
+                                    max_header_length = max(len(header) for header in headers)
+                                    
+                                    # More sophisticated font sizing
+                                    if num_columns > 14:
+                                        font_size = 4  # Increased from 3
+                                    elif num_columns > 12:
+                                        font_size = 5  # Increased from 4
+                                    elif num_columns > 10:
+                                        font_size = 6  # Increased from 5
+                                    elif num_columns > 8:
+                                        font_size = 7  # Increased from 6
+                                    else:
+                                        font_size = 8  # Increased from 7
+                                    
+                                    # Adjust for very long headers
+                                    if max_header_length > 20:
+                                        font_size = max(3, font_size - 1)  # Reduce font size but not below 3
+                                    
+                                    stats_table.setStyle(TableStyle([
+                                        ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                                        ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                        ('FONTSIZE', (0, 0), (-1, 0), font_size),  # Small font for headers
+                                        ('FONTSIZE', (0, 1), (-1, -1), font_size + 2),  # Bigger font for data rows
+                                        ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                                        ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+                                        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                        ('LEFTPADDING', (0, 0), (-1, -1), 2),  # Small padding for better readability
+                                        ('RIGHTPADDING', (0, 0), (-1, -1), 2),
+                                        ('TOPPADDING', (0, 0), (-1, 0), 3),  # Padding for header row
+                                        ('BOTTOMPADDING', (0, 0), (-1, 0), 3),
+                                        ('TOPPADDING', (0, 1), (-1, -1), 2),  # Padding for data rows
+                                        ('BOTTOMPADDING', (0, 1), (-1, -1), 2),
+                                        ('WORDWRAP', (0, 0), (-1, -1), True)
+                                    ]))
+                                story.append(stats_table)
+                                story.append(Spacer(1, 15))
+                                table_created = True
+                                break
             except Exception as e:
-                story.append(Paragraph(f"Error converting statistics table: {str(e)}", styles['Normal']))
-                story.append(Spacer(1, 15))
-        else:
-            story.append(Paragraph("Statistics table not available. Please run the backtest first.", styles['Normal']))
+                pass
+        
+        # Method 2: Try to get from snapshot data
+        if not table_created and 'multi_backtest_snapshot_data' in st.session_state:
+            try:
+                snapshot = st.session_state.multi_backtest_snapshot_data
+                all_results = snapshot.get('all_results', {})
+                
+                if all_results:
+                    table_data = []
+                    headers = ['Portfolio', 'CAGR (%)', 'Max Drawdown (%)', 'Volatility (%)', 'Sharpe Ratio', 'Sortino Ratio']
+                    
+                    # Wrap long headers to multiple lines - but don't split common words
+                    wrapped_headers = []
+                    common_words = ['Portfolio', 'Volatility', 'Drawdown', 'Sharpe', 'Sortino', 'Ulcer', 'Index', 'Return', 'Value', 'Money', 'Added', 'Contributions']
+                    
+                    for header in headers:
+                        if len(header) > 12:  # Only wrap very long headers
+                            # Split on spaces and create multi-line header
+                            words = header.split()
+                            if len(words) > 1:
+                                # Try to split in the middle, but avoid splitting common words
+                                mid = len(words) // 2
+                                wrapped_header = '\n'.join([' '.join(words[:mid]), ' '.join(words[mid:])])
+                            else:
+                                # Single long word - only split if it's not a common word
+                                if header not in common_words:
+                                    mid = len(header) // 2
+                                    wrapped_header = header[:mid] + '\n' + header[mid:]
+                                else:
+                                    wrapped_header = header
+                        else:
+                            wrapped_header = header
+                        wrapped_headers.append(wrapped_header)
+                    
+                    for portfolio_name, result in all_results.items():
+                        if isinstance(result, dict) and 'metrics' in result:
+                            metrics = result['metrics']
+                            # Wrap long portfolio names
+                            if len(portfolio_name) > 20:
+                                words = portfolio_name.split()
+                                if len(words) > 2:
+                                    mid = len(words) // 2
+                                    wrapped_name = '\n'.join([' '.join(words[:mid]), ' '.join(words[mid:])])
+                                else:
+                                    wrapped_name = portfolio_name
+                            else:
+                                wrapped_name = portfolio_name
+                            
+                            row = [
+                                wrapped_name,
+                                f"{metrics.get('cagr', 0):.2f}",
+                                f"{metrics.get('max_drawdown', 0):.2f}",
+                                f"{metrics.get('volatility', 0):.2f}",
+                                f"{metrics.get('sharpe_ratio', 0):.2f}",
+                                f"{metrics.get('sortino_ratio', 0):.2f}"
+                            ]
+                            table_data.append(row)
+                    
+                    if table_data:
+                        # Create table with smart formatting for statistics
+                        page_width = 7.5*inch
+                        
+                        # Smart column width distribution for statistics table
+                        if len(headers) > 8:  # If we have many columns, use smaller widths
+                            # First column (Portfolio name) gets more space, others get less
+                            col_widths = [1.2*inch] + [(page_width - 1.2*inch)/(len(headers)-1)] * (len(headers)-1)
+                        else:
+                            # Equal width distribution for fewer columns
+                            col_widths = [page_width/len(headers)] * len(headers)
+                        
+                        stats_table = Table([wrapped_headers] + table_data, colWidths=col_widths)
+                        
+                        # Smart font size based on number of columns - micro size for statistics
+                        font_size = 3 if len(headers) > 14 else 4 if len(headers) > 12 else 5 if len(headers) > 10 else 6 if len(headers) > 8 else 7
+                        
+                        stats_table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                ('FONTSIZE', (0, 0), (-1, 0), font_size),  # Small font for headers
+                                ('FONTSIZE', (0, 1), (-1, -1), font_size + 2),  # Bigger font for data rows
+                            ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('LEFTPADDING', (0, 0), (-1, -1), 0),  # Zero padding for maximum space
+                            ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+                            ('TOPPADDING', (0, 0), (-1, 0), 1),  # Minimal padding for header row
+                            ('BOTTOMPADDING', (0, 0), (-1, 0), 1),
+                            ('TOPPADDING', (0, 1), (-1, -1), 0.5),  # Minimal padding for data rows
+                            ('BOTTOMPADDING', (0, 1), (-1, -1), 0.5),
+                            ('WORDWRAP', (0, 0), (-1, -1), True)
+                        ]))
+                        story.append(stats_table)
+                        story.append(Spacer(1, 15))
+                        table_created = True
+            except Exception as e:
+                pass
+        
+        # Method 3: Fallback - create simple table from any available data
+        if not table_created:
+            try:
+                # Try to get any available portfolio data
+                available_data = []
+                if 'multi_backtest_snapshot_data' in st.session_state:
+                    snapshot = st.session_state.multi_backtest_snapshot_data
+                    portfolio_configs = snapshot.get('portfolio_configs', [])
+                    if portfolio_configs:
+                        headers = ['Portfolio', 'Status']
+                        for config in portfolio_configs:
+                            name = config.get('name', 'Unknown')
+                            available_data.append([name, 'Data Available'])
+                
+                if available_data:
+                    fallback_table = Table([headers] + available_data, colWidths=[3*inch, 2*inch])
+                    fallback_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, -1), 9),
+                        ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black)
+                    ]))
+                    story.append(fallback_table)
+                    story.append(Spacer(1, 15))
+                    table_created = True
+            except Exception as e:
+                pass
+        
+        if not table_created:
+            story.append(Paragraph("Statistics data not available. Please run the backtest first.", styles['Normal']))
             story.append(Spacer(1, 15))
         
         # Update progress
@@ -387,37 +804,55 @@ def generate_simple_pdf_report():
                                 showlegend=True
                             )
                             
-                            # Convert Plotly figure to image
-                            pie_img_bytes = fig_today.to_image(format="png", width=600, height=600, engine="kaleido")
-                            pie_img_buffer = io.BytesIO(pie_img_bytes)
+                            # Convert Plotly figure to matplotlib (handles pie charts)
+                            mpl_fig = plotly_to_matplotlib_figure(fig_today, title=f"Target Allocation - {portfolio_name}", width_inches=6, height_inches=6)
+                            
+                            # Save matplotlib figure to buffer
+                            pie_img_buffer = io.BytesIO()
+                            mpl_fig.savefig(pie_img_buffer, format='png', dpi=300, bbox_inches='tight')
                             pie_img_buffer.seek(0)
+                            plt.close(mpl_fig)  # Close to free memory
                             
                             # Add to PDF
                             story.append(Image(pie_img_buffer, width=5*inch, height=5*inch))
                             story.append(Spacer(1, 2))
                             
-                            # Add Next Rebalance Timer information - fetch the stored timer table figure
-                            timer_table_key = f"timer_table_{portfolio_name}"
-                            print(f"[PDF DEBUG] Looking for timer table: {timer_table_key}")
-                            print(f"[PDF DEBUG] Available timer tables: {[k for k in st.session_state.keys() if k.startswith('timer_table_')]}")
+                            # Add Next Rebalance Timer information - simple text display
+                            story.append(Paragraph(f"Next Rebalance Timer - {portfolio_name}", subheading_style))
+                            story.append(Spacer(1, 5))
                             
+                            # Try to get timer information from session state
+                            timer_table_key = f"timer_table_{portfolio_name}"
                             if timer_table_key in st.session_state:
-                                try:
-                                    print(f"[PDF DEBUG] Found timer table for {portfolio_name}, adding to PDF")
-                                    # Convert the Plotly timer table to image and add to PDF
-                                    fig_timer = st.session_state[timer_table_key]
-                                    img_data = fig_timer.to_image(format="png", width=1000, height=350, engine="kaleido")
-                                    img_buffer = io.BytesIO(img_data)
-                                    img = Image(img_buffer, width=7*inch, height=2.2*inch)
-                                    story.append(img)
-                                    story.append(Spacer(1, 2))
-                                    print(f"[PDF DEBUG] Successfully added timer table for {portfolio_name} to PDF")
-                                except Exception as e:
-                                    print(f"[PDF DEBUG] Error adding timer table for {portfolio_name}: {e}")
-                                    # Silently ignore timer table conversion errors
-                                    pass
+                                timer_fig = st.session_state[timer_table_key]
+                                if timer_fig and hasattr(timer_fig, 'data') and timer_fig.data:
+                                    # Extract timer information from the figure data
+                                    for trace in timer_fig.data:
+                                        if trace.type == 'table' and hasattr(trace, 'cells') and trace.cells:
+                                            cell_values = trace.cells.values
+                                            if cell_values and len(cell_values) >= 2:
+                                                # Format the timer information
+                                                timer_info = []
+                                                for i in range(len(cell_values[0])):
+                                                    if i < len(cell_values[0]) and i < len(cell_values[1]):
+                                                        param = cell_values[0][i]
+                                                        value = cell_values[1][i]
+                                                        timer_info.append(f"{param}: {value}")
+                                                
+                                                if timer_info:
+                                                    for info in timer_info:
+                                                        story.append(Paragraph(info, styles['Normal']))
+                                                else:
+                                                    story.append(Paragraph("Next rebalance information not available", styles['Normal']))
+                                                break
+                                    else:
+                                        story.append(Paragraph("Next rebalance information not available", styles['Normal']))
+                                else:
+                                    story.append(Paragraph("Next rebalance information not available", styles['Normal']))
                             else:
-                                print(f"[PDF DEBUG] Timer table NOT found for {portfolio_name}")
+                                story.append(Paragraph("Next rebalance information not available", styles['Normal']))
+                            
+                            story.append(Spacer(1, 5))
                             
                             # Add page break after pie plot + timer to separate from allocation table
                             story.append(PageBreak())
@@ -426,24 +861,107 @@ def generate_simple_pdf_report():
                             story.append(Paragraph(f"Allocation Details for {portfolio_name}", subheading_style))
                             story.append(Spacer(1, 10))
                             
-                            # Use the EXACT same approach as Performance Statistics table - fetch the Plotly table figure
+                            # NUKE APPROACH: Rebuild allocation table from scratch
                             alloc_table_key = f"alloc_table_{portfolio_name}"
+                            table_created = False
+                            
                             if alloc_table_key in st.session_state:
                                 try:
-                                    # Convert the Plotly table to image and add to PDF (EXACT same as fig_stats)
                                     fig_alloc = st.session_state[alloc_table_key]
-                                    img_data = fig_alloc.to_image(format="png", width=2000, height=600, engine="kaleido")
-                                    img_buffer = io.BytesIO(img_data)
-                                    img = Image(img_buffer, width=8*inch, height=2.5*inch)  # Reduced height to fit better
-                                    story.append(img)
-                                    story.append(Spacer(1, 5))
+                                    
+                                    # Method 1: Extract from Plotly figure data structure
+                                    if hasattr(fig_alloc, 'data') and fig_alloc.data:
+                                        for trace in fig_alloc.data:
+                                            if trace.type == 'table':
+                                                # Get headers
+                                                if hasattr(trace, 'header') and trace.header and hasattr(trace.header, 'values'):
+                                                    headers = trace.header.values
+                                                else:
+                                                    headers = ['Asset', 'Allocation %', 'Price ($)', 'Shares', 'Total Value ($)', '% of Portfolio']
+                                                
+                                                # Get cell data
+                                                if hasattr(trace, 'cells') and trace.cells and hasattr(trace.cells, 'values'):
+                                                    cell_data = trace.cells.values
+                                                    if cell_data and len(cell_data) > 0:
+                                                        # Convert to proper table format
+                                                        num_rows = len(cell_data[0]) if cell_data[0] else 0
+                                                        table_rows = []
+                                                        
+                                                        for row_idx in range(num_rows):
+                                                            row = []
+                                                            for col_idx in range(len(cell_data)):
+                                                                if col_idx < len(cell_data) and row_idx < len(cell_data[col_idx]):
+                                                                    value = cell_data[col_idx][row_idx]
+                                                                    row.append(str(value) if value is not None else '')
+                                                                else:
+                                                                    row.append('')
+                                                            table_rows.append(row)
+                                                        
+                                                        # Create table with proper formatting
+                                                        page_width = 7.5*inch
+                                                        col_widths = [page_width/len(headers)] * len(headers)
+                                                        alloc_table = Table([headers] + table_rows, colWidths=col_widths)
+                                                        alloc_table.setStyle(TableStyle([
+                                                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                                                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                                                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                                                            ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                                                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+                                                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                                            ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                                                            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                                                            ('TOPPADDING', (0, 0), (-1, -1), 2),
+                                                            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                                                            ('WORDWRAP', (0, 0), (-1, -1), True)
+                                                        ]))
+                                                        story.append(alloc_table)
+                                                        story.append(Spacer(1, 5))
+                                                        table_created = True
+                                                        break
                                 except Exception as e:
-                                    story.append(Paragraph(f"Error converting allocation table: {str(e)}", styles['Normal']))
-                                    # Fallback to simple text representation
-                                    story.append(Paragraph("Target Allocation if Rebalanced Today:", styles['Heading4']))
-                                    for asset, weight in today_weights.items():
-                                        if float(weight) > 0:
-                                            story.append(Paragraph(f"{asset}: {float(weight)*100:.1f}%", styles['Normal']))
+                                    pass
+                            
+                            # Method 2: Create table from today_weights directly
+                            if not table_created:
+                                try:
+                                    if today_weights:
+                                        headers = ['Asset', 'Allocation %']
+                                        table_rows = []
+                                        
+                                        for asset, weight in today_weights.items():
+                                            if float(weight) > 0:
+                                                table_rows.append([asset, f"{float(weight)*100:.2f}%"])
+                                        
+                                        if table_rows:
+                                            page_width = 7.5*inch
+                                            col_widths = [page_width/len(headers)] * len(headers)
+                                            alloc_table = Table([headers] + table_rows, colWidths=col_widths)
+                                            alloc_table.setStyle(TableStyle([
+                                                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                                                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                                                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                                                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+                                                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                                ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                                                ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                                                ('TOPPADDING', (0, 0), (-1, -1), 2),
+                                                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                                                ('WORDWRAP', (0, 0), (-1, -1), True)
+                                            ]))
+                                            story.append(alloc_table)
+                                            story.append(Spacer(1, 5))
+                                            table_created = True
+                                        else:
+                                            story.append(Paragraph("No allocation data available", styles['Normal']))
+                                    else:
+                                        story.append(Paragraph("No allocation data available", styles['Normal']))
+                                except Exception as e2:
+                                    story.append(Paragraph(f"Error creating allocation table: {str(e2)}", styles['Normal']))
                             else:
                                 # Fallback: simple text representation if no stored table found
                                 story.append(Paragraph("Target Allocation if Rebalanced Today:", styles['Heading4']))
@@ -1177,7 +1695,6 @@ def single_backtest(config, sim_index, reindexed_data):
     available_tickers = [t for t in tickers if t in reindexed_data]
     if len(available_tickers) < len(tickers):
         missing = set(tickers) - set(available_tickers)
-        print(f"[WARN] The following tickers were not found in price data and will be ignored: {sorted(list(missing))}")
     tickers = available_tickers
     # Recompute allocations and include_dividends to only include valid tickers
     # Handle duplicate tickers by summing their allocations
@@ -1393,7 +1910,7 @@ def single_backtest(config, sim_index, reindexed_data):
         if calc_beta or calc_volatility:
             try:
                 for t in rets_keys:
-                    print(f"[MOM DEBUG] Date: {date} | Ticker: {t} | Momentum: {metrics[t].get('Momentum')} | Beta: {metrics[t].get('Beta')} | Vol: {metrics[t].get('Volatility')} | Weight: {metrics[t].get('Calculated_Weight')}")
+                    pass
             except Exception:
                 pass
 
@@ -2577,7 +3094,7 @@ for i in range(len(active_portfolio['stocks'])):
         if st.button("Remove", key=f"multi_backtest_rem_stock_{st.session_state.multi_backtest_active_portfolio_index}_{i}_{stock['ticker']}_{id(stock)}", on_click=remove_stock_callback, args=(stock['ticker'],)):
             pass
 
-if st.button("Add Stock", on_click=add_stock_callback):
+if st.button("Add Ticker", on_click=add_stock_callback):
     pass
 
 # Bulk ticker input section - FIXED VERSION
@@ -2876,7 +3393,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            print("Downloading data for all tickers...")
             data = {}
             invalid_tickers = []
             for i, t in enumerate(all_tickers):
@@ -2886,7 +3402,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     ticker = yf.Ticker(t)
                     hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
                     if hist.empty:
-                        print(f"No data available for {t}")
                         invalid_tickers.append(t)
                         continue
                     
@@ -2896,9 +3411,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     
                     hist["Price_change"] = hist["Close"].pct_change(fill_method=None).fillna(0)
                     data[t] = hist
-                    print(f"Data loaded for {t} from {data[t].index[0].date()}")
                 except Exception as e:
-                    print(f"Error loading {t}: {e}")
                     invalid_tickers.append(t)
             # Display invalid ticker warnings in Streamlit UI
             if invalid_tickers:
@@ -2931,7 +3444,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 # Determine common date range for all portfolios
                 common_start = max(df.first_valid_index() for df in data.values())
                 common_end = min(df.last_valid_index() for df in data.values())
-                print(f"Common date range: {common_start.date()} to {common_end.date()}")
                 
                 # Get all portfolio tickers (excluding benchmarks)
                 all_portfolio_tickers = set()
@@ -2955,10 +3467,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     st.stop()
                 
                 global_start_with = st.session_state.get('multi_backtest_start_with', 'all')
-                print(f"Using global start_with: {global_start_with}")
                 if global_start_with == 'all':
                     final_start = max(data[t].first_valid_index() for t in valid_portfolio_tickers)
-                    print(f"All portfolio assets start date: {final_start.date()}")
                 else:  # global_start_with == 'oldest'
                     # For 'oldest', we need to find the portfolio that starts the LATEST
                     # (has the most recent earliest asset), then use that portfolio's earliest asset
@@ -2975,12 +3485,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         # Find the portfolio with the LATEST earliest asset
                         latest_starting_portfolio = max(portfolio_earliest_dates.items(), key=lambda x: x[1])
                         final_start = latest_starting_portfolio[1]
-                        print(f"Portfolio '{latest_starting_portfolio[0]}' starts latest at: {final_start.date()}")
-                        print(f"Using this portfolio's earliest asset date: {final_start.date()}")
                     else:
                         # Fallback to original logic
                         final_start = min(data[t].first_valid_index() for t in valid_portfolio_tickers)
-                        print(f"Fallback - Oldest portfolio asset start date: {final_start.date()}")
                 
                 # Apply user date constraints if any
                 for cfg in st.session_state.multi_backtest_portfolio_configs:
@@ -2997,7 +3504,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 
                 # Create simulation index for the entire period
                 simulation_index = pd.date_range(start=final_start, end=common_end, freq='D')
-                print(f"Simulation period: {final_start.date()} to {common_end.date()}")
                 
                 # Reindex all data to the simulation period (only valid tickers)
                 data_reindexed = {}
@@ -3022,7 +3528,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 
                 for i, cfg in enumerate(st.session_state.multi_backtest_portfolio_configs, start=1):
                     name = cfg.get('name', f'Backtest {i}')
-                    print(f"\nProcessing strategy {i}/{len(st.session_state.multi_backtest_portfolio_configs)}: {name}")
                     
                     # Ensure unique key for storage to avoid overwriting when duplicate names exist
                     base_name = name
@@ -3214,7 +3719,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             progress_bar.empty()
             
             # --- CALCULATE MWRR FOR ALL PORTFOLIOS AFTER LOOP COMPLETES ---
-            print("Calculating MWRR for all portfolios...")
             for unique_name, results in all_results.items():
                 if 'cash_flows' in results and 'portfolio_values' in results:
                     cash_flows = results['cash_flows']
@@ -3224,17 +3728,12 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     # Add MWRR to the stats
                     if unique_name in all_stats:
                         all_stats[unique_name]["MWRR"] = mwrr
-                    print(f"MWRR for {unique_name}: {mwrr:.2f}%")
                     # Clean up temporary data
                     del results['cash_flows']
                     del results['portfolio_values']
                 else:
-                    print(f"No cash flows found for {unique_name}")
                     if unique_name in all_stats:
                         all_stats[unique_name]["MWRR"] = np.nan
-            print("\n" + "="*80)
-            print(" " * 25 + "FINAL PERFORMANCE STATISTICS")
-            print("="*80 + "\n")
             stats_df = pd.DataFrame(all_stats).T
             def fmt_pct(x):
                 if isinstance(x, (int, float)) and pd.notna(x):
@@ -3276,9 +3775,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 stats_df_display['UPI'] = stats_df_display['UPI'].apply(lambda x: fmt_num(x))
                 if 'Beta' in stats_df_display.columns:
                     stats_df_display['Beta'] = stats_df_display['Beta'].apply(lambda x: fmt_num(x))
-                print(stats_df_display.to_string())
             else:
-                print("No stats to display.")
+                pass
             # Yearly performance section (interactive table below)
             all_years = {}
             for name, ser in all_results.items():
@@ -3293,10 +3791,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             header_format = "{:<6} |" + "".join([" {:^" + str(col_width*2+1) + "} |" for _ in names])
             row_format = "{:<6} |" + "".join([" {:>" + str(col_width) + "} {:>" + str(col_width) + "} |" for _ in names])
             
-            print(header_format.format("Year", *names))
-            print("-" * (6 + 3 + (col_width*2+1 + 3)*len(names)))
-            print(row_format.format(" ", *[item for pair in [('% Change', 'Final Value')] * len(names) for item in pair]))
-            print("=" * (6 + 3 + (col_width*2+1 + 3)*len(names)))
             
             for y in years:
                 row_items = [f"{y}"]
@@ -3331,8 +3825,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         final_val = "N/A"
                         
                     row_items.extend([pct, final_val])
-                print(row_format.format(*row_items))
-            print("\n" + "="*80)
     
             # console output captured previously is no longer shown on the page
             # Create today_weights_map for all portfolios
@@ -3353,25 +3845,19 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     if allocs_for_portfolio:
                         # Get sorted allocation dates (same logic as real code)
                         alloc_dates = sorted(list(allocs_for_portfolio.keys()))
-                        print(f"[PDF DEBUG] Portfolio {portfolio_name} has {len(alloc_dates)} allocation dates: {alloc_dates}")
                         if len(alloc_dates) > 1:
                             # Use second to last date (same as real timer code)
                             last_rebalance_dates[portfolio_name] = alloc_dates[-2]
-                            print(f"[PDF DEBUG] Using second to last date: {alloc_dates[-2]}")
                         elif len(alloc_dates) == 1:
                             # Use the only available date
                             last_rebalance_dates[portfolio_name] = alloc_dates[-1]
-                            print(f"[PDF DEBUG] Using only available date: {alloc_dates[-1]}")
                         else:
                             # No allocation data available
                             last_rebalance_dates[portfolio_name] = None
-                            print(f"[PDF DEBUG] No allocation dates available")
                     else:
                         last_rebalance_dates[portfolio_name] = None
-                        print(f"[PDF DEBUG] No allocation data for {portfolio_name}")
                 else:
                     last_rebalance_dates[portfolio_name] = None
-                    print(f"[PDF DEBUG] Portfolio {portfolio_name} not found in all_allocations")
             
             st.session_state.multi_backtest_snapshot_data = {
                 'raw_data': data_reindexed,
@@ -3496,21 +3982,17 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             )
                             table_key = f"alloc_table_{portfolio_name}"
                             st.session_state[table_key] = fig_alloc_table
-                            print(f"[PDF DEBUG] Auto-created allocation table for {portfolio_name}")
             except Exception as e:
-                print(f"[PDF DEBUG] Failed to auto-create allocation tables: {e}")
+                pass
             
             # Create timer tables for ALL portfolios automatically for PDF export
             try:
                 snapshot = st.session_state.get('multi_backtest_snapshot_data', {})
                 last_rebalance_dates = snapshot.get('last_rebalance_dates', {})
                 
-                print(f"[PDF DEBUG] Creating timer tables for {len(st.session_state.multi_backtest_portfolio_configs)} portfolios")
-                print(f"[PDF DEBUG] Available last_rebalance_dates: {list(last_rebalance_dates.keys())}")
                 
                 for portfolio_cfg in st.session_state.multi_backtest_portfolio_configs:
                     portfolio_name = portfolio_cfg.get('name', 'Unknown')
-                    print(f"[PDF DEBUG] Processing portfolio: {portfolio_name}")
                     
                     # Get rebalancing frequency for this portfolio
                     rebal_freq = portfolio_cfg.get('rebalancing_frequency', 'none')
@@ -3533,11 +4015,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         'none': 'none'
                     }
                     rebal_freq = frequency_mapping.get(rebal_freq, rebal_freq)
-                    print(f"[PDF DEBUG] Rebalancing frequency for {portfolio_name}: {rebal_freq}")
                     
                     # Get last rebalance date for this portfolio
                     last_rebal_date = last_rebalance_dates.get(portfolio_name)
-                    print(f"[PDF DEBUG] Last rebalance date for {portfolio_name}: {last_rebal_date}")
                     
                     if last_rebal_date and rebal_freq != 'none':
                         # Ensure last_rebal_date is a naive datetime object
@@ -3551,7 +4031,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             rebal_freq, last_rebal_date
                         )
                         
-                        print(f"[PDF DEBUG] Calculated for {portfolio_name}: next_date={next_date_port}, time_until={time_until_port}")
                         
                         if next_date_port and time_until_port:
                             # Create timer data for this portfolio
@@ -3591,13 +4070,11 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             
                             # Store in session state for PDF export
                             st.session_state[f'timer_table_{portfolio_name}'] = fig_timer_port
-                            print(f"[PDF DEBUG] Successfully created timer table for {portfolio_name}")
                         else:
-                            print(f"[PDF DEBUG] Failed to calculate timer for {portfolio_name}: missing next_date or time_until")
+                            pass
                     else:
-                        print(f"[PDF DEBUG] Skipping {portfolio_name}: last_rebal_date={last_rebal_date}, rebal_freq={rebal_freq}")
+                        pass
             except Exception as e:
-                print(f"[PDF DEBUG] Failed to auto-create timer tables: {e}")
                 import traceback
                 traceback.print_exc()
             
@@ -4062,7 +4539,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
 
                 st.plotly_chart(fig_metrics, use_container_width=True, key="multi_metrics_chart")
         except Exception as e:
-            print(f"[VARIATION CHART DEBUG] Failed to build metrics summary chart: {e}")
+            pass
 
         # --- Monthly returns heatmap: rows = portfolios, columns = Year-Month, values = monthly % change ---
         try:
@@ -4109,7 +4586,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 )
                 st.plotly_chart(fig_heat, use_container_width=True, key="multi_heatmap_chart")
         except Exception as e:
-            print(f"[MONTHLY HEATMAP DEBUG] Failed to build monthly heatmap: {e}")
+            pass
 
         # Recompute Final Performance Statistics from stored results to ensure they use the no-additions series
         if 'multi_all_results' in st.session_state and st.session_state.multi_all_results:
@@ -4225,10 +4702,10 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     var = br.loc[common_idx2].var()
                                     beta = cov / var
                         except Exception as e:
-                            print(f"[BETA DEBUG] Failed to compute beta for {name}: {e}")
+                            pass
                 
                 # Calculate MWRR for this portfolio using the complete cash flow series
-                mwrr_val = "N/A"
+                mwrr_val = np.nan  # Use NaN instead of "N/A" string
                 if isinstance(series_obj, dict) and 'with_additions' in series_obj:
                     portfolio_values = series_obj['with_additions']
                     # Reconstruct cash flows for this portfolio
@@ -4249,13 +4726,13 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         mwrr_val = mwrr
 
                 # Calculate total money added for this portfolio
-                total_money_added = "N/A"
+                total_money_added = np.nan  # Use NaN instead of "N/A" string
                 cfg_for_name = next((c for c in st.session_state.multi_backtest_portfolio_configs if c['name'] == name), None)
                 if cfg_for_name and isinstance(ser_noadd, pd.Series) and len(ser_noadd) > 0:
                     total_money_added = calculate_total_money_added(cfg_for_name, ser_noadd.index[0], ser_noadd.index[-1])
                 
                 # Calculate total return based on total money contributed
-                total_return_contributed = "N/A"
+                total_return_contributed = np.nan  # Use NaN instead of "N/A" string
                 if isinstance(series_obj, dict) and 'with_additions' in series_obj and len(series_obj['with_additions']) > 0:
                     final_value_with_additions = series_obj['with_additions'].iloc[-1]
                     if isinstance(total_money_added, (int, float)) and total_money_added > 0:
@@ -4274,8 +4751,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     "Beta": clamp_stat(beta / 100 if isinstance(beta, (int, float)) and pd.notna(beta) else beta, "Beta"),
                     "MWRR": mwrr_val,
                     # Final values with and without additions
-                    "Final Value (with)": (series_obj['with_additions'].iloc[-1] if isinstance(series_obj, dict) and 'with_additions' in series_obj and len(series_obj['with_additions'])>0 else "N/A"),
-                    "Final Value (no_additions)": (ser_noadd.iloc[-1] if isinstance(ser_noadd, pd.Series) and len(ser_noadd)>0 else "N/A"),
+                    "Final Value (with)": (series_obj['with_additions'].iloc[-1] if isinstance(series_obj, dict) and 'with_additions' in series_obj and len(series_obj['with_additions'])>0 else np.nan),
+                    "Final Value (no_additions)": (ser_noadd.iloc[-1] if isinstance(ser_noadd, pd.Series) and len(ser_noadd)>0 else np.nan),
                     "Total Money Added": total_money_added
                 }
 
@@ -4332,9 +4809,20 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 fmt_map_display['Final Value (No Contributions)'] = '${:,.2f}'
             if 'Total Money Added' in stats_df_display.columns:
                 fmt_map_display['Total Money Added'] = '${:,.2f}'
-            # Format MWRR as percentage
+            # Format MWRR as percentage - but only if it contains numeric data
             if 'MWRR' in stats_df_display.columns:
-                fmt_map_display['MWRR'] = '{:.2f}%'
+                # Check if MWRR column has any non-N/A values
+                mwrr_has_numeric = False
+                for value in stats_df_display['MWRR']:
+                    if pd.notna(value) and value != 'N/A' and value != '':
+                        try:
+                            float(value)
+                            mwrr_has_numeric = True
+                            break
+                        except (ValueError, TypeError):
+                            pass
+                if mwrr_has_numeric:
+                    fmt_map_display['MWRR'] = '{:.2f}%'
             
             # Create tooltips for each column
             tooltip_data = {
@@ -4354,14 +4842,66 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 'Total Money Added': 'Total amount of money contributed (initial + periodic additions).'
             }
             
+            # Clean the dataframe to handle problematic values before styling
+            stats_df_clean = stats_df_display.copy()
+            
+            # Replace problematic values that can't be formatted
+            for col in stats_df_clean.columns:
+                for idx in stats_df_clean.index:
+                    value = stats_df_clean.loc[idx, col]
+                    if pd.isna(value) or value is None or value == 'N/A' or value == '':
+                        stats_df_clean.loc[idx, col] = 'N/A'
+                    elif isinstance(value, str) and value.strip() == '':
+                        stats_df_clean.loc[idx, col] = 'N/A'
+            
+            # Create a safe formatting map that only includes numeric columns
+            safe_fmt_map = {}
+            has_problematic_data = False
+            
+            # Check if any column has problematic data
+            for col in stats_df_clean.columns:
+                for value in stats_df_clean[col]:
+                    if pd.isna(value) or value == 'N/A' or value == '':
+                        has_problematic_data = True
+                        break
+                if has_problematic_data:
+                    break
+            
+            # Only apply formatting if no problematic data
+            if not has_problematic_data:
+                for col, fmt in fmt_map_display.items():
+                    if col in stats_df_clean.columns:
+                        # Check if the column contains numeric data
+                        numeric_count = 0
+                        total_count = 0
+                        for value in stats_df_clean[col]:
+                            if pd.notna(value) and value != 'N/A' and value != '':
+                                total_count += 1
+                                try:
+                                    float(value)
+                                    numeric_count += 1
+                                except (ValueError, TypeError):
+                                    pass
+                        
+                        # Only apply formatting if most values are numeric
+                        if total_count > 0 and numeric_count / total_count > 0.5:
+                            safe_fmt_map[col] = fmt
+            
             # Add tooltips to the dataframe
-            styled_df = stats_df_display.style.format(fmt_map_display)
+            if safe_fmt_map and not has_problematic_data:
+                try:
+                    styled_df = stats_df_clean.style.format(safe_fmt_map)
+                except Exception as e:
+                    styled_df = stats_df_clean
+            else:
+                # Skip styling entirely if there's problematic data
+                styled_df = stats_df_clean
             
             # Add tooltips using HTML
             tooltip_html = "<div style='background-color: #1e1e1e; color: white; padding: 10px; border-radius: 5px; font-size: 12px;'>"
             tooltip_html += "<b>Column Definitions:</b><br><br>"
             for col, tooltip in tooltip_data.items():
-                if col in stats_df_display.columns:
+                if col in stats_df_clean.columns:
                     tooltip_html += f"<b>{col}:</b> {tooltip}<br><br>"
             tooltip_html += "</div>"
             
@@ -4369,34 +4909,61 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             with st.expander("ℹ️ Column Definitions", expanded=False):
                 st.markdown(tooltip_html, unsafe_allow_html=True)
             
-            if fmt_map_display:
+            # Display the dataframe with multiple fallback options
+            try:
+                st.dataframe(styled_df, use_container_width=True)
+            except Exception as e1:
                 try:
-                    st.dataframe(styled_df, use_container_width=True)
-                except Exception:
-                    # Fallback to raw dataframe if styling fails
-                    st.dataframe(stats_df_display, use_container_width=True)
-            else:
-                st.dataframe(stats_df_display, use_container_width=True)
+                    st.dataframe(stats_df_clean, use_container_width=True)
+                except Exception as e2:
+                    # Last resort: convert all values to strings
+                    stats_df_strings = stats_df_clean.astype(str)
+                    st.dataframe(stats_df_strings, use_container_width=True)
             
             # Store the statistics table as a Plotly figure for PDF export
             try:
                 import plotly.graph_objects as go
                 # Create a Plotly table from the stats DataFrame with MUCH better formatting
-                # Format the values to remove excessive decimals
+                # Format the values to remove excessive decimals with proper error handling
                 formatted_values = []
                 for col in stats_df_display.columns:
-                    if 'Portfolio Value' in col or 'Final Value' in col:
-                        # Portfolio values: full numbers only (no decimals)
-                        formatted_values.append([f"${float(stats_df_display.loc[name, col]):,.0f}" for name in stats_df_display.index])
-                    elif 'MWRR' in col:
-                        # MWRR: max 2 decimal places
-                        formatted_values.append([f"{float(stats_df_display.loc[name, col]):.2f}%" for name in stats_df_display.index])
-                    elif 'Total Money Added' in col:
-                        # Money added: full numbers only
-                        formatted_values.append([f"${float(stats_df_display.loc[name, col]):,.0f}" for name in stats_df_display.index])
-                    else:
-                        # Keep other values as they are
-                        formatted_values.append([stats_df_display.loc[name, col] for name in stats_df_display.index])
+                    col_values = []
+                    for name in stats_df_display.index:
+                        value = stats_df_display.loc[name, col]
+                        
+                        # Handle NaN, None, and string values
+                        if pd.isna(value) or value is None or value == 'N/A' or value == '':
+                            col_values.append('N/A')
+                            continue
+                        
+                        try:
+                            if 'Portfolio Value' in col or 'Final Value' in col:
+                                # Portfolio values: full numbers only (no decimals)
+                                col_values.append(f"${float(value):,.0f}")
+                            elif 'MWRR' in col:
+                                # MWRR: max 2 decimal places
+                                col_values.append(f"{float(value):.2f}%")
+                            elif 'Total Money Added' in col:
+                                # Money added: full numbers only
+                                col_values.append(f"${float(value):,.0f}")
+                            else:
+                                # For other numeric columns, try to format as float
+                                try:
+                                    float_val = float(value)
+                                    if 'Ratio' in col or 'Index' in col:
+                                        col_values.append(f"{float_val:.3f}")
+                                    elif 'Drawdown' in col or 'Volatility' in col or 'CAGR' in col:
+                                        col_values.append(f"{float_val:.2f}%")
+                                    else:
+                                        col_values.append(f"{float_val:.2f}")
+                                except (ValueError, TypeError):
+                                    # If conversion fails, keep original value
+                                    col_values.append(str(value))
+                        except (ValueError, TypeError):
+                            # If any conversion fails, use original value
+                            col_values.append(str(value))
+                    
+                    formatted_values.append(col_values)
                 
                 fig_stats = go.Figure(data=[go.Table(
                     header=dict(
@@ -4423,7 +4990,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 )
                 st.session_state.fig_stats = fig_stats
             except Exception as e:
-                print(f"Could not create stats table figure: {e}")
+                pass
 
         # Portfolio Configuration Comparison Table
         st.subheader("Portfolio Configuration Comparison")
@@ -5491,12 +6058,12 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                 )
                                                 table_key = f"alloc_table_{selected_portfolio_detail}"
                                                 st.session_state[table_key] = fig_alloc_table
-                                                print(f"[PDF DEBUG] Stored allocation table for {selected_portfolio_detail}")
                                             except Exception as e:
-                                                print(f"[PDF DEBUG] Failed to store allocation table for {selected_portfolio_detail}: {e}")
-                                            
+                                                pass
+                                            except Exception as e:
+                                                pass
                                 except Exception as e:
-                                    print(f"[REBALANCE TODAY TABLE DEBUG] Failed to render rebalance today table for {selected_portfolio_detail}: {e}")
+                                    pass
 
                                 # Other rebalancing plots (smaller, placed after the main one)
                                 st.markdown("---")
@@ -5654,10 +6221,10 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                         build_table_from_alloc(final_alloc, None, f"Portfolio Evolution (Current Allocation)")
                                         
                                 except Exception as e:
-                                    print(f"[ALLOC TABLE DEBUG] Failed to render allocation tables for {selected_portfolio_detail}: {e}")
+                                    pass
                                     
                         except Exception as e:
-                            print(f"[ALLOC PLOT DEBUG] Failed to render allocation plots for {selected_portfolio_detail}: {e}")
+                            pass
                     else:
                         st.info("No allocation history available for this portfolio to show allocation plots.")
                 else:
@@ -5737,7 +6304,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 fig_final.update_layout(template='plotly_dark', margin=dict(t=30))
                                 st.plotly_chart(fig_final, use_container_width=True, key=f"multi_final_fallback_{selected_portfolio_detail}")
                         except Exception as e:
-                            print(f"[ALLOC PLOT DEBUG] Fallback allocation plots failed: {e}")
+                            pass
 
         else:
             st.info("Configuration is ready. Press 'Run Backtest' to see results.")
