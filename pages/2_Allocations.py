@@ -1411,76 +1411,109 @@ def generate_allocations_pdf():
             story.append(Paragraph("Portfolio Distribution Charts", heading_style))
             story.append(Spacer(1, 15))
             
-            # Create combined figure with both pie charts one above the other
-            try:
-                # Create figure with two subplots one above the other - square aspect ratio for circular charts
-                fig, (ax_sector, ax_industry) = plt.subplots(2, 1, figsize=(10, 10))
-                
-                # Sector pie chart
-                if not sector_data.empty:
-                    sectors = sector_data.index.tolist()
-                    allocations = sector_data.values.tolist()
-                    
-                    # Create pie chart with percentage labels but only for larger slices to avoid overlap
-                    def make_autopct(values):
-                        def my_autopct(pct):
-                            total = sum(values)
-                            val = int(round(pct*total/100.0))
-                            # Only show percentage if slice is large enough (>5%)
-                            return f'{pct:.1f}%' if pct > 5 else ''
-                        return my_autopct
-                    
-                    wedges_sector, texts_sector, autotexts_sector = ax_sector.pie(allocations, autopct=make_autopct(allocations), 
-                                                                                 startangle=90, textprops={'fontsize': 10})
-                    
-                    # Create legend with percentages - positioned further to the right
-                    legend_labels = [f"{sector} ({alloc:.1f}%)" for sector, alloc in zip(sectors, allocations)]
-                    ax_sector.legend(wedges_sector, legend_labels, title="Sectors", loc="center left", bbox_to_anchor=(1.2, 0, 0.5, 1), fontsize=10)
-                    
-                    ax_sector.set_title(f'Sector Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
-                    # Force circular shape by setting aspect ratio
-                    ax_sector.set_aspect('equal')
-                
-                # Industry pie chart
-                if not industry_data.empty:
-                    industries = industry_data.index.tolist()
-                    allocations = industry_data.values.tolist()
-                    
-                    # Create pie chart with percentage labels but only for larger slices to avoid overlap
-                    def make_autopct(values):
-                        def my_autopct(pct):
-                            total = sum(values)
-                            val = int(round(pct*total/100.0))
-                            # Only show percentage if slice is large enough (>5%)
-                            return f'{pct:.1f}%' if pct > 5 else ''
-                        return my_autopct
-                    
-                    wedges_industry, texts_industry, autotexts_industry = ax_industry.pie(allocations, autopct=make_autopct(allocations), 
-                                                                                         startangle=90, textprops={'fontsize': 10})
-                    
-                    # Create legend with percentages - positioned further to the right
-                    legend_labels = [f"{industry} ({alloc:.1f}%)" for industry, alloc in zip(industries, allocations)]
-                    ax_industry.legend(wedges_industry, legend_labels, title="Industries", loc="center left", bbox_to_anchor=(1.2, 0, 0.5, 1), fontsize=10)
-                    
-                    ax_industry.set_title(f'Industry Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
-                    # Force circular shape by setting aspect ratio
-                    ax_industry.set_aspect('equal')
-                
-                # Adjust layout to prevent overlap with more space and accommodate legends
-                plt.subplots_adjust(hspace=0.4, right=0.65)  # More space for legends to prevent overlap
-                
-                # Save to buffer
-                combined_img_buffer = io.BytesIO()
-                fig.savefig(combined_img_buffer, format='png', dpi=300, bbox_inches='tight')
-                combined_img_buffer.seek(0)
-                plt.close(fig)
-                
-                # Add to PDF - square size to maintain circular charts
-                story.append(Image(combined_img_buffer, width=7*inch, height=7*inch))
+            # Check if we actually have any allocation data to display
+            has_sector_data = not sector_data.empty and len(sector_data) > 0 and sector_data.sum() > 0
+            has_industry_data = not industry_data.empty and len(industry_data) > 0 and industry_data.sum() > 0
+            
+            if not has_sector_data and not has_industry_data:
+                # Portfolio is all cash - show message instead of charts
+                story.append(Paragraph("This portfolio is currently allocated 100% to cash. No sector or industry distribution charts are available.", styles['Normal']))
                 story.append(Spacer(1, 15))
+            else:
+                # Create combined figure with both pie charts one above the other
+                try:
+                    # Create figure with two subplots - square subplots to ensure circular pie charts
+                    fig, (ax_sector, ax_industry) = plt.subplots(2, 1, figsize=(12, 12))
                 
-            except Exception as e:
-                story.append(Paragraph(f"Error creating charts: {str(e)}", styles['Normal']))
+                    # Sector pie chart
+                    if has_sector_data:
+                        sectors = sector_data.index.tolist()
+                        allocations = sector_data.values.tolist()
+                        
+                        # Create pie chart with percentage labels but only for larger slices to avoid overlap
+                        def make_autopct(values):
+                            def my_autopct(pct):
+                                if pd.isna(pct) or pct is None:
+                                    return ''
+                                total = sum(values)
+                                if pd.isna(total) or total == 0:
+                                    return ''
+                                val = int(round(pct*total/100.0))
+                                # Only show percentage if slice is large enough (>5%)
+                                return f'{pct:.1f}%' if pct > 5 else ''
+                            return my_autopct
+                        
+                        wedges_sector, texts_sector, autotexts_sector = ax_sector.pie(allocations, autopct=make_autopct(allocations), 
+                                                                                     startangle=90, textprops={'fontsize': 10})
+                        
+                        # Create legend with percentages - positioned further to the right
+                        legend_labels = [f"{sector} ({alloc:.1f}%)" for sector, alloc in zip(sectors, allocations)]
+                        ax_sector.legend(wedges_sector, legend_labels, title="Sectors", loc="center left", bbox_to_anchor=(1.05, 0, 0.5, 1), fontsize=10)
+                        
+                        ax_sector.set_title(f'Sector Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                        # Force perfectly circular shape
+                        ax_sector.set_aspect('equal')
+                        ax_sector.set_xlim(-1.2, 1.2)
+                        ax_sector.set_ylim(-1.2, 1.2)
+                    else:
+                        # No sector data - show placeholder
+                        ax_sector.text(0.5, 0.5, 'No sector data available', 
+                                     horizontalalignment='center', verticalalignment='center', 
+                                     transform=ax_sector.transAxes, fontsize=12)
+                        ax_sector.set_title(f'Sector Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                    
+                    # Industry pie chart
+                    if has_industry_data:
+                        industries = industry_data.index.tolist()
+                        allocations = industry_data.values.tolist()
+                        
+                        # Create pie chart with percentage labels but only for larger slices to avoid overlap
+                        def make_autopct(values):
+                            def my_autopct(pct):
+                                if pd.isna(pct) or pct is None:
+                                    return ''
+                                total = sum(values)
+                                if pd.isna(total) or total == 0:
+                                    return ''
+                                val = int(round(pct*total/100.0))
+                                # Only show percentage if slice is large enough (>5%)
+                                return f'{pct:.1f}%' if pct > 5 else ''
+                            return my_autopct
+                        
+                        wedges_industry, texts_industry, autotexts_industry = ax_industry.pie(allocations, autopct=make_autopct(allocations), 
+                                                                                             startangle=90, textprops={'fontsize': 10})
+                        
+                        # Create legend with percentages - positioned further to the right
+                        legend_labels = [f"{industry} ({alloc:.1f}%)" for industry, alloc in zip(industries, allocations)]
+                        ax_industry.legend(wedges_industry, legend_labels, title="Industries", loc="center left", bbox_to_anchor=(1.05, 0, 0.5, 1), fontsize=10)
+                        
+                        ax_industry.set_title(f'Industry Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                        # Force perfectly circular shape
+                        ax_industry.set_aspect('equal')
+                        ax_industry.set_xlim(-1.2, 1.2)
+                        ax_industry.set_ylim(-1.2, 1.2)
+                    else:
+                        # No industry data - show placeholder
+                        ax_industry.text(0.5, 0.5, 'No industry data available', 
+                                       horizontalalignment='center', verticalalignment='center', 
+                                       transform=ax_industry.transAxes, fontsize=12)
+                        ax_industry.set_title(f'Industry Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                    
+                    # Adjust layout to maintain circular shapes and accommodate legends
+                    plt.subplots_adjust(hspace=0.4, left=0.1, right=0.7, top=0.95, bottom=0.05)
+                    
+                    # Save to buffer - don't use bbox_inches='tight' to preserve aspect ratio
+                    combined_img_buffer = io.BytesIO()
+                    fig.savefig(combined_img_buffer, format='png', dpi=300, facecolor='white')
+                    combined_img_buffer.seek(0)
+                    plt.close(fig)
+                    
+                    # Add to PDF - maintain square aspect ratio for circular charts
+                    story.append(Image(combined_img_buffer, width=8*inch, height=8*inch))
+                    story.append(Spacer(1, 15))
+                    
+                except Exception as e:
+                    story.append(Paragraph(f"Error creating charts: {str(e)}", styles['Normal']))
         
         # Add page break and move Portfolio Risk Metrics Summary to next page
         story.append(PageBreak())
@@ -3647,20 +3680,16 @@ if st.session_state.get('alloc_backtest_run', False):
         if snapshot and active_name in today_weights_map:
             today_weights = today_weights_map.get(active_name, {})
             
-            # If momentum is not used and today_weights is empty, use the entered allocations
+            # If momentum is not used and today_weights is empty, use the final allocation from last backtest run
             if not use_momentum and (not today_weights or all(v == 0 for v in today_weights.values())):
-                # Use the entered allocations from active_portfolio
-                today_weights = {}
-                for stock in active_portfolio.get('stocks', []):
-                    ticker = stock.get('ticker', '').strip()
-                    if ticker:
-                        today_weights[ticker] = stock.get('allocation', 0)
-                # Add CASH if needed
-                total_alloc = sum(today_weights.values())
-                if total_alloc < 1.0:
-                    today_weights['CASH'] = 1.0 - total_alloc
-                else:
-                    today_weights['CASH'] = 0
+                # Use the final allocation from historical data (NOT current UI inputs)
+                if allocs_for_portfolio:
+                    alloc_dates = sorted(list(allocs_for_portfolio.keys()))
+                    if alloc_dates:
+                        final_date = alloc_dates[-1]
+                        final_alloc = allocs_for_portfolio.get(final_date, {})
+                        today_weights = final_alloc.copy()
+                # If no historical data, leave today_weights empty (will show info message)
             
             labels_today = [k for k, v in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])) if v > 0]
             vals_today = [float(today_weights[k]) * 100 for k in labels_today]
