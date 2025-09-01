@@ -1125,11 +1125,7 @@ if 'strategy_comparison_portfolio_configs' in st.session_state:
         config.pop('use_relative_momentum', None)
         config.pop('equal_if_all_negative', None)
 
-# Initialize portfolio selection persistence - default to first portfolio
-if 'strategy_comparison_detail_portfolio_selector' not in st.session_state:
-    if st.session_state.strategy_comparison_portfolio_configs:
-        first_portfolio_name = st.session_state.strategy_comparison_portfolio_configs[0].get('name', 'Portfolio 1')
-        st.session_state.strategy_comparison_detail_portfolio_selector = f"0 - {first_portfolio_name}"
+# Note: portfolio selection is initialized later when the selector is created
 
 # -----------------------
 # Default JSON configs (for initialization)
@@ -2274,10 +2270,11 @@ def remove_portfolio_callback():
         st.session_state.strategy_comparison_rerun_flag = True
 
 def add_stock_callback():
+    # Add stock without triggering full refresh - just set flag for processing
     st.session_state.strategy_comparison_add_stock_flag = True
 
 def remove_stock_callback(ticker):
-    """Immediate stock removal callback for individual portfolio"""
+    """Immediate stock removal callback for individual portfolio - NO REFRESH"""
     try:
         active_idx = st.session_state.strategy_comparison_active_portfolio_index
         if (0 <= active_idx < len(st.session_state.strategy_comparison_portfolio_configs) and
@@ -2291,6 +2288,8 @@ def remove_stock_callback(ticker):
                     # If this was the last stock, add an empty one
                     if len(stocks) == 0:
                         stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                    # Update global tickers but don't trigger refresh
+                    st.session_state.strategy_comparison_global_tickers = stocks.copy()
                     break
     except (ValueError, IndexError):
         pass
@@ -2460,7 +2459,7 @@ def update_global_stock_dividends(index):
         return
 
 def remove_global_stock_callback(ticker):
-    """Immediate stock removal callback - EXACT COPY FROM MULTI_BACKTEST"""
+    """Immediate stock removal callback - OPTIMIZED NO REFRESH"""
     try:
         global_tickers = st.session_state.strategy_comparison_global_tickers
         
@@ -2471,6 +2470,7 @@ def remove_global_stock_callback(ticker):
                 # If this was the last stock, add an empty one
                 if len(global_tickers) == 0:
                     global_tickers.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                # Sync to all portfolios but don't trigger refresh
                 sync_global_tickers_to_all_portfolios()
                 break
     except (IndexError, KeyError):
@@ -3331,9 +3331,10 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("Global Ticker Management")
 st.sidebar.markdown("*All portfolios use the same tickers*")
 
-# Handle seamless ticker management operations
+# Handle seamless ticker management operations - OPTIMIZED NO REFRESH
 if 'strategy_comparison_add_stock_flag' in st.session_state and st.session_state.strategy_comparison_add_stock_flag:
     st.session_state.strategy_comparison_global_tickers.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+    # Sync to all portfolios but don't trigger refresh
     sync_global_tickers_to_all_portfolios()
     st.session_state.strategy_comparison_add_stock_flag = False
 
@@ -5756,7 +5757,7 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
             "<div style='font-size:16px;font-weight:700;color:#ffffff;margin-bottom:6px;'>Select a portfolio for detailed view</div>"
             "</div>", unsafe_allow_html=True)
 
-        # NUCLEAR APPROACH: Store selection by portfolio name, not display index
+        # SIMPLE APPROACH: Direct selectbox with portfolio names
         portfolio_configs = st.session_state.get('strategy_comparison_portfolio_configs', [])
         
         # Get all available portfolio names
@@ -5764,80 +5765,28 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
         extra_names = [n for n in st.session_state.get('strategy_comparison_all_results', {}).keys() if n not in available_portfolio_names]
         all_portfolio_names = available_portfolio_names + extra_names
         
-        # Initialize persistent selection by name
-        if "strategy_comparison_selected_portfolio_name" not in st.session_state:
-            st.session_state["strategy_comparison_selected_portfolio_name"] = all_portfolio_names[0] if all_portfolio_names else "No portfolios"
-        
-        # Ensure the selected name is still valid
-        if st.session_state["strategy_comparison_selected_portfolio_name"] not in all_portfolio_names and all_portfolio_names:
-            st.session_state["strategy_comparison_selected_portfolio_name"] = all_portfolio_names[0]
-        
-        # Create display options with index prefixes for uniqueness
-        display_options = [f"{i} - {name}" for i, name in enumerate(all_portfolio_names)]
-        
-        # Ensure the detail portfolio selector matches the available options
-        if 'strategy_comparison_detail_portfolio_selector' not in st.session_state or st.session_state.strategy_comparison_detail_portfolio_selector not in display_options:
-            if display_options:
-                st.session_state.strategy_comparison_detail_portfolio_selector = display_options[0]
-        
-        # Find the current selection index
-        current_selection_index = 0
-        if st.session_state["strategy_comparison_selected_portfolio_name"] in all_portfolio_names:
-            current_selection_index = all_portfolio_names.index(st.session_state["strategy_comparison_selected_portfolio_name"])
-        
-        # Ensure the detail portfolio selector is properly synchronized
-        expected_display = f"{current_selection_index} - {st.session_state['strategy_comparison_selected_portfolio_name']}"
-        if st.session_state.get('strategy_comparison_detail_portfolio_selector') != expected_display:
-            st.session_state.strategy_comparison_detail_portfolio_selector = expected_display
-        
-        # Place the selectbox in its own column to make it larger/centered
-        # Build a prominent action row: selector + colored 'View' button
-        left_col, mid_col, right_col = st.columns([1, 3, 1])
-        with mid_col:
-            st.markdown("<div style='display:flex; gap:8px; align-items:center;'>", unsafe_allow_html=True)
-            def update_selected_portfolio():
-                selected_display = st.session_state.get("strategy_comparison_detail_portfolio_selector")
-                if selected_display:
-                    try:
-                        prefix, rest = selected_display.split(' - ', 1)
-                        if prefix.startswith('extra_'):
-                            # extra entries use the rest as the name
-                            st.session_state["strategy_comparison_selected_portfolio_name"] = rest
-                        else:
-                            idx = int(prefix)
-                            # Ensure index is valid and within bounds
-                            if 0 <= idx < len(all_portfolio_names):
-                                st.session_state["strategy_comparison_selected_portfolio_name"] = all_portfolio_names[idx]
-                            else:
-                                # Fallback to first portfolio if index is out of bounds
-                                if all_portfolio_names:
-                                    st.session_state["strategy_comparison_selected_portfolio_name"] = all_portfolio_names[0]
-                    except Exception as e:
-                        # Better error handling - try to extract portfolio name from display string
-                        if ' - ' in selected_display:
-                            _, portfolio_name = selected_display.split(' - ', 1)
-                            st.session_state["strategy_comparison_selected_portfolio_name"] = portfolio_name
-                        else:
-                            st.session_state["strategy_comparison_selected_portfolio_name"] = selected_display
-
-            selected_display = st.selectbox(
-                "Select portfolio for details", 
-                options=display_options, 
-                index=current_selection_index,
-                key="strategy_comparison_detail_portfolio_selector", 
-                help='Choose which portfolio to inspect in detail', 
-                label_visibility='collapsed',
-                on_change=update_selected_portfolio
-            )
-            
-            # Ensure the selection is updated immediately after selectbox creation
-            update_selected_portfolio()
-            # Add a prominent view button with a professional color
-            view_clicked = st.button("View Details", key='strategy_comparison_view_details_btn')
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        # Map display label back to actual portfolio name
-        selected_portfolio_detail = st.session_state["strategy_comparison_selected_portfolio_name"]
+        if not all_portfolio_names:
+            st.warning("No portfolios available for detailed view.")
+            selected_portfolio_detail = None
+        else:
+            # Place the selectbox in its own column to make it larger/centered
+            left_col, mid_col, right_col = st.columns([1, 3, 1])
+            with mid_col:
+                st.markdown("<div style='display:flex; gap:8px; align-items:center;'>", unsafe_allow_html=True)
+                
+                # Simple selectbox that directly uses portfolio names
+                selected_portfolio_detail = st.selectbox(
+                    "Select portfolio for details", 
+                    options=all_portfolio_names,
+                    index=0,
+                    key="strategy_comparison_simple_portfolio_selector", 
+                    help='Choose which portfolio to inspect in detail', 
+                    label_visibility='collapsed'
+                )
+                
+                # Add a prominent view button with a professional color
+                view_clicked = st.button("View Details", key='strategy_comparison_view_details_btn')
+                st.markdown("</div>", unsafe_allow_html=True)
 
         if selected_portfolio_detail:
             # Highlight the selected portfolio and optionally expand details when the View button is used
