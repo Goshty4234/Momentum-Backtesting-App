@@ -2895,21 +2895,7 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
         except Exception as e:
             st.error(f"Error generating PDF: {str(e)}")
     
-    # Add PDF download button for individual portfolio JSON (same function as above)
-    if st.button("📄 Download JSON as PDF", help="Download a PDF containing the JSON configuration for easy copying", key="alloc_individual_json_pdf_btn"):
-        try:
-            pdf_data = generate_json_pdf()
-            st.download_button(
-                label="💾 Download Portfolio JSON PDF",
-                data=pdf_data,
-                file_name=f"allocations_portfolio_{active_portfolio.get('name', 'portfolio').replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
-                mime="application/pdf",
-                key="alloc_individual_json_pdf_download"
-            )
-            st.success("PDF generated successfully! Click the download button above.")
-        except Exception as e:
-            st.error(f"Error generating PDF: {str(e)}")
-    
+
     st.text_area("Paste JSON Here to Update Portfolio", key="alloc_paste_json_text", height=200)
     st.button("Update with Pasted JSON", on_click=paste_json_callback)
     
