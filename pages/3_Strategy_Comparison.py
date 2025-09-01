@@ -13,6 +13,20 @@ import contextlib
 import os
 import plotly.io as pio
 
+# =============================================================================
+# PERFORMANCE OPTIMIZATION: CACHING FUNCTIONS
+# =============================================================================
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_ticker_data(ticker_symbol):
+    """Cache ticker data to improve performance across multiple tabs"""
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
+        return hist
+    except Exception:
+        return pd.DataFrame()
+
 # Matplotlib configuration for high-quality PDF generation
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
@@ -4233,8 +4247,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             try:
                 progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
                 progress_bar.progress((i + 1) / (len(all_tickers) + 1), text=progress_text)
-                ticker = yf.Ticker(t)
-                hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
+                hist = get_ticker_data(t)
                 if hist.empty:
                     # No data available for ticker
                     invalid_tickers.append(t)
