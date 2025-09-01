@@ -23,6 +23,8 @@ scikit-learn>=1.3.0  # For advanced statistical methods
 reportlab>=4.0.0
 Pillow>=10.0.0
 kaleido>=0.2.1
+PyPDF2>=3.0.1
+pdfplumber>=0.11.7
 
 # Date and Time Handling
 python-dateutil>=2.8.0
