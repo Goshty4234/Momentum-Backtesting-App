@@ -98,16 +98,19 @@ def plotly_to_matplotlib_figure(plotly_fig, title="", width_inches=8, height_inc
                     fig_pie, ax_pie = plt.subplots(figsize=(8, 8))  # Force square aspect ratio
                     ax_pie.set_title(title, fontsize=14, fontweight='bold', pad=20)
                     
+                    # Add percentages to labels for legend
+                    labels_with_pct = [f"{k} ({v:.1f}%)" for k, v in zip(labels, values)]
+                    
                     # Create pie chart with colors - only show percentages for larger slices
                     def autopct_format(pct):
                         return f'{pct:.1f}%' if pct > 5 else ''
                     
                     wedges, texts, autotexts = ax_pie.pie(values, labels=labels, autopct=autopct_format, 
-                                                         startangle=90, colors=colors[:len(values)])
+                                                         startangle=90, colors=colors[:len(values)], center=(-0.1, 0))
                     ax_pie.axis('equal')  # This ensures the pie chart is perfectly circular
                     
-                    # Add legend
-                    ax_pie.legend(wedges, labels, title="Categories", loc="center left", bbox_to_anchor=(1, 0, 0.5, 1))
+                    # Add legend with percentages - positioned to the right
+                    ax_pie.legend(wedges, labels_with_pct, title="Categories", loc="center left", bbox_to_anchor=(1.1, 0, 0.5, 1))
                     
                     plt.tight_layout()
                     return fig_pie
@@ -391,15 +394,6 @@ def generate_simple_pdf_report():
                         f"Lookback: {lookback} days, Weight: {weight:.2f}"
                     ])
             
-            # Add stocks with enhanced information
-            stocks_data = [['Ticker', 'Allocation %', 'Include Dividends']]
-            for stock in config.get('stocks', []):
-                stocks_data.append([
-                    stock['ticker'],
-                    f"{stock['allocation']*100:.1f}%",
-                    "✓" if stock['include_dividends'] else "✗"
-                ])
-            
             # Create tables with proper column widths to prevent text overflow
             config_table = Table(config_data, colWidths=[2.2*inch, 1.8*inch, 2.5*inch])
             config_table.setStyle(TableStyle([
@@ -418,22 +412,60 @@ def generate_simple_pdf_report():
                 ('BOTTOMPADDING', (0, 0), (-1, -1), 3)
             ]))
             
-            stocks_table = Table(stocks_data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch])
-            stocks_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
-                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
-                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
-            ]))
-            
             story.append(config_table)
             story.append(PageBreak())
-            story.append(Paragraph("Stock Allocations:", styles['Heading3']))
-            story.append(stocks_table)
-            story.append(Spacer(1, 15))
+            # Show ticker allocations table, but hide Allocation % column if momentum is enabled
+            if not active_portfolio.get('use_momentum', True):
+                story.append(Paragraph("Initial Ticker Allocations (Entered by User):", styles['Heading3']))
+                story.append(Paragraph("Note: These are the initial allocations entered by the user, not rebalanced allocations.", styles['Normal']))
+                
+                # Create full table with Allocation % column for non-momentum strategies
+                stocks_data = [['Ticker', 'Allocation %', 'Include Dividends']]
+                for stock in config.get('stocks', []):
+                    stocks_data.append([
+                        stock['ticker'],
+                        f"{stock['allocation']*100:.1f}%",
+                        "✓" if stock['include_dividends'] else "✗"
+                    ])
+                
+                stocks_table = Table(stocks_data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch])
+                stocks_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                    ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
+                ]))
+                
+                story.append(stocks_table)
+                story.append(Spacer(1, 15))
+            else:
+                story.append(Paragraph("Initial Ticker Allocations:", styles['Heading3']))
+                story.append(Paragraph("Note: Momentum strategy is enabled - ticker allocations are calculated dynamically based on momentum scores.", styles['Normal']))
+                
+                # Create modified table without Allocation % column for momentum strategies
+                stocks_data_momentum = [['Ticker', 'Include Dividends']]
+                for stock in config.get('stocks', []):
+                    stocks_data_momentum.append([
+                        stock['ticker'],
+                        "✓" if stock['include_dividends'] else "✗"
+                    ])
+                
+                stocks_table_momentum = Table(stocks_data_momentum, colWidths=[2.25*inch, 2.25*inch])
+                stocks_table_momentum.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                    ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
+                ]))
+                
+                story.append(stocks_table_momentum)
+                story.append(Spacer(1, 15))
         
         # Update progress
         progress_bar.progress(40)
@@ -764,7 +796,8 @@ def generate_simple_pdf_report():
         
         # SECTION 4: Target Allocation if Rebalanced Today
         story.append(PageBreak())
-        story.append(Paragraph("4. Target Allocation if Rebalanced Today", heading_style))
+        current_date_str = datetime.now().strftime("%B %d, %Y")
+        story.append(Paragraph(f"4. Target Allocation if Rebalanced Today ({current_date_str})", heading_style))
         story.append(Spacer(1, 10))
         
         # Get the allocation data from your existing UI - fetch the existing allocation data
@@ -2995,27 +3028,27 @@ st.text_input("Benchmark Ticker (default: ^GSPC, used for beta calculation)", ke
 st.subheader("Stocks")
 col_stock_buttons = st.columns([0.3, 0.3, 0.3, 0.1])
 with col_stock_buttons[0]:
-    if st.button("Normalize Stocks %", on_click=normalize_stock_allocations_callback, use_container_width=True):
+    if st.button("Normalize Tickers %", on_click=normalize_stock_allocations_callback, use_container_width=True):
         pass
 with col_stock_buttons[1]:
     if st.button("Equal Allocation %", on_click=equal_stock_allocation_callback, use_container_width=True):
         pass
 with col_stock_buttons[2]:
-    if st.button("Reset Stocks", on_click=reset_stock_selection_callback, use_container_width=True):
+    if st.button("Reset Tickers", on_click=reset_stock_selection_callback, use_container_width=True):
         pass
 
-# Calculate live total stock allocation
-valid_stocks = [s for s in st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'] if s['ticker']]
-total_stock_allocation = sum(s['allocation'] for s in valid_stocks)
+# Calculate live total ticker allocation
+valid_tickers = [s for s in st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'] if s['ticker']]
+total_ticker_allocation = sum(s['allocation'] for s in valid_tickers)
 
 use_mom_flag = st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.get('use_momentum', True))
 if use_mom_flag:
-    st.info("Stock allocations are not used directly for Momentum strategies.")
+    st.info("Ticker allocations are not used directly for Momentum strategies.")
 else:
-    if abs(total_stock_allocation - 1.0) > 0.001:
-        st.warning(f"Total stock allocation is {total_stock_allocation*100:.2f}%, not 100%. Click 'Normalize' to fix.")
+    if abs(total_ticker_allocation - 1.0) > 0.001:
+        st.warning(f"Total ticker allocation is {total_ticker_allocation*100:.2f}%, not 100%. Click 'Normalize' to fix.")
     else:
-        st.success(f"Total stock allocation is {total_stock_allocation*100:.2f}%.")
+        st.success(f"Total ticker allocation is {total_ticker_allocation*100:.2f}%.")
 
 def update_stock_allocation(index):
     try:
@@ -3341,8 +3374,132 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     <button onclick='navigator.clipboard.writeText({json.dumps(config_json)});' style='margin-bottom:10px;'>Copy to Clipboard</button>
     """
     components.html(copy_html, height=40)
+    
+    # Add PDF download button for individual portfolio JSON
+    def generate_individual_json_pdf():
+        """Generate a PDF with pure JSON content only for easy CTRL+A / CTRL+V copying."""
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.platypus import SimpleDocTemplate, Preformatted
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        import io
+        
+        # Create PDF buffer
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+        story = []
+        
+        # Pure JSON style - just monospace text
+        json_style = ParagraphStyle(
+            'PureJSONStyle',
+            fontName='Courier',
+            fontSize=10,
+            leading=12,
+            leftIndent=0,
+            rightIndent=0,
+            spaceAfter=0,
+            spaceBefore=0
+        )
+        
+        # Add only the JSON content - no headers, no instructions, just pure JSON
+        json_lines = config_json.split('\n')
+        for line in json_lines:
+            story.append(Preformatted(line, json_style))
+        
+        # Build PDF
+        doc.build(story)
+        pdf_data = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_data
+    
+    if st.button("📄 Download JSON as PDF", help="Download a PDF containing the JSON configuration for easy copying", key="multi_individual_json_pdf_btn"):
+        try:
+            pdf_data = generate_individual_json_pdf()
+            st.download_button(
+                label="💾 Download Portfolio JSON PDF",
+                data=pdf_data,
+                file_name=f"multi_portfolio_{active_portfolio.get('name', 'portfolio').replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf",
+                key="multi_individual_json_pdf_download"
+            )
+            st.success("PDF generated successfully! Click the download button above.")
+        except Exception as e:
+            st.error(f"Error generating PDF: {str(e)}")
+    
     st.text_area("Paste JSON Here to Update Portfolio", key="multi_backtest_paste_json_text", height=200)
     st.button("Update with Pasted JSON", on_click=paste_json_callback)
+    
+    # Add PDF drag and drop functionality
+    st.markdown("**OR** 📎 **Drag & Drop JSON PDF:**")
+    
+    def extract_json_from_pdf(pdf_file):
+        """Extract JSON content from a PDF file."""
+        try:
+            # Try pdfplumber first (more reliable)
+            try:
+                import pdfplumber
+                import io
+                
+                # Read PDF content with pdfplumber
+                pdf_bytes = io.BytesIO(pdf_file.read())
+                text_content = ""
+                
+                with pdfplumber.open(pdf_bytes) as pdf:
+                    for page in pdf.pages:
+                        text_content += page.extract_text() or ""
+                        
+            except ImportError:
+                # Fallback to PyPDF2 if pdfplumber not available
+                try:
+                    import PyPDF2
+                    import io
+                    
+                    # Reset file pointer
+                    pdf_file.seek(0)
+                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_file.read()))
+                    
+                    # Extract text from all pages
+                    text_content = ""
+                    for page in pdf_reader.pages:
+                        text_content += page.extract_text()
+                        
+                except ImportError:
+                    return None, "PDF extraction libraries not available. Please install 'pip install PyPDF2' or 'pip install pdfplumber'"
+            
+            # Clean up the text and try to parse as JSON
+            cleaned_text = text_content.strip()
+            
+            # Try to parse as JSON
+            import json
+            json_data = json.loads(cleaned_text)
+            return json_data, None
+            
+        except json.JSONDecodeError as e:
+            return None, f"Invalid JSON in PDF: {str(e)}"
+        except Exception as e:
+            return None, str(e)
+    
+    uploaded_pdf = st.file_uploader(
+        "Drop your JSON PDF here", 
+        type=['pdf'], 
+        help="Upload a JSON PDF file generated by this app to automatically load the configuration",
+        key="multi_individual_pdf_upload"
+    )
+    
+    if uploaded_pdf is not None:
+        json_data, error = extract_json_from_pdf(uploaded_pdf)
+        if json_data:
+            # Store the extracted JSON in a different session state key to avoid widget conflicts
+            st.session_state["multi_backtest_extracted_json"] = json.dumps(json_data, indent=4)
+            st.success(f"✅ Successfully extracted JSON from {uploaded_pdf.name}")
+            st.info("👇 Click the button below to load the JSON into the text area.")
+            def load_extracted_json():
+                st.session_state["multi_backtest_paste_json_text"] = st.session_state["multi_backtest_extracted_json"]
+            
+            st.button("📋 Load Extracted JSON", key="load_extracted_json", on_click=load_extracted_json)
+        else:
+            st.error(f"❌ Failed to extract JSON from PDF: {error}")
+            st.info("💡 Make sure the PDF contains valid JSON content (generated by this app)")
 
 # Validation constants
 _TOTAL_TOL = 1.0
@@ -3366,7 +3523,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             valid_stocks_for_cfg = [s for s in cfg['stocks'] if s['ticker']]
             total_stock_allocation = sum(s['allocation'] for s in valid_stocks_for_cfg)
             if abs(total_stock_allocation - 1.0) > (_ALLOC_TOL / 100.0):
-                validation_errors.append(f"Portfolio '{cfg['name']}' is not using momentum, but the total stock allocation is {total_stock_allocation*100:.2f}% (must be 100%)")
+                validation_errors.append(f"Portfolio '{cfg['name']}' is not using momentum, but the total ticker allocation is {total_ticker_allocation*100:.2f}% (must be 100%)")
                 valid_configs = False
                 
     if not valid_configs:
@@ -4328,8 +4485,132 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
     <button onclick='navigator.clipboard.writeText({json.dumps(all_json)});' style='margin-bottom:10px;'>Copy All Configs to Clipboard</button>
     """
     components.html(copy_html_all, height=40)
+    
+    # Add PDF download button for JSON
+    def generate_json_pdf():
+        """Generate a PDF with pure JSON content only for easy CTRL+A / CTRL+V copying."""
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.platypus import SimpleDocTemplate, Preformatted
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        import io
+        
+        # Create PDF buffer
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+        story = []
+        
+        # Pure JSON style - just monospace text
+        json_style = ParagraphStyle(
+            'PureJSONStyle',
+            fontName='Courier',
+            fontSize=10,
+            leading=12,
+            leftIndent=0,
+            rightIndent=0,
+            spaceAfter=0,
+            spaceBefore=0
+        )
+        
+        # Add only the JSON content - no headers, no instructions, just pure JSON
+        json_lines = all_json.split('\n')
+        for line in json_lines:
+            story.append(Preformatted(line, json_style))
+        
+        # Build PDF
+        doc.build(story)
+        pdf_data = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_data
+    
+    if st.button("📄 Download JSON as PDF", help="Download a PDF containing the JSON configuration for easy copying", key="multi_backtest_json_pdf_btn"):
+        try:
+            pdf_data = generate_json_pdf()
+            st.download_button(
+                label="💾 Download Multi Backtest JSON PDF",
+                data=pdf_data,
+                file_name=f"multi_backtest_configs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf",
+                key="multi_backtest_json_pdf_download"
+            )
+            st.success("PDF generated successfully! Click the download button above.")
+        except Exception as e:
+            st.error(f"Error generating PDF: {str(e)}")
+    
     st.text_area('Paste JSON Here to Replace All Portfolios', key='multi_backtest_paste_all_json_text', height=240)
     st.button('Update All Portfolios from JSON', on_click=paste_all_json_callback)
+    
+    # Add PDF drag and drop functionality for all portfolios
+    st.markdown("**OR** 📎 **Drag & Drop JSON PDF:**")
+    
+    def extract_json_from_pdf_all(pdf_file):
+        """Extract JSON content from a PDF file."""
+        try:
+            # Try pdfplumber first (more reliable)
+            try:
+                import pdfplumber
+                import io
+                
+                # Read PDF content with pdfplumber
+                pdf_bytes = io.BytesIO(pdf_file.read())
+                text_content = ""
+                
+                with pdfplumber.open(pdf_bytes) as pdf:
+                    for page in pdf.pages:
+                        text_content += page.extract_text() or ""
+                        
+            except ImportError:
+                # Fallback to PyPDF2 if pdfplumber not available
+                try:
+                    import PyPDF2
+                    import io
+                    
+                    # Reset file pointer
+                    pdf_file.seek(0)
+                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_file.read()))
+                    
+                    # Extract text from all pages
+                    text_content = ""
+                    for page in pdf_reader.pages:
+                        text_content += page.extract_text()
+                        
+                except ImportError:
+                    return None, "PDF extraction libraries not available. Please install 'pip install PyPDF2' or 'pip install pdfplumber'"
+            
+            # Clean up the text and try to parse as JSON
+            cleaned_text = text_content.strip()
+            
+            # Try to parse as JSON
+            import json
+            json_data = json.loads(cleaned_text)
+            return json_data, None
+            
+        except json.JSONDecodeError as e:
+            return None, f"Invalid JSON in PDF: {str(e)}"
+        except Exception as e:
+            return None, str(e)
+    
+    uploaded_pdf_all = st.file_uploader(
+        "Drop your All Portfolios JSON PDF here", 
+        type=['pdf'], 
+        help="Upload a JSON PDF file containing all portfolio configurations",
+        key="multi_all_pdf_upload"
+    )
+    
+    if uploaded_pdf_all is not None:
+        json_data, error = extract_json_from_pdf_all(uploaded_pdf_all)
+        if json_data:
+            # Store the extracted JSON in a different session state key to avoid widget conflicts
+            st.session_state["multi_backtest_extracted_json_all"] = json.dumps(json_data, indent=2)
+            st.success(f"✅ Successfully extracted JSON from {uploaded_pdf_all.name}")
+            st.info("👇 Click the button below to load the JSON into the text area.")
+            def load_extracted_json_all():
+                st.session_state["multi_backtest_paste_all_json_text"] = st.session_state["multi_backtest_extracted_json_all"]
+            
+            st.button("📋 Load Extracted JSON", key="load_extracted_json_all", on_click=load_extracted_json_all)
+        else:
+            st.error(f"❌ Failed to extract JSON from PDF: {error}")
+            st.info("💡 Make sure the PDF contains valid JSON content (generated by this app)")
 
 if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_ran:
     if 'multi_all_results' in st.session_state and st.session_state.multi_all_results:
@@ -5454,7 +5735,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 def highlight_rows_by_index(s):
                     is_even_row = allocations_df_raw.index.get_loc(s.name) % 2 == 0
                     bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
-                    return [bg_color] * len(s)
+                    return [f'{bg_color}; color: white;'] * len(s)
 
                 styler = allocations_df_raw.mul(100).style.apply(highlight_rows_by_index, axis=1)
                 styler.format('{:,.0f}%', na_rep='N/A')
@@ -5477,6 +5758,30 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                             asset_weights.append(data.get('Calculated_Weight', 0))
                         # Filter out any internal-only keys (e.g., 'Composite') so they don't show in the UI
                         filtered_data = {k: v for k, v in (data or {}).items() if k != 'Composite'}
+                        
+                        # Check if momentum is used for this portfolio
+                        portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                        portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
+                        use_momentum = portfolio_cfg.get('use_momentum', True) if portfolio_cfg else True
+                        
+                        # If momentum is not used, replace Calculated_Weight with target_allocation
+                        if not use_momentum:
+                            if 'target_allocation' in filtered_data:
+                                filtered_data['Calculated_Weight'] = filtered_data['target_allocation']
+                            else:
+                                # If target_allocation is not available, use the entered allocations from portfolio_cfg
+                                ticker_name = display_ticker if display_ticker != 'CASH' else None
+                                if ticker_name and portfolio_cfg:
+                                    # Find the stock in portfolio_cfg and use its allocation
+                                    for stock in portfolio_cfg.get('stocks', []):
+                                        if stock.get('ticker', '').strip() == ticker_name:
+                                            filtered_data['Calculated_Weight'] = stock.get('allocation', 0)
+                                            break
+                                elif display_ticker == 'CASH' and portfolio_cfg:
+                                    # For CASH, calculate the remaining allocation
+                                    total_alloc = sum(stock.get('allocation', 0) for stock in portfolio_cfg.get('stocks', []))
+                                    filtered_data['Calculated_Weight'] = max(0, 1.0 - total_alloc)
+                        
                         record = {'Date': date, 'Ticker': display_ticker, **filtered_data}
                         metrics_records.append(record)
                     
@@ -5489,7 +5794,18 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                             cash_exists = any(record['Date'] == date and record['Ticker'] == 'CASH' for record in metrics_records)
                             if not cash_exists:
                                 # Add CASH line to metrics
-                                cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': cash_alloc}
+                                # Check if momentum is used to determine which weight to show
+                                portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                                portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
+                                use_momentum = portfolio_cfg.get('use_momentum', True) if portfolio_cfg else True
+                                
+                                if not use_momentum:
+                                    # When momentum is not used, calculate CASH allocation from entered allocations
+                                    total_alloc = sum(stock.get('allocation', 0) for stock in portfolio_cfg.get('stocks', []))
+                                    cash_weight = max(0, 1.0 - total_alloc)
+                                    cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': cash_weight}
+                                else:
+                                    cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': cash_alloc}
                                 metrics_records.append(cash_record)
                     
                     # Add CASH line if fully allocated to cash (100%) or all asset weights are 0% (fallback logic)
@@ -5539,7 +5855,16 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         if isinstance(val, (int, float)):
                             color = 'green' if val > 0 else 'red'
                             return f'color: {color}'
-                        return ''
+                        # Force white color for None, NA, and other non-numeric values
+                        return 'color: #FFFFFF; font-weight: bold;'
+                    
+                    def color_all_columns(val):
+                        # Force white color for None, NA, and other non-numeric values in ALL columns
+                        if pd.isna(val) or val == 'None' or val == 'NA' or val == '':
+                            return 'color: #FFFFFF; font-weight: bold;'
+                        if isinstance(val, (int, float)):
+                            return ''  # Let default styling handle numeric values
+                        return 'color: #FFFFFF; font-weight: bold;'  # Force white for any other text
                     
                     def highlight_metrics_rows(s):
                         date_str = s.name[0]
@@ -5547,11 +5872,11 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         # If this is the CASH row, use dark green background
                         if 'CASH' in ticker_str:
                             return ['background-color: #006400; color: white; font-weight: bold;' for _ in s]
-                        # Otherwise, alternate row colors by date
+                        # Otherwise, alternate row colors by date with WHITE TEXT
                         unique_dates = list(metrics_df_display.index.get_level_values(0).unique())
                         is_even = unique_dates.index(date_str) % 2 == 0
                         bg_color = 'background-color: #0e1117' if is_even else 'background-color: #262626'
-                        return [bg_color] * len(s)
+                        return [f'{bg_color}; color: white;'] * len(s)
 
                     # Format Calculated_Weight as a percentage if present
                     if 'Calculated_Weight' in metrics_df_display.columns:
@@ -5564,6 +5889,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     styler_metrics = metrics_df_display.style.apply(highlight_metrics_rows, axis=1)
                     if 'Momentum' in metrics_df_display.columns:
                         styler_metrics = styler_metrics.map(color_momentum, subset=['Momentum'])
+                    # Force white color for None/NA values in ALL columns
+                    styler_metrics = styler_metrics.map(color_all_columns)
 
                     fmt_dict = {}
                     if 'Momentum' in metrics_df_display.columns:
@@ -5577,6 +5904,69 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
 
                     if fmt_dict:
                         styler_metrics = styler_metrics.format(fmt_dict)
+                    
+                    # NUCLEAR OPTION: Inject custom CSS to override Streamlit's stubborn styling
+                    st.markdown("""
+                    <style>
+                    /* NUCLEAR CSS OVERRIDE - BEAT STREAMLIT INTO SUBMISSION */
+                    .stDataFrame [data-testid="stDataFrame"] div[data-testid="stDataFrame"] table td,
+                    .stDataFrame [data-testid="stDataFrame"] div[data-testid="stDataFrame"] table th,
+                    .stDataFrame table td,
+                    .stDataFrame table th {
+                        color: #FFFFFF !important;
+                        font-weight: bold !important;
+                        text-shadow: 1px 1px 2px black !important;
+                    }
+                    
+                    /* Force ALL text in dataframes to be white */
+                    .stDataFrame * {
+                        color: #FFFFFF !important;
+                    }
+                    
+                    /* Override any Streamlit bullshit */
+                    .stDataFrame [data-testid="stDataFrame"] *,
+                    .stDataFrame div[data-testid="stDataFrame"] * {
+                        color: #FFFFFF !important;
+                        font-weight: bold !important;
+                    }
+                    
+                    /* Target EVERYTHING in the dataframe */
+                    .stDataFrame table *,
+                    .stDataFrame div table *,
+                    .stDataFrame [data-testid="stDataFrame"] table *,
+                    .stDataFrame [data-testid="stDataFrame"] div table * {
+                        color: #FFFFFF !important;
+                        font-weight: bold !important;
+                    }
+                    
+                    /* Target all cells specifically */
+                    .stDataFrame td,
+                    .stDataFrame th,
+                    .stDataFrame table td,
+                    .stDataFrame table th {
+                        color: #FFFFFF !important;
+                        font-weight: bold !important;
+                    }
+                    
+                    /* Target Streamlit's specific elements */
+                    div[data-testid="stDataFrame"] table td,
+                    div[data-testid="stDataFrame"] table th,
+                    div[data-testid="stDataFrame"] div table td,
+                    div[data-testid="stDataFrame"] div table th {
+                        color: #FFFFFF !important;
+                        font-weight: bold !important;
+                    }
+                    
+                    /* Target everything with maximum specificity */
+                    div[data-testid="stDataFrame"] *,
+                    div[data-testid="stDataFrame"] div *,
+                    div[data-testid="stDataFrame"] table *,
+                    div[data-testid="stDataFrame"] div table * {
+                        color: #FFFFFF !important;
+                        font-weight: bold !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
 
                     st.dataframe(styler_metrics, use_container_width=True)
 
@@ -6060,11 +6450,10 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                 st.session_state[table_key] = fig_alloc_table
                                             except Exception as e:
                                                 pass
-                                            except Exception as e:
-                                                pass
+
                                 except Exception as e:
                                     pass
-
+                                
                                 # Other rebalancing plots (smaller, placed after the main one)
                                 st.markdown("---")
                                 st.markdown("**📊 Historical Rebalancing Comparison**")
