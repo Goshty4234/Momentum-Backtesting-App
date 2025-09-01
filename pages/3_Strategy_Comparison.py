@@ -5757,7 +5757,7 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
             "<div style='font-size:16px;font-weight:700;color:#ffffff;margin-bottom:6px;'>Select a portfolio for detailed view</div>"
             "</div>", unsafe_allow_html=True)
 
-        # SIMPLE APPROACH: Direct selectbox with portfolio names
+        # HYBRID APPROACH: Simple selectbox with state persistence
         portfolio_configs = st.session_state.get('strategy_comparison_portfolio_configs', [])
         
         # Get all available portfolio names
@@ -5769,20 +5769,45 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
             st.warning("No portfolios available for detailed view.")
             selected_portfolio_detail = None
         else:
+            # Initialize and maintain selection persistence
+            if "strategy_comparison_selected_portfolio_name" not in st.session_state:
+                st.session_state["strategy_comparison_selected_portfolio_name"] = all_portfolio_names[0]
+            
+            # Ensure the selected name is still valid (in case portfolios changed)
+            if st.session_state["strategy_comparison_selected_portfolio_name"] not in all_portfolio_names:
+                st.session_state["strategy_comparison_selected_portfolio_name"] = all_portfolio_names[0]
+            
+            # Find the current selection index for the selectbox
+            current_index = 0
+            try:
+                current_index = all_portfolio_names.index(st.session_state["strategy_comparison_selected_portfolio_name"])
+            except ValueError:
+                current_index = 0
+                st.session_state["strategy_comparison_selected_portfolio_name"] = all_portfolio_names[0]
+            
             # Place the selectbox in its own column to make it larger/centered
             left_col, mid_col, right_col = st.columns([1, 3, 1])
             with mid_col:
                 st.markdown("<div style='display:flex; gap:8px; align-items:center;'>", unsafe_allow_html=True)
                 
-                # Simple selectbox that directly uses portfolio names
+                # Callback to update state immediately when selection changes
+                def update_portfolio_selection():
+                    selected = st.session_state["strategy_comparison_simple_portfolio_selector"]
+                    st.session_state["strategy_comparison_selected_portfolio_name"] = selected
+                
+                # Simple selectbox with state persistence
                 selected_portfolio_detail = st.selectbox(
                     "Select portfolio for details", 
                     options=all_portfolio_names,
-                    index=0,
+                    index=current_index,
                     key="strategy_comparison_simple_portfolio_selector", 
                     help='Choose which portfolio to inspect in detail', 
-                    label_visibility='collapsed'
+                    label_visibility='collapsed',
+                    on_change=update_portfolio_selection
                 )
+                
+                # Use the persisted state value (updated by callback)
+                selected_portfolio_detail = st.session_state["strategy_comparison_selected_portfolio_name"]
                 
                 # Add a prominent view button with a professional color
                 view_clicked = st.button("View Details", key='strategy_comparison_view_details_btn')
