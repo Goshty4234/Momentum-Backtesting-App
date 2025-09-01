@@ -23,6 +23,61 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 import base64
 warnings.filterwarnings('ignore')
 
+# =============================================================================
+# PERFORMANCE OPTIMIZATION: CACHING FUNCTIONS
+# =============================================================================
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_ticker_data(ticker_symbol):
+    """Cache ticker data to improve performance across multiple tabs"""
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
+        return hist
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes  
+def get_ticker_info(ticker_symbol):
+    """Cache ticker info to improve performance across multiple tabs"""
+    try:
+        stock = yf.Ticker(ticker_symbol)
+        info = stock.info
+        return info
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=600)  # Cache for 10 minutes
+def calculate_portfolio_metrics(portfolio_config, allocation_data):
+    """Cache heavy portfolio calculations to improve performance"""
+    # This will cache the results of expensive portfolio calculations
+    # Note: The actual calculation logic remains unchanged
+    return portfolio_config, allocation_data  # Placeholder - will be filled in by calling functions
+
+def optimize_data_loading():
+    """Session state optimization to prevent redundant operations"""
+    # Initialize performance flags if not present
+    if 'alloc_data_loaded' not in st.session_state:
+        st.session_state.alloc_data_loaded = False
+    if 'alloc_last_refresh' not in st.session_state:
+        st.session_state.alloc_last_refresh = None
+    
+    # Check if data needs refresh (5 minutes)
+    current_time = datetime.datetime.now()
+    if (st.session_state.alloc_last_refresh is None or 
+        (current_time - st.session_state.alloc_last_refresh).seconds > 300):
+        st.session_state.alloc_data_loaded = False
+        st.session_state.alloc_last_refresh = current_time
+    
+    return st.session_state.alloc_data_loaded
+
+@st.cache_data(ttl=1800)  # Cache for 30 minutes - expensive backtest calculations
+def run_cached_backtest(portfolios_json, start_date, end_date, benchmark):
+    """Cache expensive backtest calculations to dramatically improve multi-tab performance"""
+    # This will be called by the actual backtest functions when needed
+    # The caching key includes all parameters that affect the backtest result
+    return portfolios_json, start_date, end_date, benchmark  # Placeholder for actual implementation
+
 def check_currency_warning(tickers):
     """
     Check if any tickers are non-USD and display a warning.
@@ -3023,8 +3078,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             try:
                 progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
                 progress_bar.progress((i + 1) / (len(all_tickers) + len(portfolio_list)), text=progress_text)
-                ticker = yf.Ticker(t)
-                hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
+                hist = get_ticker_data(t)
                 if hist.empty:
                     print(f"No data available for {t}")
                     invalid_tickers.append(t)
@@ -3819,8 +3873,7 @@ if st.session_state.get('alloc_backtest_run', False):
                     
                     try:
                         # Fetch comprehensive data from Yahoo Finance
-                        stock = yf.Ticker(ticker)
-                        info = stock.info
+                        info = get_ticker_info(ticker)
                         
                         # Get current price
                         current_price = info.get('currentPrice', info.get('regularMarketPrice', None))
