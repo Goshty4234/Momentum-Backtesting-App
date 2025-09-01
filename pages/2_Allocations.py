@@ -11,6 +11,16 @@ import json
 import io
 import contextlib
 import warnings
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.dates as mdates
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors as reportlab_colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+import base64
 warnings.filterwarnings('ignore')
 
 def check_currency_warning(tickers):
@@ -583,6 +593,995 @@ def format_time_until(time_until):
         return f"{hours} hours, {minutes} minutes"
     else:
         return f"{minutes} minutes"
+
+# -----------------------
+# PDF Generation Functions
+# -----------------------
+def plotly_to_matplotlib_figure(plotly_fig, title="", width_inches=8, height_inches=6):
+    """
+    Convert a Plotly figure to a matplotlib figure for PDF generation
+    """
+    try:
+        # Extract data from Plotly figure
+        fig_data = plotly_fig.data
+        
+        # Create matplotlib figure
+        fig, ax = plt.subplots(figsize=(width_inches, height_inches))
+        
+        # Set title
+        if title:
+            ax.set_title(title, fontsize=14, fontweight='bold', pad=20)
+        
+        # Define a color palette for different traces
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+        color_index = 0
+        
+        # Process each trace
+        for trace in fig_data:
+            if trace.type == 'scatter':
+                x_data = trace.x
+                y_data = trace.y
+                name = trace.name if hasattr(trace, 'name') and trace.name else f'Trace {color_index}'
+                
+                # Get color from trace or use palette
+                if hasattr(trace, 'line') and hasattr(trace.line, 'color') and trace.line.color:
+                    color = trace.line.color
+                else:
+                    color = colors[color_index % len(colors)]
+                
+                # Plot the line
+                ax.plot(x_data, y_data, label=name, linewidth=2, color=color)
+                color_index += 1
+                
+            elif trace.type == 'bar':
+                x_data = trace.x
+                y_data = trace.y
+                name = trace.name if hasattr(trace, 'name') and trace.name else f'Bar {color_index}'
+                
+                # Get color from trace or use palette
+                if hasattr(trace, 'marker') and hasattr(trace.marker, 'color') and trace.marker.color:
+                    color = trace.marker.color
+                else:
+                    color = colors[color_index % len(colors)]
+                
+                # Plot the bars
+                ax.bar(x_data, y_data, label=name, color=color, alpha=0.7)
+                color_index += 1
+                
+            elif trace.type == 'pie':
+                # Handle pie charts
+                labels = trace.labels if hasattr(trace, 'labels') else []
+                values = trace.values if hasattr(trace, 'values') else []
+                
+                if labels and values:
+                    # Create a new figure for pie chart with square aspect ratio
+                    fig_pie, ax_pie = plt.subplots(figsize=(8, 8))  # Force square aspect ratio
+                    ax_pie.set_title(title, fontsize=14, fontweight='bold', pad=20)
+                    
+                    # Add percentages to labels for legend
+                    labels_with_pct = [f"{k} ({v:.1f}%)" for k, v in zip(labels, values)]
+                    
+                    # Create pie chart with colors - only show percentages for larger slices
+                    def autopct_format(pct):
+                        return f'{pct:.1f}%' if pct > 5 else ''
+                    
+                    wedges, texts, autotexts = ax_pie.pie(values, labels=labels, autopct=autopct_format, 
+                                                     startangle=90, colors=colors[:len(values)], center=(-0.1, 0))
+                    ax_pie.axis('equal')  # This ensures the pie chart is perfectly circular
+                    
+                    # Add legend with percentages
+                    ax_pie.legend(wedges, labels_with_pct, title="Categories", loc="center left", bbox_to_anchor=(1.1, 0, 0.5, 1))
+                    
+                    plt.tight_layout()
+                    return fig_pie
+        
+        # Format the plot
+        ax.grid(True, alpha=0.3)
+        if ax.get_legend_handles_labels()[0]:  # Only add legend if there are labels
+            ax.legend(loc='best', frameon=True, fancybox=True, shadow=True)
+        
+        # Format x-axis for dates if needed
+        if fig_data and len(fig_data) > 0 and hasattr(fig_data[0], 'x') and fig_data[0].x is not None:
+            try:
+                # Try to parse as dates
+                dates = pd.to_datetime(fig_data[0].x)
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+                ax.xaxis.set_major_locator(mdates.YearLocator(interval=2))  # Show every 2 years
+                plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+            except:
+                pass
+        
+        # Adjust layout
+        plt.tight_layout()
+        
+        return fig
+        
+    except Exception as e:
+        # Return a simple error figure
+        fig, ax = plt.subplots(figsize=(width_inches, height_inches))
+        ax.text(0.5, 0.5, f'Error converting plot: {str(e)}', 
+                ha='center', va='center', transform=ax.transAxes, fontsize=12)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        return fig
+
+def create_matplotlib_table(data, headers=None):
+    """Create a matplotlib table for PDF generation."""
+    try:
+        if data is None or len(data) == 0:
+            return None
+        
+        # Convert data to proper format
+        if isinstance(data, pd.DataFrame):
+            table_data = data.values.tolist()
+            if headers is None:
+                headers = data.columns.tolist()
+        else:
+            table_data = data
+            if headers is None:
+                headers = [f'Col {i+1}' for i in range(len(data[0]))]
+        
+        # Create figure and axis
+        fig, ax = plt.subplots(figsize=(12, 8))
+        ax.axis('tight')
+        ax.axis('off')
+        
+        # Create table
+        table = ax.table(cellText=table_data, colLabels=headers, cellLoc='center', loc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1.2, 1.5)
+        
+        return fig
+    except Exception as e:
+        print(f"Error creating matplotlib table: {e}")
+        return None
+
+def generate_allocations_pdf():
+    """Generate PDF report for allocations page."""
+    try:
+        # Create progress bar
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        status_text.text("📄 Initializing PDF document...")
+        
+        # Get active portfolio configuration
+        active_portfolio = st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]
+        
+        # Create PDF document
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72, topMargin=72, bottomMargin=72)
+        story = []
+        
+        # Define styles
+        styles = getSampleStyleSheet()
+        heading_style = ParagraphStyle(
+            'CustomHeading',
+            parent=styles['Heading1'],
+            fontSize=14,
+            spaceAfter=20,
+            alignment=TA_CENTER,
+            leftIndent=0,
+            rightIndent=0,
+            firstLineIndent=0,
+            wordWrap=False
+        )
+        subheading_style = ParagraphStyle(
+            'CustomSubheading',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=15
+        )
+        
+        # Title page (no page break before)
+        title_style = ParagraphStyle(
+            'TitlePage',
+            parent=styles['Title'],
+            fontSize=24,
+            spaceAfter=30,
+            textColor=reportlab_colors.Color(0.2, 0.4, 0.6),
+            alignment=1  # Center alignment
+        )
+        
+        subtitle_style = ParagraphStyle(
+            'SubtitlePage',
+            parent=styles['Normal'],
+            fontSize=16,
+            spaceAfter=40,
+            textColor=reportlab_colors.Color(0.4, 0.6, 0.8),
+            alignment=1  # Center alignment
+        )
+        
+        # Main title
+        story.append(Paragraph("Portfolio Allocations Report", title_style))
+        story.append(Paragraph("Comprehensive Investment Portfolio Analysis", subtitle_style))
+        
+        # Set document title for PDF viewer
+        doc.title = "Portfolio Allocations Report"
+        doc.author = "Momentum Backtest System"
+        doc.subject = "Investment Portfolio Analysis Report"
+        
+        # Report metadata
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        story.append(Paragraph(f"Generated on: {current_time}", styles['Normal']))
+        story.append(Spacer(1, 10))
+        
+        # Table of contents
+        toc_style = ParagraphStyle(
+            'TOC',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=15,
+            textColor=reportlab_colors.Color(0.3, 0.5, 0.7)
+        )
+        
+        story.append(Paragraph("Table of Contents", toc_style))
+        toc_points = [
+            "Portfolio Configurations & Parameters",
+            "Target Allocation if Rebalanced Today",
+            "Portfolio-Weighted Summary Statistics",
+            "Portfolio Composition Analysis"
+        ]
+        
+        for i, point in enumerate(toc_points, 1):
+            story.append(Paragraph(f"{i}. {point}", styles['Normal']))
+        
+        story.append(Spacer(1, 30))
+        
+        # Report overview
+        overview_style = ParagraphStyle(
+            'Overview',
+            parent=styles['Heading2'],
+            fontSize=14,
+            spaceAfter=15,
+            textColor=reportlab_colors.Color(0.3, 0.5, 0.7)
+        )
+        
+        story.append(Paragraph("Report Overview", overview_style))
+        story.append(Paragraph("This report provides comprehensive analysis of investment portfolios, including:", styles['Normal']))
+        
+        # Overview bullet points
+        overview_points = [
+            "Detailed portfolio configurations with all parameters and strategies",
+            "Current allocations and rebalancing countdown timers"
+        ]
+        
+        for point in overview_points:
+            story.append(Paragraph(f"• {point}", styles['Normal']))
+        
+        story.append(PageBreak())
+        
+        # Update progress
+        progress_bar.progress(20)
+        status_text.text("📊 Adding portfolio configurations...")
+        
+        # SECTION 1: Portfolio Configurations & Parameters
+        story.append(Paragraph("1. Portfolio Configurations & Parameters", heading_style))
+        story.append(Spacer(1, 20))
+        
+        story.append(Paragraph(f"Portfolio: {active_portfolio.get('name', 'Unknown')}", subheading_style))
+        story.append(Spacer(1, 10))
+        
+        # Create configuration table with all parameters
+        config_data = [
+            ['Parameter', 'Value', 'Description'],
+            ['Initial Value', f"${active_portfolio.get('initial_value', 0):,.2f}", 'Starting portfolio value'],
+            ['Added Amount', f"${active_portfolio.get('added_amount', 0):,.2f}", 'Regular contribution amount'],
+            ['Added Frequency', active_portfolio.get('added_frequency', 'N/A'), 'How often contributions are made'],
+            ['Rebalancing Frequency', active_portfolio.get('rebalancing_frequency', 'N/A'), 'How often portfolio is rebalanced'],
+            ['Benchmark', active_portfolio.get('benchmark_ticker', 'N/A'), 'Performance comparison index'],
+            ['Use Momentum', 'Yes' if active_portfolio.get('use_momentum', False) else 'No', 'Whether momentum strategy is enabled'],
+            ['Momentum Strategy', active_portfolio.get('momentum_strategy', 'N/A'), 'Type of momentum calculation'],
+            ['Negative Momentum Strategy', active_portfolio.get('negative_momentum_strategy', 'N/A'), 'How to handle negative momentum'],
+            ['Calculate Beta', 'Yes' if active_portfolio.get('calc_beta', False) else 'No', 'Include beta in momentum weighting'],
+            ['Calculate Volatility', 'Yes' if active_portfolio.get('calc_volatility', False) else 'No', 'Include volatility in momentum weighting'],
+            ['Start Strategy', active_portfolio.get('start_with', 'N/A'), 'Initial allocation strategy'],
+            ['Beta Lookback', f"{active_portfolio.get('beta_window_days', 0)} days", 'Days for beta calculation'],
+            ['Beta Exclude', f"{active_portfolio.get('exclude_days_beta', 0)} days", 'Days excluded from beta calculation'],
+            ['Volatility Lookback', f"{active_portfolio.get('vol_window_days', 0)} days", 'Days for volatility calculation'],
+            ['Volatility Exclude', f"{active_portfolio.get('exclude_days_vol', 0)} days", 'Days excluded from volatility calculation']
+        ]
+        
+        # Add momentum windows if they exist
+        momentum_windows = active_portfolio.get('momentum_windows', [])
+        if momentum_windows:
+            for i, window in enumerate(momentum_windows, 1):
+                lookback = window.get('lookback', 0)
+                weight = window.get('weight', 0)
+                config_data.append([
+                    f'Momentum Window {i}',
+                    f"{lookback} days, {weight:.2f}",
+                    f"Lookback: {lookback} days, Weight: {weight:.2f}"
+                ])
+        
+        # Add tickers with enhanced information
+        tickers_data = [['Ticker', 'Allocation %', 'Include Dividends']]
+        for ticker_config in active_portfolio.get('stocks', []):
+            tickers_data.append([
+                ticker_config['ticker'],
+                f"{ticker_config['allocation']*100:.1f}%",
+                "✓" if ticker_config['include_dividends'] else "✗"
+            ])
+        
+        # Create tables with proper column widths to prevent text overflow
+        config_table = Table(config_data, colWidths=[2.2*inch, 1.8*inch, 2.5*inch])
+        config_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('WORDWRAP', (0, 0), (-1, -1), True),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 3)
+        ]))
+        
+        tickers_table = Table(tickers_data, colWidths=[1.5*inch, 1.5*inch, 1.5*inch])
+        tickers_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
+        ]))
+        
+        story.append(config_table)
+        story.append(PageBreak())
+        # Show ticker allocations table, but hide Allocation % column if momentum is enabled
+        if not active_portfolio.get('use_momentum', True):
+            story.append(Paragraph("Initial Ticker Allocations (Entered by User):", styles['Heading3']))
+            story.append(Paragraph("Note: These are the initial allocations entered by the user, not rebalanced allocations.", styles['Normal']))
+            story.append(tickers_table)
+            story.append(Spacer(1, 15))
+        else:
+            story.append(Paragraph("Initial Ticker Allocations:", styles['Heading3']))
+            story.append(Paragraph("Note: Momentum strategy is enabled - ticker allocations are calculated dynamically based on momentum scores.", styles['Normal']))
+            
+            # Create modified table without Allocation % column for momentum strategies
+            tickers_data_momentum = [['Ticker', 'Include Dividends']]
+            for ticker_config in active_portfolio.get('stocks', []):
+                tickers_data_momentum.append([
+                    ticker_config['ticker'],
+                    "✓" if ticker_config['include_dividends'] else "✗"
+                ])
+            
+            tickers_table_momentum = Table(tickers_data_momentum, colWidths=[2.25*inch, 2.25*inch])
+            tickers_table_momentum.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
+            ]))
+            
+            story.append(tickers_table_momentum)
+            story.append(Spacer(1, 15))
+        
+        # Update progress
+        progress_bar.progress(40)
+        status_text.text("🎯 Adding allocation charts and timers...")
+        
+        # SECTION 2: Target Allocation if Rebalanced Today
+        story.append(PageBreak())
+        current_date_str = datetime.now().strftime("%B %d, %Y")
+        story.append(Paragraph(f"2. Target Allocation if Rebalanced Today ({current_date_str})", heading_style))
+        story.append(Spacer(1, 10))
+        
+        # Get the allocation data from your existing UI - fetch the existing allocation data
+        if 'alloc_snapshot_data' in st.session_state:
+            snapshot = st.session_state.alloc_snapshot_data
+            today_weights_map = snapshot.get('today_weights_map', {})
+            
+            # Process ALL portfolios, not just the active one
+            portfolio_count = 0
+            for portfolio_name, today_weights in today_weights_map.items():
+                if today_weights:
+                    # Add page break for all portfolios except the first one
+                    if portfolio_count > 0:
+                        story.append(PageBreak())
+                    
+                    portfolio_count += 1
+                    
+                    # Add portfolio header
+                    story.append(Paragraph(f"Portfolio: {portfolio_name}", subheading_style))
+                    story.append(Spacer(1, 10))
+                    
+                    # Create pie chart for this portfolio
+                    try:
+                        # Create labels and values for the plot
+                        labels_today = [k for k, v in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])) if v > 0]
+                        vals_today = [float(today_weights[k]) * 100 for k in labels_today]
+                        
+                        if labels_today and vals_today:
+                            # Create the pie chart
+                            fig_today = go.Figure()
+                            fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
+                            fig_today.update_traces(textinfo='percent+label')
+                            fig_today.update_layout(
+                                template='plotly_dark', 
+                                margin=dict(t=30),
+                                height=600,
+                                showlegend=True
+                            )
+                            
+                            # Convert Plotly figure to matplotlib (handles pie charts)
+                            mpl_fig = plotly_to_matplotlib_figure(fig_today, title=f"Target Allocation - {portfolio_name}", width_inches=6, height_inches=6)
+                            
+                            # Save matplotlib figure to buffer
+                            pie_img_buffer = io.BytesIO()
+                            mpl_fig.savefig(pie_img_buffer, format='png', dpi=300, bbox_inches='tight')
+                            pie_img_buffer.seek(0)
+                            plt.close(mpl_fig)  # Close to free memory
+                            
+                            # Add to PDF
+                            story.append(Image(pie_img_buffer, width=5*inch, height=5*inch))
+                            story.append(Spacer(1, 2))
+                            
+                            # Add Next Rebalance Timer information - calculate from portfolio data
+                            story.append(Paragraph(f"Next Rebalance Timer - {portfolio_name}", subheading_style))
+                            story.append(Spacer(1, 5))
+                            
+                            # Calculate timer information from portfolio configuration and allocation data
+                            try:
+                                # Get portfolio configuration
+                                portfolio_cfg = None
+                                if 'alloc_snapshot_data' in st.session_state:
+                                    snapshot = st.session_state['alloc_snapshot_data']
+                                    portfolio_configs = snapshot.get('portfolio_configs', [])
+                                    portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == portfolio_name), None)
+                                
+                                if portfolio_cfg:
+                                    rebalancing_frequency = portfolio_cfg.get('rebalancing_frequency', 'Monthly')
+                                    initial_value = portfolio_cfg.get('initial_value', 10000)
+                                    
+                                    # Get last rebalance date from allocation data
+                                    all_allocations = snapshot.get('all_allocations', {})
+                                    portfolio_allocations = all_allocations.get(portfolio_name, {})
+                                    
+                                    if portfolio_allocations:
+                                        alloc_dates = sorted(list(portfolio_allocations.keys()))
+                                        if len(alloc_dates) > 1:
+                                            last_rebal_date = alloc_dates[-2]  # Second to last date
+                                        else:
+                                            last_rebal_date = alloc_dates[-1] if alloc_dates else None
+                                        
+                                        if last_rebal_date:
+                                            # Map frequency to function expectations
+                                            frequency_mapping = {
+                                                'monthly': 'month',
+                                                'weekly': 'week',
+                                                'bi-weekly': '2weeks',
+                                                'biweekly': '2weeks',
+                                                'quarterly': '3months',
+                                                'semi-annually': '6months',
+                                                'semiannually': '6months',
+                                                'annually': 'year',
+                                                'yearly': 'year',
+                                                'market_day': 'market_day',
+                                                'calendar_day': 'calendar_day',
+                                                'never': 'none',
+                                                'none': 'none'
+                                            }
+                                            mapped_frequency = frequency_mapping.get(rebalancing_frequency.lower(), rebalancing_frequency.lower())
+                                            
+                                            # Calculate next rebalance date
+                                            next_date, time_until, next_rebalance_datetime = calculate_next_rebalance_date(
+                                                mapped_frequency, last_rebal_date
+                                            )
+                                            
+                                            if next_date and time_until:
+                                                story.append(Paragraph(f"Time Until Next Rebalance: {format_time_until(time_until)}", styles['Normal']))
+                                                story.append(Paragraph(f"Target Rebalance Date: {next_date.strftime('%B %d, %Y')}", styles['Normal']))
+                                                story.append(Paragraph(f"Rebalancing Frequency: {rebalancing_frequency}", styles['Normal']))
+                                                story.append(Paragraph(f"Portfolio Value: ${initial_value:,.2f}", styles['Normal']))
+                                            else:
+                                                story.append(Paragraph("Next rebalance date calculation not available", styles['Normal']))
+                                        else:
+                                            story.append(Paragraph("No rebalancing history available", styles['Normal']))
+                                    else:
+                                        story.append(Paragraph("No allocation data available for timer calculation", styles['Normal']))
+                                else:
+                                    story.append(Paragraph("Portfolio configuration not found for timer calculation", styles['Normal']))
+                            except Exception as e:
+                                story.append(Paragraph(f"Error calculating timer information: {str(e)}", styles['Normal']))
+                            
+                            story.append(Spacer(1, 5))
+                            
+                            # Add page break after pie plot + timer to separate from allocation table
+                            story.append(PageBreak())
+                            
+                            # Now add the allocation table on the next page
+                            story.append(Paragraph(f"Allocation Details for {portfolio_name}", subheading_style))
+                            story.append(Spacer(1, 10))
+                            
+                            # Create comprehensive allocation table with all columns
+                            try:
+                                if today_weights:
+                                    # Get portfolio value and raw data for price calculations
+                                    portfolio_value = 10000  # Default value
+                                    raw_data = {}
+                                    
+                                    if 'alloc_snapshot_data' in st.session_state:
+                                        snapshot = st.session_state['alloc_snapshot_data']
+                                        portfolio_configs = snapshot.get('portfolio_configs', [])
+                                        portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == portfolio_name), None)
+                                        if portfolio_cfg:
+                                            portfolio_value = portfolio_cfg.get('initial_value', 10000)
+                                        raw_data = snapshot.get('raw_data', {})
+                                    
+                                    # Create comprehensive table with all columns
+                                    headers = ['Asset', 'Allocation %', 'Price ($)', 'Shares', 'Total Value ($)', '% of Portfolio']
+                                    table_rows = []
+                                    
+                                    for asset, weight in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])):
+                                        if float(weight) > 0:
+                                            alloc_pct = float(weight) * 100
+                                            allocation_value = portfolio_value * float(weight)
+                                            
+                                            # Get current price
+                                            current_price = None
+                                            shares = 0.0
+                                            if asset != 'CASH' and asset in raw_data:
+                                                try:
+                                                    df = raw_data[asset]
+                                                    if isinstance(df, pd.DataFrame) and 'Close' in df.columns and not df['Close'].dropna().empty:
+                                                        current_price = float(df['Close'].iloc[-1])
+                                                        if current_price and current_price > 0:
+                                                            shares = round(allocation_value / current_price, 1)
+                                                except Exception:
+                                                    pass
+                                            
+                                            # Calculate total value
+                                            if current_price and current_price > 0:
+                                                total_val = shares * current_price
+                                            else:
+                                                total_val = allocation_value
+                                            
+                                            # Calculate percentage of portfolio
+                                            pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
+                                            
+                                            # Format values for table
+                                            price_str = f"${current_price:,.2f}" if current_price else "N/A"
+                                            shares_str = f"{shares:,.1f}" if shares > 0 else "0.0"
+                                            total_val_str = f"${total_val:,.2f}"
+                                            
+                                            table_rows.append([
+                                                asset,
+                                                f"{alloc_pct:.2f}%",
+                                                price_str,
+                                                shares_str,
+                                                total_val_str,
+                                                f"{pct_of_port:.2f}%"
+                                            ])
+                                    
+                                    if table_rows:
+                                        # Create table with proper column widths
+                                        page_width = 7.5*inch
+                                        col_widths = [1.2*inch, 1.0*inch, 1.2*inch, 1.0*inch, 1.5*inch, 1.0*inch]
+                                        alloc_table = Table([headers] + table_rows, colWidths=col_widths)
+                                        alloc_table.setStyle(TableStyle([
+                                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                                            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                                            ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+                                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                            ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                                            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                                            ('TOPPADDING', (0, 0), (-1, -1), 2),
+                                            ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                                            ('WORDWRAP', (0, 0), (-1, -1), True)
+                                        ]))
+                                        story.append(alloc_table)
+                                        story.append(Spacer(1, 5))
+                                    else:
+                                        story.append(Paragraph("No allocation data available", styles['Normal']))
+                                else:
+                                    story.append(Paragraph("No allocation data available", styles['Normal']))
+                            except Exception as e:
+                                story.append(Paragraph(f"Error creating allocation table: {str(e)}", styles['Normal']))
+                            
+                            story.append(Spacer(1, 5))
+                        else:
+                            story.append(Paragraph(f"No allocation data available for {portfolio_name}", styles['Normal']))
+                    except Exception as e:
+                        story.append(Paragraph(f"Error creating pie chart for {portfolio_name}: {str(e)}", styles['Normal']))
+        else:
+            story.append(Paragraph("Allocation data not available. Please run the allocation analysis first.", styles['Normal']))
+            story.append(Spacer(1, 5))
+        
+        # Update progress
+        progress_bar.progress(70)
+        status_text.text("📊 Adding portfolio-weighted summary statistics...")
+        
+        # SECTION 3: Portfolio-Weighted Summary Statistics
+        story.append(PageBreak())
+        story.append(Paragraph("3. Portfolio-Weighted Summary Statistics", heading_style))
+        story.append(Spacer(1, 10))
+        story.append(Paragraph("Metrics weighted by portfolio allocation - represents the total portfolio characteristics", styles['Normal']))
+        story.append(Spacer(1, 10))
+        
+        # Add data accuracy warning
+        warning_style = ParagraphStyle(
+            'WarningStyle',
+            parent=styles['Normal'],
+            fontSize=10,
+            textColor=reportlab_colors.Color(0.8, 0.4, 0.2),
+            leftIndent=20,
+            rightIndent=20,
+            spaceAfter=15
+        )
+        story.append(Paragraph("⚠️ <b>Data Accuracy Notice:</b> Portfolio metrics (PE, Beta, etc.) are calculated from available data and may not accurately represent the portfolio if some ticker data is missing, outdated, or incorrect. These metrics should be used as indicative values for portfolio analysis.", warning_style))
+        story.append(Spacer(1, 15))
+        
+        # Get portfolio-weighted metrics using the same approach as the main UI
+        active_name = active_portfolio.get('name', 'Unknown')
+        
+        # Create summary statistics table
+        summary_data = []
+        
+        # Get portfolio metrics from session state (these are calculated and stored in the main UI)
+        portfolio_pe = getattr(st.session_state, 'portfolio_pe', None)
+        portfolio_forward_pe = getattr(st.session_state, 'portfolio_forward_pe', None)
+        portfolio_pb = getattr(st.session_state, 'portfolio_pb', None)
+        portfolio_peg = getattr(st.session_state, 'portfolio_peg', None)
+        portfolio_ps = getattr(st.session_state, 'portfolio_ps', None)
+        portfolio_ev_ebitda = getattr(st.session_state, 'portfolio_ev_ebitda', None)
+        portfolio_beta = getattr(st.session_state, 'portfolio_beta', None)
+        portfolio_roe = getattr(st.session_state, 'portfolio_roe', None)
+        portfolio_roa = getattr(st.session_state, 'portfolio_roa', None)
+        portfolio_profit_margin = getattr(st.session_state, 'portfolio_profit_margin', None)
+        portfolio_operating_margin = getattr(st.session_state, 'portfolio_operating_margin', None)
+        portfolio_gross_margin = getattr(st.session_state, 'portfolio_gross_margin', None)
+        portfolio_revenue_growth = getattr(st.session_state, 'portfolio_revenue_growth', None)
+        portfolio_earnings_growth = getattr(st.session_state, 'portfolio_earnings_growth', None)
+        portfolio_eps_growth = getattr(st.session_state, 'portfolio_eps_growth', None)
+        portfolio_dividend_yield = getattr(st.session_state, 'portfolio_dividend_yield', None)
+        portfolio_payout_ratio = getattr(st.session_state, 'portfolio_payout_ratio', None)
+        portfolio_market_cap = getattr(st.session_state, 'portfolio_market_cap', None)
+        portfolio_enterprise_value = getattr(st.session_state, 'portfolio_enterprise_value', None)
+        
+        # Valuation metrics
+        if portfolio_pe is not None and not pd.isna(portfolio_pe):
+            summary_data.append(["Valuation", "P/E Ratio", f"{portfolio_pe:.2f}", "Price-to-Earnings ratio weighted by portfolio allocation"])
+        if portfolio_forward_pe is not None and not pd.isna(portfolio_forward_pe):
+            summary_data.append(["Valuation", "Forward P/E", f"{portfolio_forward_pe:.2f}", "Forward Price-to-Earnings ratio weighted by portfolio allocation"])
+        if portfolio_pb is not None and not pd.isna(portfolio_pb):
+            summary_data.append(["Valuation", "Price/Book", f"{portfolio_pb:.2f}", "Price-to-Book ratio weighted by portfolio allocation"])
+        if portfolio_peg is not None and not pd.isna(portfolio_peg):
+            summary_data.append(["Valuation", "PEG Ratio", f"{portfolio_peg:.2f}", "P/E to Growth ratio weighted by portfolio allocation"])
+        if portfolio_ps is not None and not pd.isna(portfolio_ps):
+            summary_data.append(["Valuation", "Price/Sales", f"{portfolio_ps:.2f}", "Price-to-Sales ratio weighted by portfolio allocation"])
+        if portfolio_ev_ebitda is not None and not pd.isna(portfolio_ev_ebitda):
+            summary_data.append(["Valuation", "EV/EBITDA", f"{portfolio_ev_ebitda:.2f}", "EV/EBITDA ratio weighted by portfolio allocation"])
+        
+        # Risk metrics
+        if portfolio_beta is not None and not pd.isna(portfolio_beta):
+            summary_data.append(["Risk", "Beta", f"{portfolio_beta:.2f}", "Portfolio volatility relative to market (1.0 = market average)"])
+        
+        # Profitability metrics
+        if portfolio_roe is not None and not pd.isna(portfolio_roe):
+            summary_data.append(["Profitability", "ROE (%)", f"{portfolio_roe:.2f}%", "Return on Equity weighted by portfolio allocation"])
+        if portfolio_roa is not None and not pd.isna(portfolio_roa):
+            summary_data.append(["Profitability", "ROA (%)", f"{portfolio_roa:.2f}%", "Return on Assets weighted by portfolio allocation"])
+        if portfolio_profit_margin is not None and not pd.isna(portfolio_profit_margin):
+            summary_data.append(["Profitability", "Profit Margin (%)", f"{portfolio_profit_margin:.2f}%", "Net profit margin weighted by portfolio allocation"])
+        if portfolio_operating_margin is not None and not pd.isna(portfolio_operating_margin):
+            summary_data.append(["Profitability", "Operating Margin (%)", f"{portfolio_operating_margin:.2f}%", "Operating profit margin weighted by portfolio allocation"])
+        if portfolio_gross_margin is not None and not pd.isna(portfolio_gross_margin):
+            summary_data.append(["Profitability", "Gross Margin (%)", f"{portfolio_gross_margin:.2f}%", "Gross profit margin weighted by portfolio allocation"])
+        
+        # Growth metrics
+        if portfolio_revenue_growth is not None and not pd.isna(portfolio_revenue_growth):
+            summary_data.append(["Growth", "Revenue Growth (%)", f"{portfolio_revenue_growth:.2f}%", "Revenue growth rate weighted by portfolio allocation"])
+        if portfolio_earnings_growth is not None and not pd.isna(portfolio_earnings_growth):
+            summary_data.append(["Growth", "Earnings Growth (%)", f"{portfolio_earnings_growth:.2f}%", "Earnings growth rate weighted by portfolio allocation"])
+        if portfolio_eps_growth is not None and not pd.isna(portfolio_eps_growth):
+            summary_data.append(["Growth", "EPS Growth (%)", f"{portfolio_eps_growth:.2f}%", "Earnings per share growth rate weighted by portfolio allocation"])
+        
+        # Dividend metrics
+        if portfolio_dividend_yield is not None and not pd.isna(portfolio_dividend_yield):
+            summary_data.append(["Dividends", "Dividend Yield (%)", f"{portfolio_dividend_yield:.2f}%", "Dividend yield weighted by portfolio allocation"])
+        if portfolio_payout_ratio is not None and not pd.isna(portfolio_payout_ratio):
+            summary_data.append(["Dividends", "Payout Ratio (%)", f"{portfolio_payout_ratio:.2f}%", "Dividend payout ratio weighted by portfolio allocation"])
+        
+        # Size metrics
+        if portfolio_market_cap is not None and not pd.isna(portfolio_market_cap):
+            summary_data.append(["Size", "Market Cap ($B)", f"${portfolio_market_cap:.2f}B", "Market capitalization weighted by portfolio allocation"])
+        if portfolio_enterprise_value is not None and not pd.isna(portfolio_enterprise_value):
+            summary_data.append(["Size", "Enterprise Value ($B)", f"${portfolio_enterprise_value:.2f}B", "Enterprise value weighted by portfolio allocation"])
+        
+        if summary_data:
+            # Create summary table
+            summary_headers = ['Category', 'Metric', 'Value', 'Description']
+            summary_table = Table([summary_headers] + summary_data, colWidths=[0.8*inch, 1.2*inch, 0.8*inch, 3.2*inch])
+            summary_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('WORDWRAP', (0, 0), (-1, -1), True),
+                ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+                ('TOPPADDING', (0, 0), (-1, -1), 4),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 4)
+            ]))
+            story.append(summary_table)
+            story.append(Spacer(1, 15))
+            
+            # Add interpretation
+            story.append(Paragraph("Portfolio Interpretation:", subheading_style))
+            story.append(Spacer(1, 10))
+            
+            if portfolio_beta is not None and not pd.isna(portfolio_beta):
+                if portfolio_beta < 0.8:
+                    story.append(Paragraph(f"• Low Risk Portfolio - Beta {portfolio_beta:.2f} indicates lower volatility than market", styles['Normal']))
+                elif portfolio_beta < 1.2:
+                    story.append(Paragraph(f"• Moderate Risk Portfolio - Beta {portfolio_beta:.2f} indicates market-average volatility", styles['Normal']))
+                else:
+                    story.append(Paragraph(f"• High Risk Portfolio - Beta {portfolio_beta:.2f} indicates higher volatility than market", styles['Normal']))
+            
+            if portfolio_pe is not None and not pd.isna(portfolio_pe):
+                if portfolio_pe < 15:
+                    story.append(Paragraph(f"• Undervalued Portfolio - P/E {portfolio_pe:.2f} suggests attractive valuations", styles['Normal']))
+                elif portfolio_pe < 25:
+                    story.append(Paragraph(f"• Fairly Valued Portfolio - P/E {portfolio_pe:.2f} suggests reasonable valuations", styles['Normal']))
+                else:
+                    story.append(Paragraph(f"• Potentially Overvalued Portfolio - P/E {portfolio_pe:.2f} suggests high valuations", styles['Normal']))
+        else:
+            story.append(Paragraph("No portfolio-weighted metrics available for display.", styles['Normal']))
+        
+        # Update progress
+        progress_bar.progress(80)
+        status_text.text("🏢 Adding portfolio composition analysis...")
+        
+        # SECTION 4: Portfolio Composition Analysis
+        story.append(PageBreak())
+        story.append(Paragraph("4. Portfolio Composition Analysis", heading_style))
+        story.append(Spacer(1, 15))
+        
+        # Get sector and industry data from session state (these are calculated and stored in the main UI)
+        sector_data = getattr(st.session_state, 'sector_data', pd.Series(dtype=float))
+        industry_data = getattr(st.session_state, 'industry_data', pd.Series(dtype=float))
+        
+        # Sector Allocation
+        if not sector_data.empty:
+            story.append(Paragraph("Sector Allocation", subheading_style))
+            story.append(Spacer(1, 10))
+            
+            # Create sector table
+            sector_table_data = [['Sector', 'Allocation (%)']]
+            for sector, allocation in sector_data.items():
+                sector_table_data.append([sector, f"{allocation:.2f}%"])
+            
+            sector_table = Table(sector_table_data, colWidths=[3.0*inch, 1.5*inch])
+            sector_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
+            ]))
+            story.append(sector_table)
+            story.append(Spacer(1, 15))
+        
+        # Industry Allocation
+        if not industry_data.empty:
+            story.append(Paragraph("Industry Allocation", subheading_style))
+            story.append(Spacer(1, 10))
+            
+            # Create industry table
+            industry_table_data = [['Industry', 'Allocation (%)']]
+            for industry, allocation in industry_data.items():
+                industry_table_data.append([industry, f"{allocation:.2f}%"])
+            
+            industry_table = Table(industry_table_data, colWidths=[3.0*inch, 1.5*inch])
+            industry_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
+            ]))
+            story.append(industry_table)
+            story.append(Spacer(1, 15))
+        
+        # Add page break and create charts page
+        if not sector_data.empty or not industry_data.empty:
+            story.append(PageBreak())
+            story.append(Paragraph("Portfolio Distribution Charts", heading_style))
+            story.append(Spacer(1, 15))
+            
+            # Create combined figure with both pie charts one above the other
+            try:
+                # Create figure with two subplots one above the other - square aspect ratio for circular charts
+                fig, (ax_sector, ax_industry) = plt.subplots(2, 1, figsize=(10, 10))
+                
+                # Sector pie chart
+                if not sector_data.empty:
+                    sectors = sector_data.index.tolist()
+                    allocations = sector_data.values.tolist()
+                    
+                    # Create pie chart with percentage labels but only for larger slices to avoid overlap
+                    def make_autopct(values):
+                        def my_autopct(pct):
+                            total = sum(values)
+                            val = int(round(pct*total/100.0))
+                            # Only show percentage if slice is large enough (>5%)
+                            return f'{pct:.1f}%' if pct > 5 else ''
+                        return my_autopct
+                    
+                    wedges_sector, texts_sector, autotexts_sector = ax_sector.pie(allocations, autopct=make_autopct(allocations), 
+                                                                                 startangle=90, textprops={'fontsize': 10})
+                    
+                    # Create legend with percentages - positioned further to the right
+                    legend_labels = [f"{sector} ({alloc:.1f}%)" for sector, alloc in zip(sectors, allocations)]
+                    ax_sector.legend(wedges_sector, legend_labels, title="Sectors", loc="center left", bbox_to_anchor=(1.2, 0, 0.5, 1), fontsize=10)
+                    
+                    ax_sector.set_title(f'Sector Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                    # Force circular shape by setting aspect ratio
+                    ax_sector.set_aspect('equal')
+                
+                # Industry pie chart
+                if not industry_data.empty:
+                    industries = industry_data.index.tolist()
+                    allocations = industry_data.values.tolist()
+                    
+                    # Create pie chart with percentage labels but only for larger slices to avoid overlap
+                    def make_autopct(values):
+                        def my_autopct(pct):
+                            total = sum(values)
+                            val = int(round(pct*total/100.0))
+                            # Only show percentage if slice is large enough (>5%)
+                            return f'{pct:.1f}%' if pct > 5 else ''
+                        return my_autopct
+                    
+                    wedges_industry, texts_industry, autotexts_industry = ax_industry.pie(allocations, autopct=make_autopct(allocations), 
+                                                                                         startangle=90, textprops={'fontsize': 10})
+                    
+                    # Create legend with percentages - positioned further to the right
+                    legend_labels = [f"{industry} ({alloc:.1f}%)" for industry, alloc in zip(industries, allocations)]
+                    ax_industry.legend(wedges_industry, legend_labels, title="Industries", loc="center left", bbox_to_anchor=(1.2, 0, 0.5, 1), fontsize=10)
+                    
+                    ax_industry.set_title(f'Industry Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                    # Force circular shape by setting aspect ratio
+                    ax_industry.set_aspect('equal')
+                
+                # Adjust layout to prevent overlap with more space and accommodate legends
+                plt.subplots_adjust(hspace=0.4, right=0.65)  # More space for legends to prevent overlap
+                
+                # Save to buffer
+                combined_img_buffer = io.BytesIO()
+                fig.savefig(combined_img_buffer, format='png', dpi=300, bbox_inches='tight')
+                combined_img_buffer.seek(0)
+                plt.close(fig)
+                
+                # Add to PDF - square size to maintain circular charts
+                story.append(Image(combined_img_buffer, width=7*inch, height=7*inch))
+                story.append(Spacer(1, 15))
+                
+            except Exception as e:
+                story.append(Paragraph(f"Error creating charts: {str(e)}", styles['Normal']))
+        
+        # Add page break and move Portfolio Risk Metrics Summary to next page
+        story.append(PageBreak())
+        story.append(Paragraph("Portfolio Risk Metrics Summary", subheading_style))
+        story.append(Spacer(1, 10))
+        
+        risk_metrics_data = []
+        
+        # Beta
+        if portfolio_beta is not None and not pd.isna(portfolio_beta):
+            if portfolio_beta < 0.8:
+                beta_risk = "Low Risk"
+            elif portfolio_beta < 1.2:
+                beta_risk = "Balanced Risk"
+            elif portfolio_beta < 1.5:
+                beta_risk = "Moderate Risk"
+            else:
+                beta_risk = "High Risk"
+            risk_metrics_data.append(["Portfolio Risk Level", beta_risk, f"Beta: {portfolio_beta:.2f}"])
+        else:
+            risk_metrics_data.append(["Portfolio Risk Level", "NA", "Beta: NA"])
+        
+        # P/E
+        if portfolio_pe is not None and not pd.isna(portfolio_pe):
+            if portfolio_pe < 15:
+                pe_rating = "Undervalued"
+            elif portfolio_pe < 25:
+                pe_rating = "Fair Value"
+            elif portfolio_pe < 35:
+                pe_rating = "Expensive"
+            else:
+                pe_rating = "Overvalued"
+            risk_metrics_data.append(["Current P/E Rating", pe_rating, f"P/E: {portfolio_pe:.2f}"])
+        else:
+            risk_metrics_data.append(["Current P/E Rating", "NA", "P/E: NA"])
+        
+        # Forward P/E
+        if portfolio_forward_pe is not None and not pd.isna(portfolio_forward_pe):
+            if portfolio_forward_pe < 15:
+                fpe_rating = "Undervalued"
+            elif portfolio_forward_pe < 25:
+                fpe_rating = "Fair Value"
+            elif portfolio_forward_pe < 35:
+                fpe_rating = "Expensive"
+            else:
+                fpe_rating = "Overvalued"
+            risk_metrics_data.append(["Forward P/E Rating", fpe_rating, f"Forward P/E: {portfolio_forward_pe:.2f}"])
+        else:
+            risk_metrics_data.append(["Forward P/E Rating", "NA", "Forward P/E: NA"])
+        
+        # Dividend
+        if portfolio_dividend_yield is not None and not pd.isna(portfolio_dividend_yield):
+            if portfolio_dividend_yield > 5:
+                div_rating = "Very High Yield"
+            elif portfolio_dividend_yield > 3:
+                div_rating = "Good Yield"
+            elif portfolio_dividend_yield > 1.5:
+                div_rating = "Moderate Yield"
+            else:
+                div_rating = "Low Yield"
+            risk_metrics_data.append(["Dividend Rating", div_rating, f"Yield: {portfolio_dividend_yield:.2f}%"])
+        else:
+            risk_metrics_data.append(["Dividend Rating", "NA", "Yield: NA"])
+        
+        if risk_metrics_data:
+            risk_headers = ['Metric', 'Rating', 'Value']
+            risk_table = Table([risk_headers] + risk_metrics_data, colWidths=[2.0*inch, 1.5*inch, 1.5*inch])
+            risk_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
+            ]))
+            story.append(risk_table)
+        
+        # Update progress
+        progress_bar.progress(90)
+        status_text.text("💾 Finalizing PDF...")
+        
+        # Build PDF
+        doc.build(story)
+        
+        # Get PDF data
+        pdf_data = buffer.getvalue()
+        buffer.close()
+        
+        # Update progress
+        progress_bar.progress(100)
+        status_text.text("✅ PDF generated successfully!")
+        
+        # Store PDF data in session state for download button
+        st.session_state['pdf_buffer'] = pdf_data
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error generating PDF: {e}")
+        return False
 
 # -----------------------
 # Single-backtest core (adapted from your code, robust)
@@ -1471,29 +2470,29 @@ if "alloc_active_benchmark" not in st.session_state:
     st.session_state["alloc_active_benchmark"] = active_portfolio['benchmark_ticker']
 st.text_input("Benchmark Ticker (default: ^GSPC, used for beta calculation)", key="alloc_active_benchmark", on_change=update_benchmark)
 
-st.subheader("Stocks")
-col_stock_buttons = st.columns([0.3, 0.3, 0.3, 0.1])
-with col_stock_buttons[0]:
-    if st.button("Normalize Stocks %", on_click=normalize_stock_allocations_callback, use_container_width=True):
+st.subheader("Tickers")
+col_ticker_buttons = st.columns([0.3, 0.3, 0.3, 0.1])
+with col_ticker_buttons[0]:
+    if st.button("Normalize Tickers %", on_click=normalize_stock_allocations_callback, use_container_width=True):
         pass
-with col_stock_buttons[1]:
+with col_ticker_buttons[1]:
     if st.button("Equal Allocation %", on_click=equal_stock_allocation_callback, use_container_width=True):
         pass
-with col_stock_buttons[2]:
-    if st.button("Reset Stocks", on_click=reset_stock_selection_callback, use_container_width=True):
+with col_ticker_buttons[2]:
+    if st.button("Reset Tickers", on_click=reset_stock_selection_callback, use_container_width=True):
         pass
 
-# Calculate live total stock allocation
-valid_stocks = [s for s in st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'] if s['ticker']]
-total_stock_allocation = sum(s['allocation'] for s in valid_stocks)
+# Calculate live total ticker allocation
+valid_tickers = [s for s in st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'] if s['ticker']]
+total_ticker_allocation = sum(s['allocation'] for s in valid_tickers)
 
 if active_portfolio['use_momentum']:
-    st.info("Stock allocations are not used directly for Momentum strategies.")
+    st.info("Ticker allocations are not used directly for Momentum strategies.")
 else:
-    if abs(total_stock_allocation - 1.0) > 0.001:
-        st.warning(f"Total stock allocation is {total_stock_allocation*100:.2f}%, not 100%. Click 'Normalize' to fix.")
+    if abs(total_ticker_allocation - 1.0) > 0.001:
+        st.warning(f"Total ticker allocation is {total_ticker_allocation*100:.2f}%, not 100%. Click 'Normalize' to fix.")
     else:
-        st.success(f"Total stock allocation is {total_stock_allocation*100:.2f}%.")
+        st.success(f"Total ticker allocation is {total_ticker_allocation*100:.2f}%.")
 
 def update_stock_allocation(index):
     try:
@@ -1572,7 +2571,7 @@ for i in range(len(active_portfolio['stocks'])):
         if st.button("Remove", key=f"alloc_rem_stock_{st.session_state.alloc_active_portfolio_index}_{i}_{stock['ticker']}_{id(stock)}", on_click=remove_stock_callback, args=(stock['ticker'],)):
             pass
 
-if st.button("Add Stock", on_click=add_stock_callback):
+if st.button("Add Ticker", on_click=add_stock_callback):
     pass
 
 # Bulk ticker input section
@@ -1811,8 +2810,147 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     <button onclick='navigator.clipboard.writeText({json.dumps(config_json)});' style='margin-bottom:10px;'>Copy to Clipboard</button>
     """
     components.html(copy_html, height=40)
+    
+    # Add PDF download button for JSON
+    def generate_json_pdf():
+        """Generate a PDF with pure JSON content only for easy CTRL+A / CTRL+V copying."""
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.platypus import SimpleDocTemplate, Preformatted
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        import io
+        
+        # Create PDF buffer
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
+        story = []
+        
+        # Pure JSON style - just monospace text
+        json_style = ParagraphStyle(
+            'PureJSONStyle',
+            fontName='Courier',
+            fontSize=10,
+            leading=12,
+            leftIndent=0,
+            rightIndent=0,
+            spaceAfter=0,
+            spaceBefore=0
+        )
+        
+        # Add only the JSON content - no headers, no instructions, just pure JSON
+        json_lines = config_json.split('\n')
+        for line in json_lines:
+            story.append(Preformatted(line, json_style))
+        
+        # Build PDF
+        doc.build(story)
+        pdf_data = buffer.getvalue()
+        buffer.close()
+        
+        return pdf_data
+    
+    if st.button("📄 Download JSON as PDF", help="Download a PDF containing the JSON configuration for easy copying", key="alloc_json_pdf_btn"):
+        try:
+            pdf_data = generate_json_pdf()
+            st.download_button(
+                label="💾 Download Allocations JSON PDF",
+                data=pdf_data,
+                file_name=f"allocations_config_{active_portfolio.get('name', 'portfolio').replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf",
+                key="alloc_json_pdf_download"
+            )
+            st.success("PDF generated successfully! Click the download button above.")
+        except Exception as e:
+            st.error(f"Error generating PDF: {str(e)}")
+    
+    # Add PDF download button for individual portfolio JSON (same function as above)
+    if st.button("📄 Download JSON as PDF", help="Download a PDF containing the JSON configuration for easy copying", key="alloc_individual_json_pdf_btn"):
+        try:
+            pdf_data = generate_json_pdf()
+            st.download_button(
+                label="💾 Download Portfolio JSON PDF",
+                data=pdf_data,
+                file_name=f"allocations_portfolio_{active_portfolio.get('name', 'portfolio').replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                mime="application/pdf",
+                key="alloc_individual_json_pdf_download"
+            )
+            st.success("PDF generated successfully! Click the download button above.")
+        except Exception as e:
+            st.error(f"Error generating PDF: {str(e)}")
+    
     st.text_area("Paste JSON Here to Update Portfolio", key="alloc_paste_json_text", height=200)
     st.button("Update with Pasted JSON", on_click=paste_json_callback)
+    
+    # Add PDF drag and drop functionality
+    st.markdown("**OR** 📎 **Drag & Drop JSON PDF:**")
+    
+    def extract_json_from_pdf_alloc(pdf_file):
+        """Extract JSON content from a PDF file."""
+        try:
+            # Try pdfplumber first (more reliable)
+            try:
+                import pdfplumber
+                import io
+                
+                # Read PDF content with pdfplumber
+                pdf_bytes = io.BytesIO(pdf_file.read())
+                text_content = ""
+                
+                with pdfplumber.open(pdf_bytes) as pdf:
+                    for page in pdf.pages:
+                        text_content += page.extract_text() or ""
+                        
+            except ImportError:
+                # Fallback to PyPDF2 if pdfplumber not available
+                try:
+                    import PyPDF2
+                    import io
+                    
+                    # Reset file pointer
+                    pdf_file.seek(0)
+                    pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_file.read()))
+                    
+                    # Extract text from all pages
+                    text_content = ""
+                    for page in pdf_reader.pages:
+                        text_content += page.extract_text()
+                        
+                except ImportError:
+                    return None, "PDF extraction libraries not available. Please install 'pip install PyPDF2' or 'pip install pdfplumber'"
+            
+            # Clean up the text and try to parse as JSON
+            cleaned_text = text_content.strip()
+            
+            # Try to parse as JSON
+            import json
+            json_data = json.loads(cleaned_text)
+            return json_data, None
+            
+        except json.JSONDecodeError as e:
+            return None, f"Invalid JSON in PDF: {str(e)}"
+        except Exception as e:
+            return None, str(e)
+    
+    uploaded_pdf = st.file_uploader(
+        "Drop your JSON PDF here", 
+        type=['pdf'], 
+        help="Upload a JSON PDF file generated by this app to automatically load the configuration",
+        key="alloc_individual_pdf_upload"
+    )
+    
+    if uploaded_pdf is not None:
+        json_data, error = extract_json_from_pdf_alloc(uploaded_pdf)
+        if json_data:
+            # Store the extracted JSON in a different session state key to avoid widget conflicts
+            st.session_state["alloc_extracted_json"] = json.dumps(json_data, indent=4)
+            st.success(f"✅ Successfully extracted JSON from {uploaded_pdf.name}")
+            st.info("👇 Click the button below to load the JSON into the text area.")
+            def load_extracted_json():
+                st.session_state["alloc_paste_json_text"] = st.session_state["alloc_extracted_json"]
+            
+            st.button("📋 Load Extracted JSON", key="load_extracted_json", on_click=load_extracted_json)
+        else:
+            st.error(f"❌ Failed to extract JSON from PDF: {error}")
+            st.info("💡 Make sure the PDF contains valid JSON content (generated by this app)")
 
 # Validation constants
 _TOTAL_TOL = 1.0
@@ -1841,7 +2979,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             valid_stocks_for_cfg = [s for s in cfg['stocks'] if s['ticker']]
             total_stock_allocation = sum(s['allocation'] for s in valid_stocks_for_cfg)
             if abs(total_stock_allocation - 1.0) > (_ALLOC_TOL / 100.0):
-                validation_errors.append(f"Portfolio '{cfg['name']}' is not using momentum, but the total stock allocation is {total_stock_allocation*100:.2f}% (must be 100%)")
+                validation_errors.append(f"Portfolio '{cfg['name']}' is not using momentum, but the total ticker allocation is {total_ticker_allocation*100:.2f}% (must be 100%)")
                 valid_configs = False
                 
     # Initialize progress bar
@@ -2491,6 +3629,8 @@ def paste_all_json_callback():
 active_name = active_portfolio.get('name')
 if st.session_state.get('alloc_backtest_run', False):
     st.subheader("Allocation & Rebalancing Metrics")
+    
+
     allocs_for_portfolio = st.session_state.get('alloc_all_allocations', {}).get(active_name) if st.session_state.get('alloc_all_allocations') else None
     metrics_for_portfolio = st.session_state.get('alloc_all_metrics', {}).get(active_name) if st.session_state.get('alloc_all_metrics') else None
 
@@ -2754,8 +3894,8 @@ if st.session_state.get('alloc_backtest_run', False):
                         peg_source = "N/A"
                         
                         if not is_commodity and pe_ratio and pe_ratio > 0 and earnings_growth and earnings_growth > 0:
-                            # Simple calculation: P/E ÷ Earnings Growth (in whole numbers)
-                            # Yahoo Finance returns growth as decimal (1.167 = 116.7% growth)
+                            # Standard PEG Ratio calculation: P/E ÷ Earnings Growth Rate
+                            # Yahoo Finance returns growth as decimal (0.15 = 15% growth)
                             # We need to convert to percentage for PEG calculation
                             growth_percentage = earnings_growth * 100
                             
@@ -2868,7 +4008,8 @@ if st.session_state.get('alloc_backtest_run', False):
                         if valid_mask.sum() == 0:
                             return None
                         valid_df = df[valid_mask]
-                        result = (valid_df[column] * valid_df[weight_column] / 100).sum() / valid_df[weight_column].sum() * 100
+                        # Since weight_column is already in percentage, we divide by 100 to get decimal weights
+                        result = (valid_df[column] * valid_df[weight_column] / 100).sum() / (valid_df[weight_column].sum() / 100)
                         
                         return result
                     
@@ -2899,6 +4040,32 @@ if st.session_state.get('alloc_backtest_run', False):
                     portfolio_enterprise_value = weighted_average(df_comprehensive, 'Enterprise Value ($B)')
                     portfolio_forward_pe = weighted_average(df_comprehensive, 'Forward P/E')
                     
+                    # Store portfolio metrics in session state for PDF generation
+                    st.session_state.portfolio_pe = portfolio_pe
+                    st.session_state.portfolio_pb = portfolio_pb
+                    st.session_state.portfolio_beta = portfolio_beta
+                    st.session_state.portfolio_peg = portfolio_peg
+                    st.session_state.portfolio_ps = portfolio_ps
+                    st.session_state.portfolio_ev_ebitda = portfolio_ev_ebitda
+                    st.session_state.portfolio_roe = portfolio_roe
+                    st.session_state.portfolio_roa = portfolio_roa
+                    st.session_state.portfolio_roic = portfolio_roic
+                    st.session_state.portfolio_debt_equity = portfolio_debt_equity
+                    st.session_state.portfolio_current_ratio = portfolio_current_ratio
+                    st.session_state.portfolio_quick_ratio = portfolio_quick_ratio
+                    st.session_state.portfolio_profit_margin = portfolio_profit_margin
+                    st.session_state.portfolio_operating_margin = portfolio_operating_margin
+                    st.session_state.portfolio_gross_margin = portfolio_gross_margin
+                    st.session_state.portfolio_revenue_growth = portfolio_revenue_growth
+                    st.session_state.portfolio_earnings_growth = portfolio_earnings_growth
+                    st.session_state.portfolio_eps_growth = portfolio_eps_growth
+                    st.session_state.portfolio_dividend_yield = portfolio_dividend_yield
+                    st.session_state.portfolio_payout_ratio = portfolio_payout_ratio
+                    st.session_state.portfolio_dividend_growth = portfolio_dividend_growth
+                    st.session_state.portfolio_market_cap = portfolio_market_cap
+                    st.session_state.portfolio_enterprise_value = portfolio_enterprise_value
+                    st.session_state.portfolio_forward_pe = portfolio_forward_pe
+                    
                     # Calculate sector and industry breakdowns BEFORE formatting
                     sector_data = pd.Series(dtype=float)
                     industry_data = pd.Series(dtype=float)
@@ -2908,6 +4075,10 @@ if st.session_state.get('alloc_backtest_run', False):
                     
                     if 'Industry' in df_comprehensive.columns and '% of Portfolio' in df_comprehensive.columns:
                         industry_data = df_comprehensive.groupby('Industry')['% of Portfolio'].sum().sort_values(ascending=False)
+                    
+                    # Store sector and industry data in session state for PDF generation
+                    st.session_state.sector_data = sector_data
+                    st.session_state.industry_data = industry_data
                     
                     # Format the dataframe with safe formatting
                     def safe_format(value, format_str):
@@ -2998,6 +4169,9 @@ if st.session_state.get('alloc_backtest_run', False):
                     # Add portfolio-weighted summary statistics in collapsible section
                     with st.expander("📊 Portfolio-Weighted Summary Statistics", expanded=True):
                         st.markdown("*Metrics weighted by portfolio allocation - represents the total portfolio characteristics*")
+                        
+                        # Add data accuracy warning
+                        st.warning("⚠️ **Data Accuracy Notice:** Portfolio metrics (PE, Beta, etc.) are calculated from available data and may not accurately represent the portfolio if some ticker data is missing, outdated, or incorrect. These metrics should be used as indicative values for portfolio analysis.")
                         
                         # Create a comprehensive summary table
                         summary_data = []
@@ -3140,9 +4314,12 @@ if st.session_state.get('alloc_backtest_run', False):
                     
                     with col1:
                         # Beta analysis
-                        if portfolio_beta is not None:
-                            if portfolio_beta < 0.7:
+                        if portfolio_beta is not None and not pd.isna(portfolio_beta):
+                            if portfolio_beta < 0.8:
                                 beta_risk = "Low Risk"
+                                beta_color = "green"
+                            elif portfolio_beta < 1.2:
+                                beta_risk = "Balanced Risk"
                                 beta_color = "green"
                             elif portfolio_beta < 1.5:
                                 beta_risk = "Moderate Risk"
@@ -3152,51 +4329,68 @@ if st.session_state.get('alloc_backtest_run', False):
                                 beta_color = "red"
                             st.metric("Portfolio Risk Level", beta_risk)
                             st.markdown(f"<span style='color: {beta_color}'>Beta: {portfolio_beta:.2f}</span>", unsafe_allow_html=True)
+                        else:
+                            st.metric("Portfolio Risk Level", "NA")
+                            st.markdown("<span style='color: gray'>Beta: NA</span>", unsafe_allow_html=True)
                     
                     with col2:
                         # Current P/E analysis
-                        if portfolio_pe is not None:
+                        if portfolio_pe is not None and not pd.isna(portfolio_pe):
                             if portfolio_pe < 15:
                                 pe_rating = "Undervalued"
                                 pe_color = "green"
                             elif portfolio_pe < 25:
                                 pe_rating = "Fair Value"
+                                pe_color = "lime"
+                            elif portfolio_pe < 35:
+                                pe_rating = "Expensive"
                                 pe_color = "orange"
                             else:
                                 pe_rating = "Overvalued"
                                 pe_color = "red"
                             st.metric("Current P/E Rating", pe_rating)
                             st.markdown(f"<span style='color: {pe_color}'>P/E: {portfolio_pe:.2f}</span>", unsafe_allow_html=True)
+                        else:
+                            st.metric("Current P/E Rating", "NA")
+                            st.markdown("<span style='color: gray'>P/E: NA</span>", unsafe_allow_html=True)
                     
                     with col3:
                         # Forward P/E analysis
-                        if portfolio_forward_pe is not None:
+                        if portfolio_forward_pe is not None and not pd.isna(portfolio_forward_pe):
                             if portfolio_forward_pe < 15:
                                 fpe_rating = "Undervalued"
                                 fpe_color = "green"
                             elif portfolio_forward_pe < 25:
                                 fpe_rating = "Fair Value"
+                                fpe_color = "lime"
+                            elif portfolio_forward_pe < 35:
+                                fpe_rating = "Expensive"
                                 fpe_color = "orange"
                             else:
                                 fpe_rating = "Overvalued"
                                 fpe_color = "red"
                             st.metric("Forward P/E Rating", fpe_rating)
                             st.markdown(f"<span style='color: {fpe_color}'>Forward P/E: {portfolio_forward_pe:.2f}</span>", unsafe_allow_html=True)
+                        else:
+                            st.metric("Forward P/E Rating", "NA")
+                            st.markdown("<span style='color: gray'>Forward P/E: NA</span>", unsafe_allow_html=True)
                     
                     with col4:
                         # Dividend analysis
-                        if portfolio_dividend_yield is not None:
-                            if portfolio_dividend_yield > 4:
-                                div_rating = "High Yield"
-                                div_color = "green"
-                            elif portfolio_dividend_yield > 2:
+                        if portfolio_dividend_yield is not None and not pd.isna(portfolio_dividend_yield):
+                            if portfolio_dividend_yield > 5:
+                                div_rating = "Very High Yield"
+                            elif portfolio_dividend_yield > 3:
+                                div_rating = "Good Yield"
+                            elif portfolio_dividend_yield > 1.5:
                                 div_rating = "Moderate Yield"
-                                div_color = "orange"
                             else:
                                 div_rating = "Low Yield"
-                                div_color = "gray"  # Changed from red to gray - low yield is not necessarily bad
                             st.metric("Dividend Rating", div_rating)
-                            st.markdown(f"<span style='color: {div_color}'>Yield: {portfolio_dividend_yield:.2f}%</span>", unsafe_allow_html=True)
+                            st.write(f"Yield: {portfolio_dividend_yield:.2f}%")
+                        else:
+                            st.metric("Dividend Rating", "NA")
+                            st.write("Yield: NA")
                 
                 else:
                     st.warning("No portfolio data available to display.")
@@ -3336,10 +4530,74 @@ if st.session_state.get('alloc_backtest_run', False):
         def highlight_rows_by_index(s):
             is_even_row = allocations_df_raw.index.get_loc(s.name) % 2 == 0
             bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
-            return [bg_color] * len(s)
+            return [f'{bg_color}; color: white;'] * len(s)
 
         styler = allocations_df_raw.mul(100).style.apply(highlight_rows_by_index, axis=1)
         styler.format('{:,.0f}%', na_rep='N/A')
+        
+        # NUCLEAR OPTION: Inject custom CSS to override Streamlit's stubborn styling
+        st.markdown("""
+        <style>
+        /* NUCLEAR CSS OVERRIDE - BEAT STREAMLIT INTO SUBMISSION */
+        .stDataFrame [data-testid="stDataFrame"] div[data-testid="stDataFrame"] table td,
+        .stDataFrame [data-testid="stDataFrame"] div[data-testid="stDataFrame"] table th,
+        .stDataFrame table td,
+        .stDataFrame table th {
+            color: #FFFFFF !important;
+            font-weight: bold !important;
+            text-shadow: 1px 1px 2px black !important;
+        }
+        
+        /* Force ALL text in dataframes to be white */
+        .stDataFrame * {
+            color: #FFFFFF !important;
+        }
+        
+        /* Override any Streamlit bullshit */
+        .stDataFrame [data-testid="stDataFrame"] *,
+        .stDataFrame div[data-testid="stDataFrame"] * {
+            color: #FFFFFF !important;
+            font-weight: bold !important;
+        }
+        
+        /* Target EVERYTHING in the dataframe */
+        .stDataFrame table *,
+        .stDataFrame div table *,
+        .stDataFrame [data-testid="stDataFrame"] table *,
+        .stDataFrame [data-testid="stDataFrame"] div table * {
+            color: #FFFFFF !important;
+            font-weight: bold !important;
+        }
+        
+        /* Target all cells specifically */
+        .stDataFrame td,
+        .stDataFrame th,
+        .stDataFrame table td,
+        .stDataFrame table th {
+            color: #FFFFFF !important;
+            font-weight: bold !important;
+        }
+        
+        /* Target Streamlit's specific elements */
+        div[data-testid="stDataFrame"] table td,
+        div[data-testid="stDataFrame"] table th,
+        div[data-testid="stDataFrame"] div table td,
+        div[data-testid="stDataFrame"] div table th {
+            color: #FFFFFF !important;
+            font-weight: bold !important;
+        }
+        
+        /* Target everything with maximum specificity */
+        div[data-testid="stDataFrame"] *,
+        div[data-testid="stDataFrame"] div *,
+        div[data-testid="stDataFrame"] table *,
+        div[data-testid="stDataFrame"] div table * {
+            color: #FFFFFF !important;
+            font-weight: bold !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
         st.dataframe(styler, use_container_width=True)
 
     if metrics_for_portfolio:
@@ -3416,15 +4674,35 @@ if st.session_state.get('alloc_backtest_run', False):
             if 'Volatility' in metrics_df_display.columns:
                 metrics_df_display['Volatility'] = metrics_df_display['Volatility'].fillna(np.nan) * 100
 
+            def color_momentum(val):
+                if isinstance(val, (int, float)):
+                    color = 'green' if val > 0 else 'red'
+                    return f'color: {color}'
+                # Force white color for None, NA, and other non-numeric values
+                return 'color: #FFFFFF; font-weight: bold;'
+            
+            def color_all_columns(val):
+                # Force white color for None, NA, and other non-numeric values in ALL columns
+                if pd.isna(val) or val == 'None' or val == 'NA' or val == '':
+                    return 'color: #FFFFFF; font-weight: bold;'
+                if isinstance(val, (int, float)):
+                    return ''  # Let default styling handle numeric values
+                return 'color: #FFFFFF; font-weight: bold;'  # Force white for any other text
+            
             def highlight_metrics_rows(s):
                 if s.name[1] == 'CASH':
                     return ['background-color: #006400; color: white; font-weight: bold;' for _ in s]
                 unique_dates = list(metrics_df_display.index.get_level_values('Date').unique())
                 is_even = unique_dates.index(s.name[0]) % 2 == 0
                 bg_color = 'background-color: #0e1117' if is_even else 'background-color: #262626'
-                return [bg_color] * len(s)
+                return [f'{bg_color}; color: white;'] * len(s)
 
             styler_metrics = metrics_df_display.style.apply(highlight_metrics_rows, axis=1)
+            if 'Momentum' in metrics_df_display.columns:
+                styler_metrics = styler_metrics.map(color_momentum, subset=['Momentum'])
+            # Force white color for None/NA values in ALL columns
+            styler_metrics = styler_metrics.map(color_all_columns)
+            
             fmt_dict = {}
             if 'Momentum' in metrics_df_display.columns:
                 fmt_dict['Momentum'] = '{:,.0f}%'
@@ -3436,6 +4714,70 @@ if st.session_state.get('alloc_backtest_run', False):
                 fmt_dict['Calculated_Weight'] = '{:,.0f}%'
             if fmt_dict:
                 styler_metrics = styler_metrics.format(fmt_dict)
+            
+            # NUCLEAR OPTION: Inject custom CSS to override Streamlit's stubborn styling
+            st.markdown("""
+            <style>
+            /* NUCLEAR CSS OVERRIDE - BEAT STREAMLIT INTO SUBMISSION */
+            .stDataFrame [data-testid="stDataFrame"] div[data-testid="stDataFrame"] table td,
+            .stDataFrame [data-testid="stDataFrame"] div[data-testid="stDataFrame"] table th,
+            .stDataFrame table td,
+            .stDataFrame table th {
+                color: #FFFFFF !important;
+                font-weight: bold !important;
+                text-shadow: 1px 1px 2px black !important;
+            }
+            
+            /* Force ALL text in dataframes to be white */
+            .stDataFrame * {
+                color: #FFFFFF !important;
+            }
+            
+            /* Override any Streamlit bullshit */
+            .stDataFrame [data-testid="stDataFrame"] *,
+            .stDataFrame div[data-testid="stDataFrame"] * {
+                color: #FFFFFF !important;
+                font-weight: bold !important;
+            }
+            
+            /* Target EVERYTHING in the dataframe */
+            .stDataFrame table *,
+            .stDataFrame div table *,
+            .stDataFrame [data-testid="stDataFrame"] table *,
+            .stDataFrame [data-testid="stDataFrame"] div table * {
+                color: #FFFFFF !important;
+                font-weight: bold !important;
+            }
+            
+            /* Target all cells specifically */
+            .stDataFrame td,
+            .stDataFrame th,
+            .stDataFrame table td,
+            .stDataFrame table th {
+                color: #FFFFFF !important;
+                font-weight: bold !important;
+            }
+            
+            /* Target Streamlit's specific elements */
+            div[data-testid="stDataFrame"] table td,
+            div[data-testid="stDataFrame"] table th,
+            div[data-testid="stDataFrame"] div table td,
+            div[data-testid="stDataFrame"] div table th {
+                color: #FFFFFF !important;
+                font-weight: bold !important;
+            }
+            
+            /* Target everything with maximum specificity */
+            div[data-testid="stDataFrame"] *,
+            div[data-testid="stDataFrame"] div *,
+            div[data-testid="stDataFrame"] table *,
+            div[data-testid="stDataFrame"] div table * {
+                color: #FFFFFF !important;
+                font-weight: bold !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+            
             st.dataframe(styler_metrics, use_container_width=True)
 
     # Allocation pie charts (last rebalance vs current)
@@ -3600,3 +4942,27 @@ if st.session_state.get('alloc_backtest_run', False):
             build_table_from_alloc(final_alloc, None, f"Portfolio Evolution (Current Allocation)")
         except Exception as e:
             print(f"[ALLOC PLOT DEBUG] Failed to render allocation plots for {active_name}: {e}")
+
+    # Add PDF generation button at the very end
+    st.markdown("---")
+    st.markdown("### 📄 Generate PDF Report")
+    if st.button("Generate PDF Report", type="primary", use_container_width=True, key="alloc_pdf_btn_2"):
+        try:
+            success = generate_allocations_pdf()
+            if success:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"Allocations_Report_{timestamp}.pdf"
+                
+                st.success("✅ PDF Report Generated Successfully!")
+                st.download_button(
+                    label="📥 Download PDF Report",
+                    data=st.session_state.get('pdf_buffer', b''),
+                    file_name=filename,
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+            else:
+                st.error("❌ Failed to generate PDF report")
+        except Exception as e:
+            st.error(f"❌ Error generating PDF: {str(e)}")
+            st.exception(e)
