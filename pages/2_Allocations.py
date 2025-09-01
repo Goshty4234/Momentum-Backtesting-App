@@ -3680,16 +3680,22 @@ if st.session_state.get('alloc_backtest_run', False):
         if snapshot and active_name in today_weights_map:
             today_weights = today_weights_map.get(active_name, {})
             
-            # If momentum is not used and today_weights is empty, use the final allocation from last backtest run
+            # If momentum is not used, use the initial target allocation from portfolio configuration
             if not use_momentum and (not today_weights or all(v == 0 for v in today_weights.values())):
-                # Use the final allocation from historical data (NOT current UI inputs)
-                if allocs_for_portfolio:
-                    alloc_dates = sorted(list(allocs_for_portfolio.keys()))
-                    if alloc_dates:
-                        final_date = alloc_dates[-1]
-                        final_alloc = allocs_for_portfolio.get(final_date, {})
-                        today_weights = final_alloc.copy()
-                # If no historical data, leave today_weights empty (will show info message)
+                # Use the target allocation from portfolio configuration (same as initial allocation)
+                if active_portfolio and active_portfolio.get('stocks'):
+                    today_weights = {}
+                    total_allocation = sum(stock.get('allocation', 0) for stock in active_portfolio['stocks'] if stock.get('ticker'))
+                    
+                    if total_allocation > 0:
+                        for stock in active_portfolio['stocks']:
+                            ticker = stock.get('ticker', '').strip()
+                            allocation = stock.get('allocation', 0)
+                            if ticker and allocation > 0:
+                                # Convert to proportion (0-1 range)
+                                today_weights[ticker] = allocation / total_allocation
+                    
+                    # If no valid stocks or allocations, leave today_weights empty (will show info message)
             
             labels_today = [k for k, v in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])) if v > 0]
             vals_today = [float(today_weights[k]) * 100 for k in labels_today]
@@ -4028,14 +4034,30 @@ if st.session_state.get('alloc_backtest_run', False):
                     
                     # Calculate portfolio-weighted metrics BEFORE formatting
                     def weighted_average(df, column, weight_column='% of Portfolio'):
-                        """Calculate weighted average, handling NaN values"""
+                        """Calculate weighted average, handling NaN values and filtering invalid values"""
                         # Check if columns exist in DataFrame
                         if column not in df.columns or weight_column not in df.columns:
                             return None
                         
+                        # Base mask for valid (non-NaN) values
                         valid_mask = df[column].notna() & df[weight_column].notna()
+                        
+                        # Special handling for PE ratios and similar valuation metrics
+                        if 'P/E' in column or 'PE' in column or 'PEG' in column:
+                            # Filter out negative or extremely high PE values that are likely errors
+                            # Negative PE means negative earnings (company losing money)
+                            # Very high PE (>1000) is usually a data error or near-zero earnings
+                            valid_mask = valid_mask & (df[column] > 0) & (df[column] <= 1000)
+                        elif column == 'Beta':
+                            # Filter out extreme beta values (likely data errors)
+                            valid_mask = valid_mask & (df[column] >= -5) & (df[column] <= 5)
+                        elif 'Ratio' in column and column != 'PEG Ratio':
+                            # For other ratios, filter out negative values (usually data errors)
+                            valid_mask = valid_mask & (df[column] >= 0)
+                        
                         if valid_mask.sum() == 0:
                             return None
+                            
                         valid_df = df[valid_mask]
                         # Since weight_column is already in percentage, we divide by 100 to get decimal weights
                         result = (valid_df[column] * valid_df[weight_column] / 100).sum() / (valid_df[weight_column].sum() / 100)
