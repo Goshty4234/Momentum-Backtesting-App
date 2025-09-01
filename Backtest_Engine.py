@@ -2685,7 +2685,8 @@ def update_mom_weight(idx):
         st.session_state.mom_windows[idx]['weight'] = st.session_state[key] / 100.0
 
 def update_start_with():
-    st.session_state.start_with_radio_key = st.session_state.start_with_radio_key
+    # Session state automatically updates via the radio button key
+    pass
 
 def update_first_rebalance_strategy():
     st.session_state.first_rebalance_strategy = st.session_state.first_rebalance_strategy_radio_key
