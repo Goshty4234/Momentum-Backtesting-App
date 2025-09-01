@@ -2226,10 +2226,10 @@ def remove_portfolio_callback():
 
 def add_stock_callback():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'].append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
-    st.session_state.multi_backtest_rerun_flag = True
+    # Removed rerun flag - no need to refresh entire page for adding a stock
 
 def remove_stock_callback(ticker):
-    """Immediate stock removal callback"""
+    """Immediate stock removal callback - OPTIMIZED NO REFRESH"""
     try:
         active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
         stocks = active_portfolio['stocks']
@@ -2241,7 +2241,7 @@ def remove_stock_callback(ticker):
                 # If this was the last stock, add an empty one
                 if len(stocks) == 0:
                     stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
-                st.session_state.multi_backtest_rerun_flag = True
+                # Removed rerun flag - no need to refresh entire page for removing a stock
                 break
     except (IndexError, KeyError):
         pass
