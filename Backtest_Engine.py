@@ -24,6 +24,43 @@ try:
 except Exception:
     plotly_events = None
 
+# =============================================================================
+# PERFORMANCE OPTIMIZATION: CACHING FUNCTIONS FOR MAIN ENGINE
+# =============================================================================
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_cached_ticker_data(ticker_symbol, start_date=None, end_date=None, period=None, auto_adjust=False):
+    """Cache ticker data to dramatically improve performance - MAIN ENGINE VERSION
+    
+    Args:
+        ticker_symbol: Stock ticker symbol
+        start_date: Start date for data (None for period-based)
+        end_date: End date for data (None for period-based)
+        period: Period string like "max", "1y" (None for date-based)
+        auto_adjust: Auto-adjust setting
+    """
+    try:
+        ticker = yf.Ticker(ticker_symbol)
+        
+        if period:
+            # Period-based download
+            hist = ticker.history(period=period, auto_adjust=auto_adjust)
+        else:
+            # Date-based download
+            hist = ticker.history(start=start_date, end=end_date, auto_adjust=auto_adjust, raise_errors=False)
+            
+        return hist
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_cached_ticker_download(ticker_symbol, start_date=None, end_date=None, progress=False):
+    """Cache yf.download calls for fallback scenarios"""
+    try:
+        return yf.download(ticker_symbol, start=start_date, end=end_date, progress=progress)
+    except Exception:
+        return pd.DataFrame()
+
 # Set up logging to capture print statements
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 console_output = io.StringIO()
@@ -125,17 +162,16 @@ def get_risk_free_rate(dates):
         for s in symbols:
             # attempt 1: Ticker.history
             try:
-                t = yf.Ticker(s)
-                h = t.history(start=start_date, end=end_date, raise_errors=False)
+                h = get_cached_ticker_data(s, start_date=start_date, end_date=end_date, auto_adjust=False)
                 if h is None or getattr(h, 'empty', True):
                     # attempt 2: yf.download as fallback
-                    h = yf.download(s, start=start_date, end=end_date, progress=False)
+                    h = get_cached_ticker_download(s, start_date=start_date, end_date=end_date, progress=False)
                 if h is None or getattr(h, 'empty', True):
                     # try expanding the window by 30 days each side once
                     try:
                         adj_start = (pd.to_datetime(start_date) - pd.Timedelta(days=30)).strftime('%Y-%m-%d')
                         adj_end = (pd.to_datetime(end_date) + pd.Timedelta(days=30)).strftime('%Y-%m-%d')
-                        h = yf.download(s, start=adj_start, end=adj_end, progress=False)
+                        h = get_cached_ticker_download(s, start_date=adj_start, end_date=adj_end, progress=False)
                     except Exception:
                         h = None
                 if h is None or getattr(h, 'empty', True):
@@ -639,8 +675,7 @@ def _load_data(tickers: List[str], start_date: datetime, end_date: datetime):
 
     for t in tickers:
         try:
-            ticker = yf.Ticker(t)
-            hist = ticker.history(start=start_date, end=yf_end_date, auto_adjust=False)
+            hist = get_cached_ticker_data(t, start_date=start_date, end_date=yf_end_date, auto_adjust=False)
 
             if hist.empty:
                 logger.warning(f"No data available for {t}")
@@ -654,7 +689,8 @@ def _load_data(tickers: List[str], start_date: datetime, end_date: datetime):
             # Clip to end_date in case yf_end_date brought extra rows
             hist = hist[hist.index <= end_date]
 
-            # Fetch dividends
+            # Fetch dividends - we need the ticker object for this
+            ticker = yf.Ticker(t)
             divs = ticker.dividends.copy()
             if getattr(divs.index, "tz", None) is not None:
                 divs.index = divs.index.tz_convert(None)
@@ -3241,11 +3277,11 @@ with st.sidebar:
     if "added_frequency_widget" not in st.session_state:
         st.session_state["added_frequency_widget"] = st.session_state.added_frequency
     if "start_with_radio_key" not in st.session_state:
-        st.session_state["start_with_radio_key"] = st.session_state.start_with_radio_key
+        st.session_state["start_with_radio_key"] = "oldest"
     if "momentum_strategy_radio" not in st.session_state:
-        st.session_state["momentum_strategy_radio"] = st.session_state.momentum_strategy
+        st.session_state["momentum_strategy_radio"] = st.session_state.get("momentum_strategy", "Classic momentum")
     if "negative_momentum_strategy_radio" not in st.session_state:
-        st.session_state["negative_momentum_strategy_radio"] = st.session_state.negative_momentum_strategy
+        st.session_state["negative_momentum_strategy_radio"] = st.session_state.get("negative_momentum_strategy", "Go to cash")
     if "use_momentum_checkbox" not in st.session_state:
         st.session_state["use_momentum_checkbox"] = st.session_state.use_momentum
     # Removed use_decimals_checkbox initialization
@@ -3371,12 +3407,14 @@ with st.sidebar:
 
     # 5. How to handle assets with different start dates?
     start_with_options = ["all", "oldest"]
+    # Initialize the session state value if not present
     if "start_with_radio_key" not in st.session_state:
-        st.session_state["start_with_radio_key"] = st.session_state.get("start_with_radio_key", "oldest")
+        st.session_state["start_with_radio_key"] = "oldest"
+    
+    # Use the radio button without specifying index - let Streamlit handle it via the key
     start_with = st.radio(
         "How to handle assets with different start dates?",
         start_with_options,
-        index=0 if st.session_state["start_with_radio_key"] == "all" else 1,
         format_func=lambda x: "Start when ALL assets are available" if x == "all" else "Start with OLDEST asset",
         help="""
         **All:** Starts the backtest when all selected assets are available.
@@ -3394,7 +3432,6 @@ with st.sidebar:
     first_rebalance_strategy = st.radio(
         "When should the first rebalancing occur?",
         first_rebalance_options,
-        index=0 if st.session_state["first_rebalance_strategy_radio_key"] == "rebalancing_date" else 1,
         format_func=lambda x: "First rebalance on rebalancing date" if x == "rebalancing_date" else "First rebalance when momentum window complete",
         help="""
         **First rebalance on rebalancing date:** Start rebalancing immediately when possible.
@@ -3434,7 +3471,6 @@ with st.sidebar:
         selected_momentum = st.radio(
             "Momentum Strategy (when not all assets have negative):",
             ["Classic momentum", "Relative momentum"],
-            index=0 if st.session_state["momentum_strategy_radio"] == "Classic momentum" else 1,
             key="momentum_strategy_radio",
             help="Choose how to allocate when at least one asset has positive momentum.",
             on_change=update_momentum_strategy
@@ -3461,7 +3497,6 @@ with st.sidebar:
         selected_negative = st.radio(
             "If all assets have negative momentum:",
             ["Go to cash", "Equal weight", "Relative momentum"],
-            index=0 if st.session_state["negative_momentum_strategy_radio"] == "Go to cash" else (1 if st.session_state["negative_momentum_strategy_radio"] == "Equal weight" else 2),
             key="negative_momentum_strategy_radio",
             help="Choose what to do when all assets have negative momentum.",
             on_change=update_negative_momentum_strategy
@@ -3722,8 +3757,7 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     asset_start_dates = []  # List of (ticker, date)
     if benchmark_ticker:
         try:
-            ticker_yf = yf.Ticker(benchmark_ticker)
-            hist_yf = ticker_yf.history(period="max")
+            hist_yf = get_cached_ticker_data(benchmark_ticker, period="max")
             if hist_yf.empty:
                 benchmark_error = f"Benchmark ticker '{benchmark_ticker}' not found on Yahoo Finance. Please choose another ticker."
             else:
@@ -3731,8 +3765,7 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
                 # Get start dates for all asset tickers
                 for t in st.session_state.tickers:
                     try:
-                        ticker_yf_asset = yf.Ticker(t)
-                        hist_asset = ticker_yf_asset.history(period="max")
+                        hist_asset = get_cached_ticker_data(t, period="max")
                         if not hist_asset.empty:
                             asset_start_dates.append((t, hist_asset.index.min().date()))
                     except Exception:
@@ -3769,8 +3802,7 @@ if not st.session_state.get("_run_requested", False):
             # Print start date of each selected ticker and benchmark for debugging
             for t in st.session_state.tickers:
                 try:
-                    ticker_yf = yf.Ticker(t)
-                    hist = ticker_yf.history(period="max")
+                    hist = get_cached_ticker_data(t, period="max")
                     if not hist.empty:
                         print(f"DEBUG: Asset Ticker {t} starts on {hist.index.min().date()}")
                     else:
@@ -3779,8 +3811,7 @@ if not st.session_state.get("_run_requested", False):
                     print(f"DEBUG: Asset Ticker {t}: Error - {e}")
             if benchmark_ticker:
                 try:
-                    ticker_yf = yf.Ticker(benchmark_ticker)
-                    hist = ticker_yf.history(period="max")
+                    hist = get_cached_ticker_data(benchmark_ticker, period="max")
                     if not hist.empty:
                         print(f"DEBUG: Benchmark Ticker {benchmark_ticker} starts on {hist.index.min().date()}")
                     else:
