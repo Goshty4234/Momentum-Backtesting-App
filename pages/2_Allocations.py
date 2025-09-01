@@ -28,11 +28,17 @@ warnings.filterwarnings('ignore')
 # =============================================================================
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
-def get_ticker_data(ticker_symbol):
-    """Cache ticker data to improve performance across multiple tabs"""
+def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
+    """Cache ticker data to improve performance across multiple tabs
+    
+    Args:
+        ticker_symbol: Stock ticker symbol
+        period: Data period (used in cache key to prevent conflicts)
+        auto_adjust: Auto-adjust setting (used in cache key to prevent conflicts)
+    """
     try:
         ticker = yf.Ticker(ticker_symbol)
-        hist = ticker.history(period="max", auto_adjust=False)[["Close", "Dividends"]]
+        hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
         return hist
     except Exception:
         return pd.DataFrame()
@@ -55,28 +61,51 @@ def calculate_portfolio_metrics(portfolio_config, allocation_data):
     return portfolio_config, allocation_data  # Placeholder - will be filled in by calling functions
 
 def optimize_data_loading():
-    """Session state optimization to prevent redundant operations"""
+    """Session state optimization to prevent redundant operations - PAGE-SPECIFIC"""
+    # Use page-specific keys to prevent conflicts between pages
+    page_prefix = "alloc_page_"
+    
     # Initialize performance flags if not present
-    if 'alloc_data_loaded' not in st.session_state:
-        st.session_state.alloc_data_loaded = False
-    if 'alloc_last_refresh' not in st.session_state:
-        st.session_state.alloc_last_refresh = None
+    if f'{page_prefix}data_loaded' not in st.session_state:
+        st.session_state[f'{page_prefix}data_loaded'] = False
+    if f'{page_prefix}last_refresh' not in st.session_state:
+        st.session_state[f'{page_prefix}last_refresh'] = None
     
     # Check if data needs refresh (5 minutes)
     current_time = datetime.datetime.now()
-    if (st.session_state.alloc_last_refresh is None or 
-        (current_time - st.session_state.alloc_last_refresh).seconds > 300):
-        st.session_state.alloc_data_loaded = False
-        st.session_state.alloc_last_refresh = current_time
+    if (st.session_state[f'{page_prefix}last_refresh'] is None or 
+        (current_time - st.session_state[f'{page_prefix}last_refresh']).seconds > 300):
+        st.session_state[f'{page_prefix}data_loaded'] = False
+        st.session_state[f'{page_prefix}last_refresh'] = current_time
     
-    return st.session_state.alloc_data_loaded
+    return st.session_state[f'{page_prefix}data_loaded']
+
+def create_safe_cache_key(data):
+    """Create a safe, consistent cache key from complex data structures"""
+    import hashlib
+    import json
+    try:
+        # Convert to JSON string and hash for consistent cache keys
+        json_str = json.dumps(data, sort_keys=True, default=str)
+        return hashlib.md5(json_str.encode()).hexdigest()
+    except Exception:
+        # Fallback to string representation
+        return hashlib.md5(str(data).encode()).hexdigest()
 
 @st.cache_data(ttl=1800)  # Cache for 30 minutes - expensive backtest calculations
-def run_cached_backtest(portfolios_json, start_date, end_date, benchmark):
-    """Cache expensive backtest calculations to dramatically improve multi-tab performance"""
+def run_cached_backtest(portfolios_config_hash, start_date_str, end_date_str, benchmark_str, page_id="allocations"):
+    """Cache expensive backtest calculations with proper invalidation
+    
+    Args:
+        portfolios_config_hash: Hash of portfolio configurations to detect changes
+        start_date_str: Start date as string for consistent cache key
+        end_date_str: End date as string for consistent cache key  
+        benchmark_str: Benchmark ticker as string
+        page_id: Page identifier to prevent cross-page conflicts
+    """
     # This will be called by the actual backtest functions when needed
     # The caching key includes all parameters that affect the backtest result
-    return portfolios_json, start_date, end_date, benchmark  # Placeholder for actual implementation
+    return portfolios_config_hash, start_date_str, end_date_str, benchmark_str, page_id  # Placeholder
 
 def check_currency_warning(tickers):
     """
@@ -3078,7 +3107,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             try:
                 progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
                 progress_bar.progress((i + 1) / (len(all_tickers) + len(portfolio_list)), text=progress_text)
-                hist = get_ticker_data(t)
+                hist = get_ticker_data(t, period="max", auto_adjust=False)
                 if hist.empty:
                     print(f"No data available for {t}")
                     invalid_tickers.append(t)
