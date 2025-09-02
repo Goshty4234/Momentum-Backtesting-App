@@ -4205,6 +4205,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         # Don't run the backtest, but continue showing the UI
         pass
     else:
+        # Show standalone popup notification that code is really running
+        st.toast("**Code is running!** Starting backtest...", icon="🚀")
+        
         progress_bar = st.empty()
         progress_bar.progress(0, text="Initializing multi-portfolio backtest...")
         
