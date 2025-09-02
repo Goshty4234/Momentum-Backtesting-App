@@ -3811,6 +3811,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         pass
     else:
         st.session_state.strategy_comparison_run_backtest = True
+        # Show standalone popup notification that code is really running
+        st.toast("**Code is running!** Starting backtest...", icon="🚀")
 
 # Start with option
 st.sidebar.markdown("---")
