@@ -3164,7 +3164,7 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
 _TOTAL_TOL = 1.0
 _ALLOC_TOL = 1.0
 
-# Move Run Backtest to the left sidebar to make it conspicuous and separate from config
+# Move Run Backtest to the first sidebar to make it conspicuous and separate from config
 if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=True):
     
     # Pre-backtest validation check for all portfolios
@@ -3200,6 +3200,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         progress_bar.empty()
         st.stop()
     else:
+        # Show standalone popup notification that code is really running
+        st.toast("**Code is running!** Starting backtest...", icon="🚀")
+        
         progress_bar.progress(0, text="Starting backtest...")
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
