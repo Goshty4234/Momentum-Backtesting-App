@@ -608,6 +608,24 @@ def calculate_next_rebalance_date(rebalancing_frequency, last_rebalance_date):
     else:
         base_date = last_rebalance_date.date()
     
+    def add_months_safely(date, months_to_add):
+        """Safely add months to a date, handling day overflow"""
+        year = date.year + (date.month + months_to_add - 1) // 12
+        month = ((date.month + months_to_add - 1) % 12) + 1
+        
+        # Find the last day of the target month
+        if month == 12:
+            last_day_of_month = 31
+        else:
+            # Get the first day of the next month and subtract 1 day
+            next_month_first = datetime(year, month + 1, 1).date()
+            last_day_of_month = (next_month_first - timedelta(days=1)).day
+        
+        # Use the minimum of the original day or the last day of the target month
+        safe_day = min(date.day, last_day_of_month)
+        
+        return date.replace(year=year, month=month, day=safe_day)
+    
     # Calculate next rebalance date based on frequency
     if rebalancing_frequency == 'market_day':
         # Next market day (simplified - just next day for now)
@@ -619,23 +637,14 @@ def calculate_next_rebalance_date(rebalancing_frequency, last_rebalance_date):
     elif rebalancing_frequency == '2weeks':
         next_date = base_date + timedelta(weeks=2)
     elif rebalancing_frequency == 'month':
-        # Add one month
-        if base_date.month == 12:
-            next_date = base_date.replace(year=base_date.year + 1, month=1)
-        else:
-            next_date = base_date.replace(month=base_date.month + 1)
+        # Add one month safely
+        next_date = add_months_safely(base_date, 1)
     elif rebalancing_frequency == '3months':
-        # Add three months
-        new_month = base_date.month + 3
-        new_year = base_date.year + (new_month - 1) // 12
-        new_month = ((new_month - 1) % 12) + 1
-        next_date = base_date.replace(year=new_year, month=new_month)
+        # Add three months safely
+        next_date = add_months_safely(base_date, 3)
     elif rebalancing_frequency == '6months':
-        # Add six months
-        new_month = base_date.month + 6
-        new_year = base_date.year + (new_month - 1) // 12
-        new_month = ((new_month - 1) % 12) + 1
-        next_date = base_date.replace(year=new_year, month=new_month)
+        # Add six months safely
+        next_date = add_months_safely(base_date, 6)
     elif rebalancing_frequency == 'year':
         next_date = base_date.replace(year=base_date.year + 1)
     else:
@@ -664,27 +673,13 @@ def calculate_next_rebalance_date(rebalancing_frequency, last_rebalance_date):
             next_date = next_date + timedelta(weeks=2)
         elif rebalancing_frequency == 'month':
             # Add one month safely
-            if next_date.month == 12:
-                next_date = next_date.replace(year=next_date.year + 1, month=1)
-            else:
-                next_date = next_date.replace(month=next_date.month + 1)
-            # Handle day overflow
-            try:
-                next_date = next_date.replace(day=min(next_date.day, 28))
-            except ValueError:
-                next_date = next_date.replace(day=1)
+            next_date = add_months_safely(next_date, 1)
         elif rebalancing_frequency == '3months':
             # Add three months safely
-            new_month = next_date.month + 3
-            new_year = next_date.year + (new_month - 1) // 12
-            new_month = ((new_month - 1) % 12) + 1
-            next_date = next_date.replace(year=new_year, month=new_month, day=1)
+            next_date = add_months_safely(next_date, 3)
         elif rebalancing_frequency == '6months':
             # Add six months safely
-            new_month = next_date.month + 6
-            new_year = next_date.year + (new_month - 1) // 12
-            new_month = ((new_month - 1) % 12) + 1
-            next_date = next_date.replace(year=new_year, month=new_month, day=1)
+            next_date = add_months_safely(next_date, 6)
         elif rebalancing_frequency == 'year':
             next_date = next_date.replace(year=next_date.year + 1)
         
@@ -774,35 +769,9 @@ def plotly_to_matplotlib_figure(plotly_fig, title="", width_inches=8, height_inc
                     # Create a slightly wider figure to ensure perfect circle
                     fig_pie, ax_pie = plt.subplots(figsize=(8.5, 8))
                     
-                    # Format long titles to break into multiple lines
-                    def format_long_title(title_text, max_length=50):
-                        if len(title_text) <= max_length:
-                            return title_text
-                        
-                        # Try to break at word boundaries first
-                        words = title_text.split()
-                        if len(words) == 1:
-                            # Single long word, break at max_length
-                            return '\n'.join([title_text[i:i+max_length] for i in range(0, len(title_text), max_length)])
-                        
-                        # Try to break at word boundaries
-                        current_line = ""
-                        lines = []
-                        for word in words:
-                            if len(current_line) + len(word) + 1 <= max_length:
-                                current_line += (word + " ") if current_line else word
-                            else:
-                                if current_line:
-                                    lines.append(current_line.strip())
-                                current_line = word
-                        
-                        if current_line:
-                            lines.append(current_line.strip())
-                        
-                        return '\n'.join(lines)
-                    
-                    # Set title with line breaks and MORE SPACING to prevent overlap
-                    formatted_title = format_long_title(title)
+                    # Format long titles to break into multiple lines using textwrap
+                    import textwrap
+                    formatted_title = textwrap.fill(title, width=40, break_long_words=True, break_on_hyphens=False)
                     ax_pie.set_title(formatted_title, fontsize=14, fontweight='bold', pad=40, y=0.95)
                     
                     # Create pie chart with smart percentage display - hide small ones to prevent overlap
@@ -1158,7 +1127,7 @@ def generate_allocations_pdf(custom_name=""):
         story.append(PageBreak())
         current_date_str = datetime.now().strftime("%B %d, %Y")
         story.append(Paragraph(f"2. Target Allocation if Rebalanced Today ({current_date_str})", heading_style))
-        story.append(Spacer(1, 10))
+        story.append(Spacer(1, 2))
         
         # Get the allocation data from your existing UI - fetch the existing allocation data
         if 'alloc_snapshot_data' in st.session_state:
@@ -1177,7 +1146,7 @@ def generate_allocations_pdf(custom_name=""):
                     
                     # Add portfolio header
                     story.append(Paragraph(f"Portfolio: {portfolio_name}", subheading_style))
-                    story.append(Spacer(1, 10))
+                    story.append(Spacer(1, 2))
                     
                     # Create pie chart for this portfolio
                     try:
@@ -1186,33 +1155,76 @@ def generate_allocations_pdf(custom_name=""):
                         vals_today = [float(today_weights[k]) * 100 for k in labels_today]
                         
                         if labels_today and vals_today:
-                            # Create the pie chart
-                            fig_today = go.Figure()
-                            fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
-                            fig_today.update_traces(textinfo='percent+label')
-                            fig_today.update_layout(
-                                template='plotly_dark', 
-                                margin=dict(t=30),
-                                height=600,
-                                showlegend=True
-                            )
+                            # Create matplotlib pie chart (same format as sector/industry)
+                            fig, ax_target = plt.subplots(1, 1, figsize=(10, 10))
                             
-                            # Convert Plotly figure to matplotlib (handles pie charts)
-                            mpl_fig = plotly_to_matplotlib_figure(fig_today, title=f"Target Allocation - {portfolio_name}", width_inches=6, height_inches=6)
+                            # Create pie chart with smart percentage display - hide small ones to prevent overlap
+                            def smart_autopct(pct):
+                                return f'{pct:.1f}%' if pct > 3 else ''  # Only show percentages > 3%
                             
-                            # Save matplotlib figure to buffer
-                            pie_img_buffer = io.BytesIO()
-                            mpl_fig.savefig(pie_img_buffer, format='png', dpi=300, bbox_inches='tight')
-                            pie_img_buffer.seek(0)
-                            plt.close(mpl_fig)  # Close to free memory
+                            wedges_target, texts_target, autotexts_target = ax_target.pie(vals_today, autopct=smart_autopct, 
+                                                                                         startangle=90)
                             
-                            # Add to PDF
-                            story.append(Image(pie_img_buffer, width=5*inch, height=5*inch))
-                            story.append(Spacer(1, 2))
+                            # Add ticker names with percentages outside the pie chart slices for allocations > 2.4%
+                            for i, (wedge, ticker, alloc) in enumerate(zip(wedges_target, labels_today, vals_today)):
+                                # Only show tickers above 2.4%
+                                if alloc > 2.4:
+                                    # Calculate position for the text (middle of the slice)
+                                    angle = (wedge.theta1 + wedge.theta2) / 2
+                                    # Convert angle to radians and calculate position
+                                    rad = np.radians(angle)
+                                    # Position text outside the pie chart at 1.4 radius (farther away)
+                                    x = 1.4 * np.cos(rad)
+                                    y = 1.4 * np.sin(rad)
+                                    
+                                    # Add ticker name with percentage under it (e.g., "ORLY 5%")
+                                    ax_target.text(x, y, f"{ticker}\n{alloc:.1f}%", ha='center', va='center', 
+                                                 fontsize=8, fontweight='bold', 
+                                                 bbox=dict(boxstyle="round,pad=0.2", facecolor='white', alpha=0.8))
+                                    
+                                    # Add leader line from slice edge to label
+                                    # Start from edge of pie chart (radius 1.0)
+                                    line_start_x = 1.0 * np.cos(rad)
+                                    line_start_y = 1.0 * np.sin(rad)
+                                    # End at label position
+                                    line_end_x = 1.25 * np.cos(rad)
+                                    line_end_y = 1.25 * np.sin(rad)
+                                    
+                                    ax_target.plot([line_start_x, line_end_x], [line_start_y, line_end_y], 
+                                                 'k-', linewidth=0.5, alpha=0.6)
+                            
+                            # Create legend with percentages - positioned farther to the right to avoid overlap
+                            legend_labels = [f"{ticker} ({alloc:.1f}%)" for ticker, alloc in zip(labels_today, vals_today)]
+                            ax_target.legend(wedges_target, legend_labels, title="Tickers", loc="center left", bbox_to_anchor=(1.15, 0, 0.5, 1), fontsize=10)
+                            
+                            # Wrap long titles to prevent them from going out of bounds
+                            title_text = f'Target Allocation - {portfolio_name}'
+                            # Use textwrap for proper word-based wrapping
+                            import textwrap
+                            wrapped_title = textwrap.fill(title_text, width=40, break_long_words=True, break_on_hyphens=False)
+                            ax_target.set_title(wrapped_title, fontsize=14, fontweight='bold', pad=30)
+                            # Force perfectly circular shape
+                            ax_target.set_aspect('equal')
+                            # Use tighter axis limits to make pie chart appear larger within its space
+                            ax_target.set_xlim(-1.2, 1.2)
+                            ax_target.set_ylim(-1.2, 1.2)
+                            
+                            # Adjust layout to accommodate legend and title (better spacing to prevent title cutoff)
+                            # Use more aggressive spacing like sector/industry charts for bigger pie chart
+                            plt.subplots_adjust(left=0.1, right=0.7, top=0.95, bottom=0.05)
+                            
+                            # Save to buffer
+                            target_img_buffer = io.BytesIO()
+                            fig.savefig(target_img_buffer, format='png', dpi=300, facecolor='white')
+                            target_img_buffer.seek(0)
+                            plt.close(fig)
+                            
+                            # Add to PDF - reduce pie chart size to fit everything on one page
+                            story.append(Image(target_img_buffer, width=5.5*inch, height=5.5*inch))
                             
                             # Add Next Rebalance Timer information - calculate from portfolio data
                             story.append(Paragraph(f"Next Rebalance Timer - {portfolio_name}", subheading_style))
-                            story.append(Spacer(1, 5))
+                            story.append(Spacer(1, 1))
                             
                             # Calculate timer information from portfolio configuration and allocation data
                             try:
@@ -1258,6 +1270,7 @@ def generate_allocations_pdf(custom_name=""):
                                             mapped_frequency = frequency_mapping.get(rebalancing_frequency.lower(), rebalancing_frequency.lower())
                                             
                                             # Calculate next rebalance date
+                                            
                                             next_date, time_until, next_rebalance_datetime = calculate_next_rebalance_date(
                                                 mapped_frequency, last_rebal_date
                                             )
@@ -1277,8 +1290,6 @@ def generate_allocations_pdf(custom_name=""):
                                     story.append(Paragraph("Portfolio configuration not found for timer calculation", styles['Normal']))
                             except Exception as e:
                                 story.append(Paragraph(f"Error calculating timer information: {str(e)}", styles['Normal']))
-                            
-                            story.append(Spacer(1, 5))
                             
                             # Add page break after pie plot + timer to separate from allocation table
                             story.append(PageBreak())
@@ -1634,7 +1645,12 @@ def generate_allocations_pdf(custom_name=""):
                         legend_labels = [f"{sector} ({alloc:.1f}%)" for sector, alloc in zip(sectors, allocations)]
                         ax_sector.legend(wedges_sector, legend_labels, title="Sectors", loc="center left", bbox_to_anchor=(1.05, 0, 0.5, 1), fontsize=10)
                         
-                        ax_sector.set_title(f'Sector Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                        # Wrap long titles to prevent them from going out of bounds
+                        title_text = f'Sector Allocation - {portfolio_name}'
+                        # Use textwrap for proper word-based wrapping
+                        import textwrap
+                        wrapped_title = textwrap.fill(title_text, width=40, break_long_words=True, break_on_hyphens=False)
+                        ax_sector.set_title(wrapped_title, fontsize=14, fontweight='bold')
                         # Force perfectly circular shape
                         ax_sector.set_aspect('equal')
                         ax_sector.set_xlim(-1.2, 1.2)
@@ -1644,7 +1660,12 @@ def generate_allocations_pdf(custom_name=""):
                         ax_sector.text(0.5, 0.5, 'No sector data available', 
                                      horizontalalignment='center', verticalalignment='center', 
                                      transform=ax_sector.transAxes, fontsize=12)
-                        ax_sector.set_title(f'Sector Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                        # Wrap long titles to prevent them from going out of bounds
+                        title_text = f'Sector Allocation - {portfolio_name}'
+                        # Use textwrap for proper word-based wrapping
+                        import textwrap
+                        wrapped_title = textwrap.fill(title_text, width=40, break_long_words=True, break_on_hyphens=False)
+                        ax_sector.set_title(wrapped_title, fontsize=14, fontweight='bold')
                     
                     # Industry pie chart
                     if has_industry_data:
@@ -1671,7 +1692,12 @@ def generate_allocations_pdf(custom_name=""):
                         legend_labels = [f"{industry} ({alloc:.1f}%)" for industry, alloc in zip(industries, allocations)]
                         ax_industry.legend(wedges_industry, legend_labels, title="Industries", loc="center left", bbox_to_anchor=(1.05, 0, 0.5, 1), fontsize=10)
                         
-                        ax_industry.set_title(f'Industry Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                        # Wrap long titles to prevent them from going out of bounds
+                        title_text = f'Industry Allocation - {portfolio_name}'
+                        # Use textwrap for proper word-based wrapping
+                        import textwrap
+                        wrapped_title = textwrap.fill(title_text, width=40, break_long_words=True, break_on_hyphens=False)
+                        ax_industry.set_title(wrapped_title, fontsize=14, fontweight='bold')
                         # Force perfectly circular shape
                         ax_industry.set_aspect('equal')
                         ax_industry.set_xlim(-1.2, 1.2)
@@ -1681,7 +1707,12 @@ def generate_allocations_pdf(custom_name=""):
                         ax_industry.text(0.5, 0.5, 'No industry data available', 
                                        horizontalalignment='center', verticalalignment='center', 
                                        transform=ax_industry.transAxes, fontsize=12)
-                        ax_industry.set_title(f'Industry Allocation - {portfolio_name}', fontsize=14, fontweight='bold')
+                        # Wrap long titles to prevent them from going out of bounds
+                        title_text = f'Industry Allocation - {portfolio_name}'
+                        # Use textwrap for proper word-based wrapping
+                        import textwrap
+                        wrapped_title = textwrap.fill(title_text, width=40, break_long_words=True, break_on_hyphens=False)
+                        ax_industry.set_title(wrapped_title, fontsize=14, fontweight='bold')
                     
                     # Adjust layout to maintain circular shapes and accommodate legends
                     plt.subplots_adjust(hspace=0.4, left=0.1, right=0.7, top=0.95, bottom=0.05)
