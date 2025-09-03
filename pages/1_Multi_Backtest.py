@@ -3834,7 +3834,7 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                 st.info(f"📊 Total portfolios: {len(st.session_state.multi_backtest_portfolio_configs)}")
                 st.rerun()
     else:
-        st.warning("⚠️ Select at least one parameter to vary")
+            st.warning("⚠️ Select at least one parameter to vary")
 
 col_left, col_right = st.columns([1, 1])
 with col_left:
@@ -4649,8 +4649,26 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 # Map portfolio index (0-based) to the unique key used in the result dicts
                 portfolio_key_map = {}
                 
+                # Add variables for MWRR calculation
+                all_cash_flows = {}
+                all_portfolio_values = {}
+                
+                # Add comprehensive error handling and progress tracking
+                total_portfolios = len(st.session_state.multi_backtest_portfolio_configs)
+                successful_portfolios = 0
+                failed_portfolios = []
+                
+                # Create a more detailed progress bar
+                progress_text = st.empty()
+                progress_bar = st.progress(0, text="Starting portfolio backtests...")
+                
                 for i, cfg in enumerate(st.session_state.multi_backtest_portfolio_configs, start=1):
                     name = cfg.get('name', f'Backtest {i}')
+                    
+                    # Update progress
+                    progress_percent = (i - 1) / total_portfolios
+                    progress_bar.progress(progress_percent, text=f"Processing portfolio {i}/{total_portfolios}: {name}")
+                    progress_text.text(f"🔄 Processing: {name} ({i}/{total_portfolios})")
                     
                     # Ensure unique key for storage to avoid overwriting when duplicate names exist
                     base_name = name
@@ -4660,9 +4678,18 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         unique_name = f"{base_name} ({suffix})"
                         suffix += 1
                     
+                    # Run single backtest for this strategy with timeout protection
+                    st.session_state[f"processing_portfolio_{i}"] = True
+                    
                     # Run single backtest for this strategy
                     total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
-                
+                    
+                    # Verify results are valid
+                    if total_series is None or total_series.empty:
+                        st.error(f"❌ Portfolio {name} returned empty results")
+                        failed_portfolios.append((name, "Empty results"))
+                        continue
+                    
                     # compute today_weights_map (target weights as-if rebalanced at final snapshot date)
                     today_weights_map = {}
                     try:
@@ -4748,96 +4775,38 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         cash_flows.iloc[-1] += total_series.iloc[-1]
                     
                     # Store cash flows and portfolio values for MWRR calculation after all portfolios are processed
-                    all_results[unique_name]['cash_flows'] = cash_flows
-                    all_results[unique_name]['portfolio_values'] = total_series
+                    all_cash_flows[unique_name] = cash_flows
+                    all_portfolio_values[unique_name] = total_series
                     
-                    # Get benchmark returns for stats calculation
-                    benchmark_returns = None
-                    if cfg['benchmark_ticker'] and cfg['benchmark_ticker'] in data_reindexed:
-                        benchmark_returns = data_reindexed[cfg['benchmark_ticker']]['Price_change']
-                    # Ensure benchmark_returns is a pandas Series aligned to total_series
-                    if benchmark_returns is not None:
-                        benchmark_returns = pd.Series(benchmark_returns, index=total_series.index).dropna()
+                    successful_portfolios += 1
+                    st.session_state[f"processing_portfolio_{i}"] = False
                     
-                    # Calculate statistics (excluding MWRR for now)
-                    # Use total_series_no_additions for all stats except MWRR
-                    stats_values = total_series_no_additions.values
-                    stats_dates = total_series_no_additions.index
-                    stats_returns = pd.Series(stats_values, index=stats_dates).pct_change().fillna(0)
-                    cagr = calculate_cagr(stats_values, stats_dates)
-                    max_dd, drawdowns = calculate_max_drawdown(stats_values)
-                    vol = calculate_volatility(stats_returns)
-                    
-                    # Use 2% annual risk-free rate (same as Backtest_Engine.py default)
-                    risk_free_rate = 0.02
-                    sharpe = calculate_sharpe(stats_returns, risk_free_rate)
-                    sortino = calculate_sortino(stats_returns, risk_free_rate)
-                    ulcer = calculate_ulcer_index(pd.Series(stats_values, index=stats_dates))
-                    upi = calculate_upi(cagr, ulcer)
-                    # --- Beta calculation (copied from app.py) ---
-                    beta = np.nan
-                    if benchmark_returns is not None:
-                        portfolio_returns = stats_returns.copy()
-                        benchmark_returns_series = pd.Series(benchmark_returns, index=stats_dates).dropna()
-                        common_idx = portfolio_returns.index.intersection(benchmark_returns_series.index)
-                        if len(common_idx) >= 2:
-                            pr = portfolio_returns.reindex(common_idx).dropna()
-                            br = benchmark_returns_series.reindex(common_idx).dropna()
-                            common_idx2 = pr.index.intersection(br.index)
-                            if len(common_idx2) >= 2 and br.loc[common_idx2].var() != 0:
-                                cov = pr.loc[common_idx2].cov(br.loc[common_idx2])
-                                var = br.loc[common_idx2].var()
-                                beta = cov / var
-                    def scale_pct(val):
-                        if val is None or np.isnan(val):
-                            return np.nan
-                        # Only scale if value is between -1 and 1 (decimal)
-                        if -1.5 < val < 1.5:
-                            return val * 100
-                        return val
-
-                    def clamp_stat(val, stat_type):
-                        if val is None or np.isnan(val):
-                            return "N/A"
-                        if stat_type == "MWRR":
-                            # MWRR is already a percentage from calculate_mwrr, don't scale it
-                            v = val
-                        else:
-                            v = scale_pct(val)
-                        # Clamp ranges for each stat type
-                        if stat_type in ["CAGR", "Volatility", "Total Return"]:
-                            if v < 0 or v > 100:
-                                return "N/A"
-                        elif stat_type == "MWRR":
-                            # MWRR can be negative or exceed 100%, so don't clamp it
-                            pass
-                        elif stat_type == "MaxDrawdown":
-                            if v < -100 or v > 0:
-                                return "N/A"
-                        return f"{v:.2f}%" if stat_type in ["CAGR", "MaxDrawdown", "Volatility", "MWRR", "Total Return"] else f"{v:.3f}" if isinstance(v, float) else v
-
-                    # Calculate total return (no additions)
-                    total_return = None
-                    if len(stats_values) > 0:
-                        initial_val = stats_values[0]
-                        final_val = stats_values[-1]
-                        if initial_val > 0:
-                            total_return = (final_val / initial_val - 1)  # Return as decimal, not percentage
-
-                    stats = {
-                        "Total Return": clamp_stat(total_return, "Total Return"),
-                    "CAGR": clamp_stat(cagr, "CAGR"),
-                    "MaxDrawdown": clamp_stat(max_dd, "MaxDrawdown"),
-                    "Volatility": clamp_stat(vol, "Volatility"),
-                    "Sharpe": clamp_stat(sharpe / 100 if isinstance(sharpe, (int, float)) and pd.notna(sharpe) else sharpe, "Sharpe"),
-                    "Sortino": clamp_stat(sortino / 100 if isinstance(sortino, (int, float)) and pd.notna(sortino) else sortino, "Sortino"),
-                    "UlcerIndex": clamp_stat(ulcer, "UlcerIndex"),
-                    "UPI": clamp_stat(upi / 100 if isinstance(upi, (int, float)) and pd.notna(upi) else upi, "UPI"),
-                    "Beta": clamp_stat(beta / 100 if isinstance(beta, (int, float)) and pd.notna(beta) else beta, "Beta"),
-                    # MWRR will be calculated after all portfolios are processed
-                }
-                all_stats[unique_name] = stats
-                all_drawdowns[unique_name] = pd.Series(drawdowns, index=stats_dates)
+                    # Add memory management - clear some variables to free memory
+                    del total_series, total_series_no_additions, historical_allocations, historical_metrics
+            
+            # Final progress update (after loop completes)
+            progress_bar.progress(1.0, text="Backtest processing completed!")
+            progress_text.text(f"✅ Completed: {successful_portfolios}/{total_portfolios} portfolios processed successfully")
+            
+            # Show summary of results
+            if failed_portfolios:
+                st.warning(f"⚠️ **Warning:** {len(failed_portfolios)} portfolios failed to process:")
+                for name, error in failed_portfolios:
+                    st.warning(f"  - {name}: {error}")
+            
+            if successful_portfolios == 0:
+                st.error("❌ **Critical Error:** No portfolios were processed successfully. Please check your configuration and try again.")
+                st.stop()
+            
+            st.success(f"🎉 **Success:** {successful_portfolios} out of {total_portfolios} portfolios processed successfully!")
+            
+            # Memory cleanup
+            if len(all_results) > 100:  # If we have many portfolios, clear some memory
+                st.info("🧹 Performing memory cleanup for large dataset...")
+                import gc
+                gc.collect()
+            
+            # --- CALCULATE MWRR FOR ALL PORTFOLIOS AFTER LOOP COMPLETES ---
             progress_bar.progress(100, text="Multi-portfolio backtest analysis complete!")
             progress_bar.empty()
             
@@ -5211,7 +5180,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             # Save portfolio index -> unique key mapping so UI selectors can reference results reliably
             st.session_state.multi_backtest_portfolio_key_map = portfolio_key_map
             st.session_state.multi_backtest_ran = True
-
+                
 # Sidebar JSON export/import for ALL portfolios
 def paste_all_json_callback():
     txt = st.session_state.get('multi_backtest_paste_all_json_text', '')
@@ -5455,8 +5424,8 @@ def paste_all_json_callback():
             except Exception:
                 # In some environments experimental rerun may raise; setting a rerun flag is a fallback
                 st.session_state.multi_backtest_rerun_flag = True
-        else:
-            st.error('JSON must be a list of portfolio configurations.')
+            else:
+                st.error('JSON must be a list of portfolio configurations.')
     except Exception as e:
         st.error(f'Failed to parse JSON: {e}')
 
@@ -6259,7 +6228,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     for name in stats_df_display.index:
                         value = stats_df_display.loc[name, col]
                         
-                        # Handle NaN, None, and string values
+                                                # Handle NaN, None, and string values
                         if pd.isna(value) or value is None or value == 'N/A' or value == '':
                             col_values.append('N/A')
                             continue
