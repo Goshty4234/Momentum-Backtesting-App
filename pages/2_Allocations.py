@@ -1202,7 +1202,7 @@ def generate_allocations_pdf(custom_name=""):
                             # Use textwrap for proper word-based wrapping
                             import textwrap
                             wrapped_title = textwrap.fill(title_text, width=40, break_long_words=True, break_on_hyphens=False)
-                            ax_target.set_title(wrapped_title, fontsize=14, fontweight='bold', pad=30)
+                            ax_target.set_title(wrapped_title, fontsize=14, fontweight='bold', pad=80)
                             # Force perfectly circular shape
                             ax_target.set_aspect('equal')
                             # Use tighter axis limits to make pie chart appear larger within its space
@@ -1806,6 +1806,210 @@ def generate_allocations_pdf(custom_name=""):
                 ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
             ]))
             story.append(risk_table)
+        
+        # Add page break before detailed financial indicators
+        story.append(PageBreak())
+        
+        # Add detailed financial indicators tables covering all 5 sections
+        if hasattr(st.session_state, 'sector_data') and not st.session_state.sector_data.empty:
+            story.append(Spacer(1, 20))
+            story.append(Paragraph("Detailed Financial Indicators for Each Position", heading_style))
+            story.append(Spacer(1, 10))
+            
+            # Get the comprehensive portfolio data from session state
+            try:
+                if hasattr(st.session_state, 'df_comprehensive'):
+                    df_comprehensive = st.session_state.df_comprehensive
+                    
+                    # Helper function to create wrapped text for PDF with enhanced company name, sector, and industry handling
+                    def wrap_text_for_pdf(text, max_length=25):
+                        """Wrap long text to fit in PDF cells with intelligent line breaks for company names, sectors, and industries"""
+                        if pd.isna(text) or text is None:
+                            return 'N/A'
+                        text_str = str(text)
+                        if len(text_str) <= max_length:
+                            return text_str
+                        
+                        # For company names, sector, and industry, prioritize showing the full name with line breaks
+                        if 'Name' in str(text) or 'Sector' in str(text) or 'Industry' in str(text) or len(text_str) > max_length * 1.2:
+                            # Try to break at spaces first for better readability
+                            words = text_str.split()
+                            if len(words) > 1:
+                                # Find the best break point that maximizes text visibility
+                                best_break = 0
+                                for i, word in enumerate(words):
+                                    if len(' '.join(words[:i+1])) <= max_length:
+                                        best_break = i + 1
+                                    else:
+                                        break
+                                
+                                if best_break > 0:
+                                    # Use line break for better PDF formatting
+                                    first_line = ' '.join(words[:best_break])
+                                    second_line = ' '.join(words[best_break:])
+                                    
+                                    # For company names, sector, and industry, allow longer second lines to show more text
+                                    if len(second_line) > max_length:
+                                        # Instead of truncating, try to break again
+                                        second_words = second_line.split()
+                                        if len(second_words) > 1:
+                                            # Find another break point in the second line
+                                            second_break = 0
+                                            for j, word in enumerate(second_words):
+                                                if len(' '.join(second_words[:j+1])) <= max_length:
+                                                    second_break = j + 1
+                                                else:
+                                                    break
+                                            if second_break > 0:
+                                                second_line = ' '.join(second_words[:second_break])
+                                                third_line = ' '.join(second_words[second_break:])
+                                                if len(third_line) > max_length:
+                                                    third_line = third_line[:max_length-3] + '...'
+                                                return first_line + '\n' + second_line + '\n' + third_line
+                                            else:
+                                                # If we can't break further, truncate the second line
+                                                second_line = second_line[:max_length-3] + '...'
+                                        else:
+                                            # Single long word in second line, truncate
+                                            second_line = second_line[:max_length-3] + '...'
+                                    
+                                    return first_line + '\n' + second_line
+                                else:
+                                    # If we can't break at words, truncate with ellipsis
+                                    return text_str[:max_length-3] + '...'
+                        
+                        # For other columns, try to break at spaces or special characters
+                        words = text_str.split()
+                        if len(words) == 1:
+                            # Single long word, break at max_length
+                            return text_str[:max_length-3] + '...'
+                        # Try to fit as many words as possible
+                        result = ''
+                        for word in words:
+                            if len(result + ' ' + word) <= max_length:
+                                result += (' ' + word) if result else word
+                            else:
+                                break
+                        if not result:
+                            result = text_str[:max_length-3] + '...'
+                        return result
+                    
+                    # Helper function to create a focused table
+                    def create_focused_table(title, columns, data_subset, col_widths):
+                        """Create a focused table with specific columns"""
+                        story.append(Paragraph(f"<b>{title}</b>", styles['Normal']))
+                        story.append(Spacer(1, 5))
+                        
+                        # Filter dataframe to only include available columns
+                        available_columns = [col for col in columns if col in data_subset.columns]
+                        if not available_columns:
+                            return
+                        
+                        df_subset = data_subset[available_columns].copy()
+                        
+                        # Convert to list format for PDF table with text wrapping
+                        pdf_data = [available_columns]  # Headers
+                        for _, row in df_subset.iterrows():
+                            pdf_row = []
+                            for col in available_columns:
+                                value = row[col]
+                                if pd.isna(value) or value is None:
+                                    pdf_row.append('N/A')
+                                else:
+                                    # Apply text wrapping based on column type
+                                    if 'Name' in col:
+                                        pdf_row.append(wrap_text_for_pdf(value, 22))  # Increased for better company name display
+                                    elif 'Sector' in col or 'Industry' in col:
+                                        pdf_row.append(wrap_text_for_pdf(value, 25))  # Increased for better sector/industry display
+                                    elif 'Ticker' in col:
+                                        pdf_row.append(wrap_text_for_pdf(value, 8))
+                                    else:
+                                        pdf_row.append(wrap_text_for_pdf(value, 15))
+                            pdf_data.append(pdf_row)
+                        
+                        # Create table with specified column widths and enhanced styling for text wrapping
+                        table = Table(pdf_data, colWidths=col_widths[:len(available_columns)])
+                        table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 6),  # Very small font to fit more data
+                            ('GRID', (0, 0), (-1, -1), 0.5, reportlab_colors.grey),
+                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+                            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [reportlab_colors.Color(0.98, 0.98, 0.98), reportlab_colors.Color(0.95, 0.95, 0.95)]),
+                            ('WORDWRAP', (0, 0), (-1, -1), True),  # Enable word wrapping for all cells
+                            ('LEFTPADDING', (0, 0), (-1, -1), 3),  # Add some padding for wrapped text
+                            ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                            ('MINIMUMHEIGHT', (0, 0), (-1, -1), 15)  # Ensure minimum height for wrapped text, especially for company names
+                        ]))
+                        
+                        story.append(table)
+                        story.append(Spacer(1, 10))
+                    
+                    # Section 1: Overview & Basic Info - Company Name column optimized to 1.5" for balance
+                    # Industry column optimized to 1.1" to prevent truncation while ensuring table fits within page
+                    # Enhanced text wrapping for Company Name, Sector, and Industry columns to ensure full text visibility
+                    # Total table width: 7.1 inches (ensures small margin on each side of 8.5" page)
+                    overview_cols = ['Ticker', 'Company Name', 'Sector', 'Industry', 'Current Price ($)', 'Allocation %', 'Shares', 'Total Value ($)', '% of Portfolio']
+                    overview_widths = [0.6*inch, 1.5*inch, 1.0*inch, 1.1*inch, 0.8*inch, 0.7*inch, 0.6*inch, 1.0*inch, 0.8*inch]
+                    create_focused_table("📊 Overview & Basic Information", overview_cols, df_comprehensive, overview_widths)
+                    
+                    # Section 2: Valuation Metrics
+                    valuation_cols = ['Ticker', 'Market Cap ($B)', 'Enterprise Value ($B)', 'P/E Ratio', 'Forward P/E', 'PEG Ratio', 'Price/Book', 'Price/Sales', 'EV/EBITDA']
+                    valuation_widths = [0.6*inch, 0.8*inch, 1.0*inch, 0.6*inch, 0.7*inch, 0.6*inch, 0.7*inch, 0.7*inch, 0.7*inch]
+                    create_focused_table("💰 Valuation Metrics", valuation_cols, df_comprehensive, valuation_widths)
+                    
+                    # Section 3: Financial Health - Increased column widths to prevent title overlap
+                    health_cols = ['Ticker', 'Debt/Equity', 'Current Ratio', 'Quick Ratio', 'ROE (%)', 'ROA (%)', 'ROIC (%)', 'Profit Margin (%)', 'Operating Margin (%)']
+                    health_widths = [0.6*inch, 0.9*inch, 0.9*inch, 0.8*inch, 0.8*inch, 0.8*inch, 0.8*inch, 1.0*inch, 1.0*inch]
+                    create_focused_table("🏥 Financial Health", health_cols, df_comprehensive, health_widths)
+                    
+                    # Section 4: Growth & Dividends - Increased column widths to prevent title overlap
+                    growth_cols = ['Ticker', 'Revenue Growth (%)', 'Earnings Growth (%)', 'EPS Growth (%)', 'Dividend Yield (%)', 'Dividend Rate ($)', 'Payout Ratio (%)', '5Y Dividend Growth (%)']
+                    growth_widths = [0.6*inch, 1.0*inch, 1.0*inch, 0.8*inch, 0.9*inch, 0.9*inch, 0.8*inch, 1.0*inch]
+                    create_focused_table("📈 Growth & Dividends", growth_cols, df_comprehensive, growth_widths)
+                    
+                    # Section 5: Technical & Trading
+                    technical_cols = ['Ticker', '52W High ($)', '52W Low ($)', '50D MA ($)', '200D MA ($)', 'Beta', 'Volume', 'Avg Volume', 'Analyst Rating']
+                    technical_widths = [0.6*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.7*inch, 0.5*inch, 0.7*inch, 0.7*inch, 0.7*inch]
+                    create_focused_table("📊 Technical & Trading", technical_cols, df_comprehensive, technical_widths)
+                    
+                    story.append(Spacer(1, 10))
+                    story.append(Paragraph("Note: This comprehensive analysis covers all 5 sections (Overview, Valuation, Financial Health, Growth & Dividends, Technical) with the most important metrics for each position. For complete data and interactive analysis, run the allocation analysis in the Streamlit interface.", styles['Normal']))
+                    
+                else:
+                    # Fallback: create basic table from current allocations
+                    basic_data = []
+                    for ticker, alloc_pct in alloc_dict.items():
+                        if ticker != 'CASH':
+                            basic_data.append([
+                                ticker,
+                                f"{alloc_pct * 100:.2f}%",
+                                f"${portfolio_value * alloc_pct:,.2f}",
+                                f"{(portfolio_value * alloc_pct / portfolio_value * 100):.2f}%"
+                            ])
+                    
+                    if basic_data:
+                        # Create basic table headers
+                        basic_headers = ['Ticker', 'Allocation %', 'Total Value ($)', '% of Portfolio']
+                        basic_table = Table([basic_headers] + basic_data, colWidths=[1.5*inch, 1.5*inch, 2.0*inch, 1.5*inch])
+                        basic_table.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 8),
+                            ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                            ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98))
+                        ]))
+                        story.append(basic_table)
+                        story.append(Spacer(1, 10))
+                        story.append(Paragraph("Note: Basic allocation data shown. For comprehensive financial indicators, run the allocation analysis in the Streamlit interface.", styles['Normal']))
+            
+            except Exception as e:
+                story.append(Paragraph(f"Note: Detailed financial indicators table could not be generated: {str(e)}", styles['Normal']))
         
         # Update progress
         progress_bar.progress(90)
@@ -4351,6 +4555,8 @@ if st.session_state.get('alloc_backtest_run', False):
                 
                 if rows:
                     df_comprehensive = pd.DataFrame(rows)
+                    # Store in session state for PDF generation
+                    st.session_state.df_comprehensive = df_comprehensive
                     
 
                     
