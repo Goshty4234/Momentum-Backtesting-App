@@ -1622,36 +1622,15 @@ def generate_simple_pdf_report(custom_name=""):
                             story.append(Paragraph(f"Allocation Details for {portfolio_name}", subheading_style))
                             story.append(Spacer(1, 5))
                             
-                            # NUKE APPROACH: Rebuild allocation table from scratch with correct final portfolio values
+                            # NUKE APPROACH: Rebuild allocation table from scratch
                             alloc_table_key = f"alloc_table_{portfolio_name}"
                             table_created = False
-                            
-                            # First, try to get the FINAL portfolio value from backtest results for PDF generation
-                            pdf_portfolio_value = 10000  # Default fallback
-                            if 'multi_all_results' in st.session_state and st.session_state.multi_all_results:
-                                portfolio_results = st.session_state.multi_all_results.get(portfolio_name)
-                                if portfolio_results:
-                                    try:
-                                        if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
-                                            final_value = portfolio_results['with_additions'].iloc[-1]
-                                            if not pd.isna(final_value) and final_value > 0:
-                                                pdf_portfolio_value = float(final_value)
-                                        elif isinstance(portfolio_results, dict) and 'no_additions' in portfolio_results:
-                                            final_value = portfolio_results['no_additions'].iloc[-1]
-                                            if not pd.isna(final_value) and final_value > 0:
-                                                pdf_portfolio_value = float(final_value)
-                                        elif isinstance(portfolio_results, pd.Series):
-                                            latest_value = portfolio_results.iloc[-1]
-                                            if not pd.isna(latest_value) and latest_value > 0:
-                                                pdf_portfolio_value = float(latest_value)
-                                    except (IndexError, ValueError, TypeError):
-                                        pass  # Keep default value
                             
                             if alloc_table_key in st.session_state:
                                 try:
                                     fig_alloc = st.session_state[alloc_table_key]
                                     
-                                    # Method 1: Extract from Plotly figure data structure but recalculate with correct final portfolio value
+                                    # Method 1: Extract from Plotly figure data structure
                                     if hasattr(fig_alloc, 'data') and fig_alloc.data:
                                         for trace in fig_alloc.data:
                                             if trace.type == 'table':
@@ -1661,54 +1640,23 @@ def generate_simple_pdf_report(custom_name=""):
                                                 else:
                                                     headers = ['Asset', 'Allocation %', 'Price ($)', 'Shares', 'Total Value ($)', '% of Portfolio']
                                                 
-                                                # Get cell data and recalculate with correct final portfolio value
+                                                # Get cell data
                                                 if hasattr(trace, 'cells') and trace.cells and hasattr(trace.cells, 'values'):
                                                     cell_data = trace.cells.values
                                                     if cell_data and len(cell_data) > 0:
-                                                        # Recalculate table with correct final portfolio value
+                                                        # Convert to proper table format
+                                                        num_rows = len(cell_data[0]) if cell_data[0] else 0
                                                         table_rows = []
                                                         
-                                                        # Get raw data for price calculations
-                                                        raw_data = {}
-                                                        if 'multi_backtest_snapshot_data' in st.session_state:
-                                                            snapshot = st.session_state.multi_backtest_snapshot_data
-                                                            raw_data = snapshot.get('raw_data', {})
-                                                        
-                                                        # Recalculate each row with correct final portfolio value
-                                                        for row_idx in range(len(cell_data[0])):
-                                                            asset = cell_data[0][row_idx] if row_idx < len(cell_data[0]) else ''
-                                                            if asset and asset != 'TOTAL':
-                                                                # Get allocation percentage from stored data
-                                                                alloc_pct_str = cell_data[1][row_idx] if row_idx < len(cell_data[1]) else '0%'
-                                                                alloc_pct = float(alloc_pct_str.rstrip('%')) / 100.0
-                                                                
-                                                                # Calculate with correct final portfolio value
-                                                                allocation_value = pdf_portfolio_value * alloc_pct
-                                                                
-                                                                # Get current price
-                                                                current_price = None
-                                                                shares = 0.0
-                                                                if asset != 'CASH' and asset in raw_data:
-                                                                    df = raw_data[asset]
-                                                                    if isinstance(df, pd.DataFrame) and 'Close' in df.columns and not df['Close'].dropna().empty:
-                                                                        try:
-                                                                            current_price = float(df['Close'].iloc[-1])
-                                                                            if current_price and current_price > 0:
-                                                                                shares = round(allocation_value / current_price, 1)
-                                                                        except Exception:
-                                                                            current_price = None
-                                                                
-                                                                total_val = shares * current_price if current_price and shares > 0 else allocation_value
-                                                                pct_of_port = (total_val / pdf_portfolio_value * 100) if pdf_portfolio_value > 0 else 0
-                                                                
-                                                                table_rows.append([
-                                                                    asset,
-                                                                    f"{alloc_pct * 100:.2f}%",
-                                                                    f"{current_price:.2f}" if current_price else "N/A",
-                                                                    f"{shares:.1f}",
-                                                                    f"${total_val:,.2f}",
-                                                                    f"{pct_of_port:.2f}%"
-                                                                ])
+                                                        for row_idx in range(num_rows):
+                                                            row = []
+                                                            for col_idx in range(len(cell_data)):
+                                                                if col_idx < len(cell_data) and row_idx < len(cell_data[col_idx]):
+                                                                    value = cell_data[col_idx][row_idx]
+                                                                    row.append(str(value) if value is not None else '')
+                                                                else:
+                                                                    row.append('')
+                                                            table_rows.append(row)
                                                         
                                                         # Calculate total values for summary row
                                                         total_alloc_pct = sum(float(row[1].rstrip('%')) for row in table_rows)
@@ -1759,7 +1707,65 @@ def generate_simple_pdf_report(custom_name=""):
                                 except Exception as e:
                                     pass
                             
-                            # No fallback table - only use the recalculated table from stored data
+                            # Method 2: Create table from today_weights directly
+                            if not table_created:
+                                try:
+                                    if today_weights:
+                                        headers = ['Asset', 'Allocation %']
+                                        table_rows = []
+                                        
+                                        for asset, weight in today_weights.items():
+                                            if float(weight) > 0:
+                                                table_rows.append([asset, f"{float(weight)*100:.2f}%"])
+                                        
+                                        if table_rows:
+                                            # Calculate total values for summary row
+                                            total_alloc_pct = sum(float(row[1].rstrip('%')) for row in table_rows)
+
+                                            # Add total row
+                                            total_row = [
+                                                'TOTAL',
+                                                f"{total_alloc_pct:.2f}%"
+                                            ]
+
+                                            page_width = 7.5*inch
+                                            # Asset column gets less space, allocation column gets more
+                                            col_widths = [2.5*inch, 5.0*inch]
+                                            alloc_table = Table([headers] + table_rows + [total_row], colWidths=col_widths)
+                                            alloc_table.setStyle(TableStyle([
+                                                ('BACKGROUND', (0, 0), (-1, 0), reportlab_colors.Color(0.3, 0.5, 0.7)),
+                                                ('TEXTCOLOR', (0, 0), (-1, 0), reportlab_colors.whitesmoke),
+                                                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                                                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                                                ('GRID', (0, 0), (-1, -1), 1, reportlab_colors.black),
+                                                ('BACKGROUND', (0, 1), (-1, -1), reportlab_colors.Color(0.98, 0.98, 0.98)),
+                                                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                                                ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                                                ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                                                ('TOPPADDING', (0, 0), (-1, -1), 2),
+                                                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+                                                ('WORDWRAP', (0, 0), (-1, -1), True),
+                                                # Style the total row
+                                                ('BACKGROUND', (0, -1), (-1, -1), reportlab_colors.Color(0.2, 0.4, 0.6)),
+                                                ('TEXTCOLOR', (0, -1), (-1, -1), reportlab_colors.whitesmoke),
+                                                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold')
+                                            ]))
+                                            story.append(alloc_table)
+                                            story.append(Spacer(1, 3))
+                                            table_created = True
+                                        else:
+                                            story.append(Paragraph("No allocation data available", styles['Normal']))
+                                    else:
+                                        story.append(Paragraph("No allocation data available", styles['Normal']))
+                                except Exception as e2:
+                                    story.append(Paragraph(f"Error creating allocation table: {str(e2)}", styles['Normal']))
+                            else:
+                                # Fallback: simple text representation if no stored table found
+                                story.append(Paragraph("Target Allocation if Rebalanced Today:", styles['Heading4']))
+                                for asset, weight in today_weights.items():
+                                    if float(weight) > 0:
+                                        story.append(Paragraph(f"{asset}: {float(weight)*100:.1f}%", styles['Normal']))
                             
                             story.append(Spacer(1, 3))
                         else:
@@ -3757,18 +3763,11 @@ def update_active_portfolio_index():
     selected_name = st.session_state.get('multi_backtest_portfolio_selector', None)
     portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
     portfolio_names = [cfg.get('name', '') for cfg in portfolio_configs]
-    
     if selected_name and selected_name in portfolio_names:
-        new_index = portfolio_names.index(selected_name)
-        st.session_state.multi_backtest_active_portfolio_index = new_index
+        st.session_state.multi_backtest_active_portfolio_index = portfolio_names.index(selected_name)
     else:
         # default to first portfolio if selector is missing or value not found
         st.session_state.multi_backtest_active_portfolio_index = 0 if portfolio_names else None
-    
-    # Additional safety check - ensure index is always valid
-    if (st.session_state.multi_backtest_active_portfolio_index is not None and 
-        st.session_state.multi_backtest_active_portfolio_index >= len(portfolio_names)):
-        st.session_state.multi_backtest_active_portfolio_index = max(0, len(portfolio_names) - 1) if portfolio_names else None
     
     # Sync date widgets with the new portfolio
     sync_date_widgets_with_portfolio()
@@ -4169,19 +4168,6 @@ st.sidebar.title("Manage Portfolios")
 
 # Portfolio selection and management
 portfolio_names = [cfg['name'] for cfg in st.session_state.multi_backtest_portfolio_configs]
-
-# Ensure the active portfolio index is valid
-if (st.session_state.multi_backtest_active_portfolio_index is None or 
-    st.session_state.multi_backtest_active_portfolio_index >= len(portfolio_names) or
-    st.session_state.multi_backtest_active_portfolio_index < 0):
-    st.session_state.multi_backtest_active_portfolio_index = 0 if portfolio_names else None
-
-# Use the current portfolio name as the default selection to make it more reliable
-current_portfolio_name = None
-if (st.session_state.multi_backtest_active_portfolio_index is not None and 
-    st.session_state.multi_backtest_active_portfolio_index < len(portfolio_names)):
-    current_portfolio_name = portfolio_names[st.session_state.multi_backtest_active_portfolio_index]
-
 selected_portfolio_name = st.sidebar.selectbox(
     "Select Portfolio",
     options=portfolio_names,
