@@ -870,9 +870,13 @@ def _get_rebalancing_dates(all_dates: pd.DatetimeIndex, rebalancing_frequency: s
         mondays = all_dates[all_dates.weekday == 0]
         return mondays[::2]
     elif rebalancing_frequency == "Monthly":
-        return all_dates[all_dates.is_month_end]
+        # First available trading day of each month
+        months = all_dates.to_series().groupby([all_dates.year, all_dates.month]).first()
+        return pd.DatetimeIndex(months.values)
     elif rebalancing_frequency == "Quarterly":
-        return all_dates[all_dates.is_quarter_end]
+        # First available trading day of each quarter
+        quarters = all_dates.to_series().groupby([all_dates.year, all_dates.quarter]).first()
+        return pd.DatetimeIndex(quarters.values)
     elif rebalancing_frequency == "Semiannually":
         # First trading day of Jan/Jul each year
         semi = [(y, m) for y in sorted(set(all_dates.year)) for m in [1, 7]]
@@ -891,9 +895,13 @@ def _get_added_cash_dates(all_dates: pd.DatetimeIndex, added_frequency: str):
         return pd.DatetimeIndex([])
 
     if added_frequency == "Monthly":
-        return all_dates[all_dates.is_month_end]
+        # First available trading day of each month
+        months = all_dates.to_series().groupby([all_dates.year, all_dates.month]).first()
+        return pd.DatetimeIndex(months.values)
     elif added_frequency == "Quarterly":
-        return all_dates[all_dates.is_quarter_end]
+        # First available trading day of each quarter
+        quarters = all_dates.to_series().groupby([all_dates.year, all_dates.quarter]).first()
+        return pd.DatetimeIndex(quarters.values)
     elif added_frequency == "Annually":
         return all_dates[all_dates.is_year_end]
     else:
