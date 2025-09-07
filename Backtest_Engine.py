@@ -1124,6 +1124,8 @@ def _rebalance_portfolio(
     use_volatility_flag,
     vol_window_days_val,
     exclude_days_vol_val,
+    rebalancing_frequency=None,
+    current_asset_values=None,
 ):
     """Rebalancing now uses the new, more robust momentum logic."""
     global data, calc_beta, calc_volatility, beta_window_days, exclude_days_beta, benchmark_ticker, vol_window_days, exclude_days_vol, use_relative_momentum
@@ -1148,6 +1150,36 @@ def _rebalance_portfolio(
         "beta": {},
         "target_allocation": {},
     }
+
+    # Handle Buy & Hold strategies - they don't rebalance existing positions, only add new cash
+    if rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"]:
+        # For buy and hold, total_portfolio_value is actually just the cash to distribute
+        
+        if rebalancing_frequency == "Buy & Hold":
+            # Use current proportions from existing holdings
+            if current_asset_values and sum(current_asset_values.values()) > 0:
+                # Calculate current proportions based on existing holdings
+                total_current_value = sum(current_asset_values.values())
+                current_proportions = {t: current_asset_values.get(t, 0) / total_current_value for t in tradable_tickers_today}
+            else:
+                # If no current holdings, use equal weights
+                current_proportions = {t: 1.0 / len(tradable_tickers_today) for t in tradable_tickers_today}
+            
+            for t in tradable_tickers_today:
+                target_allocation[t] = total_portfolio_value * current_proportions.get(t, 0)
+                rebalance_metrics["target_allocation"][t] = current_proportions.get(t, 0)
+        else:  # "Buy & Hold (Target)"
+            # Use initial target allocations
+            alloc_sum_available = sum(allocations.get(t, 0.0) for t in tradable_tickers_today)
+            if alloc_sum_available <= 0:
+                alloc_sum_available = sum(allocations.values()) if sum(allocations.values()) > 0 else 1.0
+            
+            for t in tradable_tickers_today:
+                normalized_alloc = allocations.get(t, 0.0) / alloc_sum_available
+                target_allocation[t] = total_portfolio_value * normalized_alloc
+                rebalance_metrics["target_allocation"][t] = normalized_alloc
+        
+        return target_allocation, rebalance_metrics
 
     if use_momentum:
         returns, valid_assets = calculate_momentum(current_date, set(tradable_tickers_today), momentum_windows, data)
@@ -1556,48 +1588,99 @@ def run_backtest(
         # Rebalance with additions
         if should_rebalance:
             # print(f"Rebalancing portfolio with additions on {current_date.date()}...")
-            target_alloc_with, rebalance_metrics = _rebalance_portfolio(
-                current_date, 
-                current_port_value_with_additions, 
-                data, 
-                tradable_tickers_today,
-                use_momentum, 
-                momentum_windows, 
-                negative_momentum_strategy,
-                use_relative_momentum, 
-                allocations,
-                calc_beta,
-                beta_window_days,
-                exclude_days_beta,
-                benchmark_ticker,
-                calc_volatility,
-                vol_window_days,
-                exclude_days_vol
-            )
+            
+            # For Buy & Hold strategies, only distribute the new cash, not rebalance entire portfolio
+            if rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"]:
+                # Only distribute the new cash amount
+                cash_to_distribute = cash_with_additions
+                target_alloc_with, rebalance_metrics = _rebalance_portfolio(
+                    current_date, 
+                    cash_to_distribute,  # Only the new cash, not total portfolio
+                    data, 
+                    tradable_tickers_today,
+                    use_momentum, 
+                    momentum_windows, 
+                    negative_momentum_strategy,
+                    use_relative_momentum, 
+                    allocations,
+                    calc_beta,
+                    beta_window_days,
+                    exclude_days_beta,
+                    benchmark_ticker,
+                    calc_volatility,
+                    vol_window_days,
+                    exclude_days_vol,
+                    rebalancing_frequency,
+                    asset_values_with_additions
+                )
+            else:
+                # Normal rebalancing for other strategies
+                target_alloc_with, rebalance_metrics = _rebalance_portfolio(
+                    current_date, 
+                    current_port_value_with_additions, 
+                    data, 
+                    tradable_tickers_today,
+                    use_momentum, 
+                    momentum_windows, 
+                    negative_momentum_strategy,
+                    use_relative_momentum, 
+                    allocations,
+                    calc_beta,
+                    beta_window_days,
+                    exclude_days_beta,
+                    benchmark_ticker,
+                    calc_volatility,
+                    vol_window_days,
+                    exclude_days_vol,
+                    rebalancing_frequency,
+                    asset_values_with_additions
+                )
             # Store rebalance metrics ONLY on true rebalancing dates
             rebalance_metrics_list.append(rebalance_metrics)
             
             # Record last rebalance allocation
             last_rebalance_allocations = rebalance_metrics["target_allocation"]
 
-            # Reset shares to zero and calculate new shares, updating cash
-            new_cash = current_port_value_with_additions
-            new_shares = pd.Series(0.0, index=tickers_with_data)
-            
-            for t, target_val in target_alloc_with.items():
-                # Use last available price on or before current_date
-                df_t = data.get(t, pd.DataFrame())
-                if not df_t.empty:
-                    # Find the last available price before or on current_date
-                    price_idx = df_t.index.asof(current_date)
-                    if pd.notna(price_idx):
-                        price = float(df_t.loc[price_idx, "Close"])
-                        if price > 0:
-                            new_shares.loc[t] = target_val / price
-                            new_cash -= target_val
-            
-            asset_shares_with_additions = new_shares
-            cash_with_additions = new_cash
+            # For Buy & Hold strategies, only add new shares without touching existing holdings
+            if rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"]:
+                # Keep existing shares and only add new shares from cash distribution
+                new_shares = asset_shares_with_additions.copy()
+                new_cash = cash_with_additions
+                
+                for t, target_val in target_alloc_with.items():
+                    # Use last available price on or before current_date
+                    df_t = data.get(t, pd.DataFrame())
+                    if not df_t.empty:
+                        # Find the last available price before or on current_date
+                        price_idx = df_t.index.asof(current_date)
+                        if pd.notna(price_idx):
+                            price = float(df_t.loc[price_idx, "Close"])
+                            if price > 0:
+                                # Add new shares to existing shares
+                                new_shares.loc[t] += target_val / price
+                                new_cash -= target_val
+                
+                asset_shares_with_additions = new_shares
+                cash_with_additions = new_cash
+            else:
+                # Normal rebalancing: Reset shares to zero and calculate new shares
+                new_cash = current_port_value_with_additions
+                new_shares = pd.Series(0.0, index=tickers_with_data)
+                
+                for t, target_val in target_alloc_with.items():
+                    # Use last available price on or before current_date
+                    df_t = data.get(t, pd.DataFrame())
+                    if not df_t.empty:
+                        # Find the last available price before or on current_date
+                        price_idx = df_t.index.asof(current_date)
+                        if pd.notna(price_idx):
+                            price = float(df_t.loc[price_idx, "Close"])
+                            if price > 0:
+                                new_shares.loc[t] = target_val / price
+                                new_cash -= target_val
+                
+                asset_shares_with_additions = new_shares
+                cash_with_additions = new_cash
 
         # Rebalance without additions
         if should_rebalance:
