@@ -14,7 +14,293 @@ import os
 import plotly.io as pio
 warnings.filterwarnings('ignore')
 
+# =============================================================================
+# RISK-FREE RATE FUNCTIONS (Independent from Backtest_Engine)
+# =============================================================================
 
+def _ensure_naive_index(obj: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+    """Return a copy of obj with a tz-naive DatetimeIndex."""
+    if not isinstance(obj.index, pd.DatetimeIndex):
+        return obj
+    idx = obj.index
+    if getattr(idx, "tz", None) is not None:
+        obj = obj.copy()
+        obj.index = idx.tz_convert(None)
+    return obj
+
+def _process_treasury_data(hist, dates):
+    """Process treasury data into daily risk-free rates."""
+    try:
+        hist = _ensure_naive_index(hist)
+        hist = hist[hist['Close'].notnull() & (hist['Close'] > 0)]
+        
+        if hist.empty:
+            return None
+        
+        # Convert percentage to decimal
+        annual_rate = hist['Close'] / 100.0
+        
+        # Convert to daily rate
+        with np.errstate(over='ignore', invalid='ignore'):
+            daily_rate = (1 + annual_rate) ** (1 / 365.25) - 1.0
+        
+        # Align to requested dates
+        target_index = pd.to_datetime(dates)
+        if getattr(target_index, 'tz', None) is not None:
+            target_index = target_index.tz_convert(None)
+        
+        # Create a series with the daily rates (ensure timezone-naive index)
+        daily_rate_series = pd.Series(daily_rate.values, index=daily_rate.index)
+        if getattr(daily_rate_series.index, "tz", None) is not None:
+            daily_rate_series.index = daily_rate_series.index.tz_convert(None)
+        
+        # If we only have one data point, use it for all dates
+        if len(daily_rate_series) == 1:
+            result = pd.Series([daily_rate_series.iloc[0]] * len(target_index), index=target_index)
+        else:
+            # Simple approach: use the treasury data as-is and map to target dates
+            # This preserves the actual time-varying nature of the data
+            
+            # Create a result series with the same length as target dates
+            result = pd.Series(index=target_index, dtype=float)
+            
+            # For each target date, find the closest treasury data point
+            for i, target_date in enumerate(target_index):
+                # Find the closest treasury date (before or on the target date)
+                treasury_dates = daily_rate_series.index
+                valid_dates = treasury_dates[treasury_dates <= target_date]
+                
+                if len(valid_dates) > 0:
+                    # Use the most recent treasury data
+                    closest_date = valid_dates.max()
+                    result.iloc[i] = daily_rate_series.loc[closest_date]
+                else:
+                    # If no treasury data before target date, use the earliest available
+                    result.iloc[i] = daily_rate_series.iloc[0]
+            
+            # Handle any remaining NaN values
+            if result.isna().any():
+                result = result.fillna(method='ffill').fillna(method='bfill')
+                if result.isna().any():
+                    result = result.fillna(0.000105)
+        
+        # Ensure the final result is timezone-naive
+        if getattr(result.index, "tz", None) is not None:
+            result.index = result.index.tz_convert(None)
+        
+        return result
+        
+    except Exception as e:
+        return None
+
+def _get_default_risk_free_rate(dates):
+    """Get default risk-free rate when all other methods fail."""
+    default_daily = (1 + 0.02) ** (1 / 365.25) - 1
+    result = pd.Series(default_daily, index=pd.to_datetime(dates))
+    # Ensure the result is timezone-naive
+    if getattr(result.index, "tz", None) is not None:
+        result.index = result.index.tz_convert(None)
+    return result
+
+def get_risk_free_rate_robust(dates):
+    """Simple risk-free rate fetcher using Yahoo Finance treasury data."""
+    try:
+        dates = pd.to_datetime(dates)
+        if isinstance(dates, pd.DatetimeIndex):
+            if getattr(dates, "tz", None) is not None:
+                dates = dates.tz_convert(None)
+        
+        # Get treasury data - use ^IRX (13-week treasury) as primary for leverage calculations
+        # Fallback hierarchy: ^IRX → ^FVX → ^TNX → ^TYX
+        symbols = ["^IRX", "^FVX", "^TNX", "^TYX"]
+        ticker = None
+        for symbol in symbols:
+            try:
+                ticker = yf.Ticker(symbol)
+                hist = ticker.history(period="max", auto_adjust=False)
+                if hist is not None and not hist.empty and 'Close' in hist.columns:
+                    break
+            except Exception:
+                continue
+        
+        if ticker is None:
+            # Final fallback to ^TNX
+            ticker = yf.Ticker("^TNX")
+        hist = ticker.history(period="max", auto_adjust=False)
+        
+        if hist is not None and not hist.empty and 'Close' in hist.columns:
+            # Filter valid data
+            valid_data = hist[hist['Close'].notnull() & (hist['Close'] > 0)]
+            
+            if not valid_data.empty:
+                # Convert annual percentage to daily rate
+                annual_rates = valid_data['Close'] / 100.0
+                daily_rates = (1 + annual_rates) ** (1 / 365.25) - 1.0
+                
+                # Create series with timezone-naive index
+                daily_rate_series = pd.Series(daily_rates.values, index=daily_rates.index)
+                if getattr(daily_rate_series.index, "tz", None) is not None:
+                    daily_rate_series.index = daily_rate_series.index.tz_convert(None)
+                
+                # For each target date, use the most recent available rate
+                result = pd.Series(index=dates, dtype=float)
+                
+                for i, target_date in enumerate(dates):
+                    # Find the most recent treasury date <= target_date
+                    valid_dates = daily_rate_series.index[daily_rate_series.index <= target_date]
+                    
+                    if len(valid_dates) > 0:
+                        closest_date = valid_dates.max()
+                        result.iloc[i] = daily_rate_series.loc[closest_date]
+                    else:
+                        # If no data before target date, use the earliest available
+                        result.iloc[i] = daily_rate_series.iloc[0]
+                
+                # Handle any remaining NaN values
+                if result.isna().any():
+                    result = result.fillna(method='ffill').fillna(method='bfill')
+                    if result.isna().any():
+                        result = result.fillna(0.000105)  # Default daily rate
+                
+                return result
+        
+        # Fallback to default if all else fails
+        return _get_default_risk_free_rate(dates)
+        
+    except Exception:
+        return _get_default_risk_free_rate(dates)
+
+
+# =============================================================================
+# LEVERAGE ETF FUNCTIONS (Independent from Backtest_Engine)
+# =============================================================================
+
+def parse_leverage_ticker(ticker_symbol: str) -> tuple[str, float]:
+    """
+    Parse ticker symbol to extract base ticker and leverage multiplier.
+    
+    Args:
+        ticker_symbol: Ticker symbol, potentially with leverage (e.g., "SPY?L=3")
+        
+    Returns:
+        tuple: (base_ticker, leverage_multiplier)
+        
+    Examples:
+        "SPY" -> ("SPY", 1.0)
+        "SPY?L=3" -> ("SPY", 3.0)
+        "QQQ?L=2" -> ("QQQ", 2.0)
+    """
+    base_ticker = ticker_symbol
+    leverage = 1.0
+    
+    # Handle leverage parameter
+    if "?L=" in base_ticker:
+        try:
+            parts = base_ticker.split("?L=", 1)
+            base_ticker = parts[0]
+            leverage_part = parts[1]
+            
+            # Check if there are more parameters after leverage
+            if "?" in leverage_part:
+                leverage_str, remaining = leverage_part.split("?", 1)
+                leverage = float(leverage_str)
+                base_ticker += "?" + remaining  # Add back remaining parameters
+            else:
+                leverage = float(leverage_part)
+            
+            # Validate leverage range (reasonable bounds for leveraged ETFs)
+            if leverage < 0.1 or leverage > 10.0:
+                raise ValueError(f"Leverage {leverage} is outside reasonable range (0.1-10.0)")
+                
+        except (ValueError, IndexError) as e:
+            # If parsing fails, treat as regular ticker with no leverage
+            leverage = 1.0
+    
+    return base_ticker.strip(), leverage
+
+def apply_daily_leverage(price_data: pd.DataFrame, leverage: float) -> pd.DataFrame:
+    """
+    Apply daily leverage multiplier to price data, simulating leveraged ETF behavior.
+    
+    Leveraged ETFs reset daily, so we apply the leverage to daily returns and then
+    compound the results to get the leveraged price series. Includes daily cost drag
+    equivalent to (leverage - 1) × risk_free_rate.
+    
+    Args:
+        price_data: DataFrame with 'Close' column containing price data
+        leverage: Leverage multiplier (e.g., 3.0 for 3x leverage)
+        
+    Returns:
+        DataFrame with leveraged price data including cost drag
+    """
+    if leverage == 1.0:
+        # For non-leveraged data, just add price change calculation
+        result = price_data.copy()
+        result["Price_change"] = result["Close"].pct_change(fill_method=None)
+        return result
+    
+    # Create a copy to avoid modifying original data
+    leveraged_data = price_data.copy()
+    
+    # Get time-varying risk-free rates for the entire period
+    try:
+        risk_free_rates = get_risk_free_rate_robust(price_data.index)
+        # Ensure risk-free rates are timezone-naive to match price_data
+        if getattr(risk_free_rates.index, "tz", None) is not None:
+            risk_free_rates.index = risk_free_rates.index.tz_localize(None)
+    except Exception as e:
+        raise
+    
+    # Calculate daily cost drag: (leverage - 1) × risk_free_rate
+    # risk_free_rates is already in daily format, so we don't need to divide by 365.25
+    try:
+        daily_cost_drag = (leverage - 1) * risk_free_rates
+    except Exception as e:
+        raise
+    
+    # Calculate leveraged prices by applying leverage to each day's price change
+    # Start with the first price
+    leveraged_prices = pd.Series(index=price_data.index, dtype=float)
+    first_price = price_data['Close'].iloc[0]
+    if isinstance(first_price, pd.Series):
+        first_price = first_price.iloc[0]
+    leveraged_prices.iloc[0] = first_price
+    
+    # Apply leverage to each day's price change (correct approach - no double compounding)
+    for i in range(1, len(price_data)):
+        # Get scalar values from the Close column
+        current_price = price_data['Close'].iloc[i]
+        previous_price = price_data['Close'].iloc[i-1]
+        
+        # Handle MultiIndex case
+        if isinstance(current_price, pd.Series):
+            current_price = current_price.iloc[0]
+        if isinstance(previous_price, pd.Series):
+            previous_price = previous_price.iloc[0]
+        
+        if pd.notna(current_price) and pd.notna(previous_price):
+            # Calculate the actual price change
+            price_change = current_price / previous_price - 1
+            
+            # Apply leverage to the price change and subtract cost drag
+            leveraged_price_change = (price_change * leverage) - daily_cost_drag.iloc[i]
+            
+            # Apply the leveraged price change to the previous leveraged price
+            leveraged_prices.iloc[i] = leveraged_prices.iloc[i-1] * (1 + leveraged_price_change)
+        else:
+            leveraged_prices.iloc[i] = leveraged_prices.iloc[i-1]
+    
+    # Update the Close price with leveraged prices
+    leveraged_data['Close'] = leveraged_prices
+    
+    # Recalculate price changes with the new leveraged prices
+    leveraged_data['Price_change'] = leveraged_data['Close'].pct_change(fill_method=None)
+    
+    # IMPORTANT: Preserve all other columns (like Dividend_per_share) from original data
+    # The dividends should remain at their original values (not leveraged) for leveraged ETFs
+    # This is correct behavior - leveraged ETFs don't multiply dividends
+    
+    return leveraged_data
 
 # =============================================================================
 # PERFORMANCE OPTIMIZATION: CACHING FUNCTIONS
@@ -25,13 +311,43 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
     """Cache ticker data to improve performance across multiple tabs
     
     Args:
-        ticker_symbol: Stock ticker symbol
+        ticker_symbol: Stock ticker symbol (supports leverage format like SPY?L=3)
         period: Data period (used in cache key to prevent conflicts)
         auto_adjust: Auto-adjust setting (used in cache key to prevent conflicts)
     """
     try:
-        ticker = yf.Ticker(ticker_symbol)
-        hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
+        # Parse leverage from ticker symbol
+        base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
+        
+        # Resolve ticker alias if it exists
+        resolved_ticker = resolve_ticker_alias(base_ticker)
+        
+        ticker = yf.Ticker(resolved_ticker)
+        
+        # CRITICAL FIX: Always get raw prices first (auto_adjust=False) to avoid double dividend adjustment
+        # when leverage is applied. We'll handle dividends separately if needed.
+        hist = ticker.history(period=period, auto_adjust=False)[["Close", "Dividends"]]
+        
+        if hist.empty:
+            return hist
+            
+        # Apply leverage if specified (to raw prices only)
+        if leverage != 1.0:
+            hist = apply_daily_leverage(hist, leverage)
+            
+        # If auto_adjust was requested, we need to handle dividend adjustment manually
+        # This ensures dividends are applied correctly to leveraged prices
+        if auto_adjust and 'Dividends' in hist.columns:
+            # Calculate cumulative dividend adjustment factor
+            hist['Dividend_Adjustment'] = (hist['Dividends'] / hist['Close']).fillna(0)
+            hist['Cumulative_Adjustment'] = (1 + hist['Dividend_Adjustment']).cumprod()
+            
+            # Apply dividend adjustment to leveraged prices
+            hist['Close'] = hist['Close'] * hist['Cumulative_Adjustment']
+            
+            # Clean up temporary columns
+            hist = hist.drop(['Dividend_Adjustment', 'Cumulative_Adjustment'], axis=1)
+            
         return hist
     except Exception:
         return pd.DataFrame()
@@ -756,6 +1072,41 @@ def generate_simple_pdf_report(custom_name=""):
             except Exception as e:
                 story.append(Paragraph(f"Error converting drawdown plot: {str(e)}", styles['Normal']))
         
+        # Add Risk-Free Rate plot (Annualized)
+        if 'fig4' in st.session_state:
+            try:
+                fig4 = st.session_state.fig4
+                # Convert Plotly figure to matplotlib
+                mpl_fig = plotly_to_matplotlib_figure(fig4, title="Annualized Risk-Free Rate (13-Week Treasury)", width_inches=10, height_inches=6)
+                
+                # Save matplotlib figure to buffer
+                img_buffer = io.BytesIO()
+                mpl_fig.savefig(img_buffer, format='png', dpi=300, bbox_inches='tight')
+                img_buffer.seek(0)
+                plt.close(mpl_fig)  # Close to free memory
+                
+                # Add to PDF
+                story.append(Image(img_buffer, width=7.5*inch, height=4.5*inch))  # Full page width
+                story.append(Spacer(1, 15))
+                
+                # Add legend below the plot if available
+                if hasattr(mpl_fig, 'legend_info') and mpl_fig.legend_info:
+                    try:
+                        legend_figures = create_paginated_legends(mpl_fig.legend_info, "Risk-Free Rate Legend", width_inches=10)
+                        for legend_fig in legend_figures:
+                            legend_buffer = io.BytesIO()
+                            legend_fig.savefig(legend_buffer, format='png', dpi=300, bbox_inches='tight')
+                            legend_buffer.seek(0)
+                            plt.close(legend_fig)
+                            
+                            # Add legend to PDF
+                            story.append(Image(legend_buffer, width=7.5*inch, height=2*inch))
+                            story.append(Spacer(1, 10))
+                    except Exception as e:
+                        story.append(Paragraph(f"Error creating legend: {str(e)}", styles['Normal']))
+            except Exception as e:
+                story.append(Paragraph(f"Error converting risk-free rate plot: {str(e)}", styles['Normal']))
+        
         # Update progress
         progress_bar.progress(60)
         status_text.text("📋 Adding performance statistics...")
@@ -1268,10 +1619,14 @@ def generate_simple_pdf_report(custom_name=""):
                                             # Create table data with headers - EXACT SAME TEXT WRAPPING AS FINAL PERFORMANCE STATISTICS
                                             # Wrap headers for better display
                                             wrapped_headers = []
+                                            common_words = ['Portfolio', 'Volatility', 'Drawdown', 'Sharpe', 'Sortino', 'Ulcer', 'Index', 'Return', 'Value', 'Money', 'Added', 'Contributions']
+                                            
                                             for header in headers:
-                                                if len(header) > 15:  # Wrap long headers
+                                                if len(header) > 8:  # More aggressive wrapping for better readability
+                                                    # Split on spaces and create multi-line header
                                                     words = header.split()
                                                     if len(words) > 1:
+                                                        # Smart splitting: try to balance lines
                                                         if len(words) == 2:
                                                             wrapped_header = '\n'.join(words)
                                                         elif len(words) == 3:
@@ -1279,10 +1634,12 @@ def generate_simple_pdf_report(custom_name=""):
                                                         elif len(words) == 4:
                                                             wrapped_header = '\n'.join([' '.join(words[:2]), ' '.join(words[2:])])
                                                         else:
+                                                            # For longer headers, split more aggressively
                                                             mid = len(words) // 2
                                                             wrapped_header = '\n'.join([' '.join(words[:mid]), ' '.join(words[mid:])])
                                                     else:
-                                                        if len(header) > 10:
+                                                        # Single long word - split more aggressively
+                                                        if header not in common_words and len(header) > 10:
                                                             mid = len(header) // 2
                                                             wrapped_header = header[:mid] + '\n' + header[mid:]
                                                         else:
@@ -1830,6 +2187,8 @@ if 'multi_backtest_page_initialized' not in st.session_state:
             'momentum_strategy': 'Classic',
             'negative_momentum_strategy': 'Cash',
             'momentum_windows': [],
+            'use_targeted_rebalancing': False,
+            'targeted_rebalancing_settings': {},
             'calc_beta': False,
             'calc_volatility': False,
             'beta_window_days': 365,
@@ -1862,6 +2221,8 @@ if 'multi_backtest_page_initialized' not in st.session_state:
             'use_relative_momentum': True,
             'equal_if_all_negative': True,
             'momentum_strategy': 'Classic',
+            'use_targeted_rebalancing': False,
+            'targeted_rebalancing_settings': {},
             'negative_momentum_strategy': 'Cash',
             'momentum_windows': [
                 {'lookback': 365, 'exclude': 30, 'weight': 0.5},
@@ -1902,6 +2263,8 @@ if 'multi_backtest_page_initialized' not in st.session_state:
             'momentum_strategy': 'Classic',
             'negative_momentum_strategy': 'Cash',
             'momentum_windows': [],
+            'use_targeted_rebalancing': False,
+            'targeted_rebalancing_settings': {},
             'calc_beta': False,
             'calc_volatility': False,
             'beta_window_days': 365,
@@ -2016,7 +2379,55 @@ if st.session_state.get('multi_backtest_rerun_flag', False):
     st.rerun()
 
 # Place rerun logic after first portfolio input widget
-active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index] if 'multi_backtest_portfolio_configs' in st.session_state and 'multi_backtest_active_portfolio_index' in st.session_state else None
+# Safety check: if no portfolios exist, create a default one
+if ('multi_backtest_portfolio_configs' not in st.session_state or 
+    not st.session_state.multi_backtest_portfolio_configs or
+    'multi_backtest_active_portfolio_index' not in st.session_state or
+    st.session_state.multi_backtest_active_portfolio_index is None):
+    
+    # Create a default empty portfolio
+    default_portfolio = {
+        'name': 'Portfolio 1',
+        'stocks': [],
+        'benchmark_ticker': '^GSPC',
+        'initial_value': 10000,
+        'added_amount': 1000,
+        'added_frequency': 'Monthly',
+        'rebalancing_frequency': 'Monthly',
+        'start_date_user': None,
+        'end_date_user': None,
+        'start_with': 'all',
+        'first_rebalance_strategy': 'rebalancing_date',
+        'use_momentum': False,
+        'use_relative_momentum': False,
+        'equal_if_all_negative': False,
+        'momentum_strategy': 'Classic',
+        'negative_momentum_strategy': 'Cash',
+        'momentum_windows': [],
+        'use_targeted_rebalancing': False,
+        'targeted_rebalancing_settings': {},
+        'calc_beta': False,
+        'calc_volatility': False,
+        'beta_window_days': 365,
+        'exclude_days_beta': 30,
+        'vol_window_days': 365,
+        'exclude_days_vol': 30,
+        'collect_dividends_as_cash': False,
+        'exclude_from_cashflow_sync': False,
+        'exclude_from_rebalancing_sync': False
+    }
+    
+    st.session_state.multi_backtest_portfolio_configs = [default_portfolio]
+    st.session_state.multi_backtest_active_portfolio_index = 0
+
+active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
+
+# Initialize strategy session states early to ensure proper UI behavior
+if active_portfolio is not None:
+    if "multi_backtest_active_use_momentum" not in st.session_state:
+        st.session_state["multi_backtest_active_use_momentum"] = active_portfolio.get('use_momentum', False)
+    if "multi_backtest_active_use_targeted_rebalancing" not in st.session_state:
+        st.session_state["multi_backtest_active_use_targeted_rebalancing"] = active_portfolio.get('use_targeted_rebalancing', False)
 
 import numpy as np
 import pandas as pd
@@ -2165,6 +2576,8 @@ default_configs = [
         'use_relative_momentum': False,
         'equal_if_all_negative': False,
         'momentum_windows': [],
+        'use_targeted_rebalancing': False,
+        'targeted_rebalancing_settings': {},
         'calc_beta': False,
         'calc_volatility': False,
         'beta_window_days': 365,
@@ -2191,6 +2604,8 @@ default_configs = [
         'start_with': 'first',
         'use_momentum': True,
         'momentum_strategy': 'Classic',
+        'use_targeted_rebalancing': False,
+        'targeted_rebalancing_settings': {},
         'negative_momentum_strategy': 'Cash',
         'momentum_windows': [
             {'lookback': 365, 'exclude': 30, 'weight': 0.5},
@@ -2223,6 +2638,8 @@ default_configs = [
         'start_with': 'first',
         'use_momentum': False,
         'momentum_windows': [],
+        'use_targeted_rebalancing': False,
+        'targeted_rebalancing_settings': {},
         'calc_beta': False,
         'calc_volatility': False,
         'beta_window_days': 365,
@@ -2328,9 +2745,14 @@ def calculate_beta(returns, benchmark_returns):
 # FIXED: Correct Sortino Ratio calculation - EXACTLY like Backtest_Engine.py
 def calculate_sortino(returns, risk_free_rate):
     """Calculates the Sortino ratio."""
-    # Create a constant risk-free rate series aligned with returns
-    daily_rf_rate = risk_free_rate / 252
-    rf_series = pd.Series(daily_rf_rate, index=returns.index)
+    # Handle both single rate and time-varying rates
+    if isinstance(risk_free_rate, (int, float)):
+        # Single rate - convert to daily and create series
+        daily_rf_rate = risk_free_rate / 365.25
+        rf_series = pd.Series(daily_rf_rate, index=returns.index)
+    else:
+        # Time-varying rates - already in daily format
+        rf_series = risk_free_rate
     
     aligned_returns, aligned_rf = returns.align(rf_series, join='inner')
     if aligned_returns.empty:
@@ -2344,7 +2766,7 @@ def calculate_sortino(returns, risk_free_rate):
     
     downside_std = downside_returns.std()
     
-    return (aligned_returns.mean() - aligned_rf.mean()) / downside_std * np.sqrt(365)
+    return (aligned_returns.mean() - aligned_rf.mean()) / downside_std * np.sqrt(365.25)
 
 # -----------------------
 # Timer function for next rebalance date
@@ -2539,9 +2961,14 @@ def calculate_ulcer_index(series):
 # FIXED: Correct Sharpe ratio calculation - EXACTLY like Backtest_Engine.py
 def calculate_sharpe(returns, risk_free_rate):
     """Calculates the Sharpe ratio."""
-    # Create a constant risk-free rate series aligned with returns
-    daily_rf_rate = risk_free_rate / 252
-    rf_series = pd.Series(daily_rf_rate, index=returns.index)
+    # Handle both single rate and time-varying rates
+    if isinstance(risk_free_rate, (int, float)):
+        # Single rate - convert to daily and create series
+        daily_rf_rate = risk_free_rate / 365.25
+        rf_series = pd.Series(daily_rf_rate, index=returns.index)
+    else:
+        # Time-varying rates - already in daily format
+        rf_series = risk_free_rate
     
     aligned_returns, aligned_rf = returns.align(rf_series, join='inner')
     if aligned_returns.empty:
@@ -2551,7 +2978,7 @@ def calculate_sharpe(returns, risk_free_rate):
     if excess_returns.std() == 0:
         return np.nan
         
-    return excess_returns.mean() / excess_returns.std() * np.sqrt(365)
+    return excess_returns.mean() / excess_returns.std() * np.sqrt(365.25)
 
 # FIXED: Correct UPI calculation - EXACTLY like Backtest_Engine.py
 def calculate_upi(cagr, ulcer_index):
@@ -2630,6 +3057,8 @@ def single_backtest(config, sim_index, reindexed_data):
     exclude_days_beta = config.get('exclude_days_beta', 30)
     vol_window_days = config.get('vol_window_days', 365)
     exclude_days_vol = config.get('exclude_days_vol', 30)
+    use_targeted_rebalancing = config.get('use_targeted_rebalancing', False)
+    targeted_rebalancing_settings = config.get('targeted_rebalancing_settings', {})
     current_data = {t: reindexed_data[t] for t in tickers + [benchmark_ticker] if t in reindexed_data}
     dates_added = get_dates_by_freq(added_frequency, sim_index[0], sim_index[-1], sim_index)
     
@@ -3033,15 +3462,30 @@ def single_backtest(config, sim_index, reindexed_data):
                 nb_shares = val_prev / price_prev if price_prev > 0 else 0
                 # --- Dividend fix: find the correct trading day for dividend ---
                 div = 0.0
-                if "Dividends" in df.columns:
-                    # If dividend is not on a trading day, roll forward to next available trading day
-                    if date in df.index:
-                        div = df.loc[date, "Dividends"]
-                    else:
-                        # Find next trading day in index after 'date'
-                        future_dates = df.index[df.index > date]
-                        if len(future_dates) > 0:
-                            div = df.loc[future_dates[0], "Dividends"]
+                # CRITICAL FIX: For leveraged tickers, get dividends from the base ticker, not the leveraged ticker
+                if "?L=" in t:
+                    # For leveraged tickers, get dividend data from the base ticker
+                    base_ticker, leverage = parse_leverage_ticker(t)
+                    if base_ticker in reindexed_data:
+                        base_df = reindexed_data[base_ticker]
+                        if "Dividends" in base_df.columns:
+                            if date in base_df.index:
+                                div = base_df.loc[date, "Dividends"]
+                            else:
+                                # Find next trading day in index after 'date'
+                                future_dates = base_df.index[base_df.index > date]
+                                if len(future_dates) > 0:
+                                    div = base_df.loc[future_dates[0], "Dividends"]
+                else:
+                    # For regular tickers, get dividend data normally
+                    if "Dividends" in df.columns:
+                        if date in df.index:
+                            div = df.loc[date, "Dividends"]
+                        else:
+                            # Find next trading day in index after 'date'
+                            future_dates = df.index[df.index > date]
+                            if len(future_dates) > 0:
+                                div = df.loc[future_dates[0], "Dividends"]
                 var = df.loc[date, "Price_change"] if date in df.index else 0.0
                 if include_dividends.get(t, False):
                     # Check if dividends should be collected as cash instead of reinvested
@@ -3056,7 +3500,25 @@ def single_backtest(config, sim_index, reindexed_data):
                         val_new = val_prev * (1 + rate_of_return)
                     else:
                         # Reinvest dividends (original behavior)
-                        rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                        # CRITICAL FIX: For leveraged tickers, dividends should be handled differently
+                        # When simulating leveraged ETFs, the dividend RATE should be the same as the base asset
+                        if "?L=" in t:
+                            # For leveraged tickers, get the base ticker's dividend rate (not amount)
+                            base_ticker, leverage = parse_leverage_ticker(t)
+                            if base_ticker in reindexed_data:
+                                base_df = reindexed_data[base_ticker]
+                                base_price_prev = base_df.loc[date_prev, "Close"]
+                                # Use the base ticker's dividend rate, not the leveraged amount
+                                dividend_rate = div / base_price_prev if base_price_prev > 0 else 0
+                                rate_of_return = var + dividend_rate
+                            else:
+                                # Fallback: use leveraged price (may cause issues)
+                                rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                        else:
+                            # For regular tickers, use normal dividend reinvestment
+                            rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                        
+                        # Calculate val_new for both leveraged and regular tickers
                         val_new = val_prev * (1 + rate_of_return)
                 else:
                     val_new = val_prev * (1 + var)
@@ -3070,13 +3532,30 @@ def single_backtest(config, sim_index, reindexed_data):
             val_prev = values[t][-1]
             # --- Dividend fix: find the correct trading day for dividend ---
             div = 0.0
-            if "Dividends" in df.columns:
-                if date in df.index:
-                    div = df.loc[date, "Dividends"]
-                else:
-                    future_dates = df.index[df.index > date]
-                    if len(future_dates) > 0:
-                        div = df.loc[future_dates[0], "Dividends"]
+            # CRITICAL FIX: For leveraged tickers, get dividends from the base ticker, not the leveraged ticker
+            if "?L=" in t:
+                # For leveraged tickers, get dividend data from the base ticker
+                base_ticker, leverage = parse_leverage_ticker(t)
+                if base_ticker in reindexed_data:
+                    base_df = reindexed_data[base_ticker]
+                    if "Dividends" in base_df.columns:
+                        if date in base_df.index:
+                            div = base_df.loc[date, "Dividends"]
+                        else:
+                            # Find next trading day in index after 'date'
+                            future_dates = base_df.index[base_df.index > date]
+                            if len(future_dates) > 0:
+                                div = base_df.loc[future_dates[0], "Dividends"]
+            else:
+                # For regular tickers, get dividend data normally
+                if "Dividends" in df.columns:
+                    if date in df.index:
+                        div = df.loc[date, "Dividends"]
+                    else:
+                        # Find next trading day in index after 'date'
+                        future_dates = df.index[df.index > date]
+                        if len(future_dates) > 0:
+                            div = df.loc[future_dates[0], "Dividends"]
             var = df.loc[date, "Price_change"] if date in df.index else 0.0
             if include_dividends.get(t, False):
                 # Check if dividends should be collected as cash instead of reinvested
@@ -3091,7 +3570,25 @@ def single_backtest(config, sim_index, reindexed_data):
                     val_new = val_prev * (1 + rate_of_return)
                 else:
                     # Reinvest dividends (original behavior)
-                    rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                    # CRITICAL FIX: For leveraged tickers, dividends should be handled differently
+                    # When simulating leveraged ETFs, the dividend RATE should be the same as the base asset
+                    if "?L=" in t:
+                        # For leveraged tickers, get the base ticker's dividend rate (not amount)
+                        base_ticker, leverage = parse_leverage_ticker(t)
+                        if base_ticker in reindexed_data:
+                            base_df = reindexed_data[base_ticker]
+                            base_price_prev = base_df.loc[date_prev, "Close"]
+                            # Use the base ticker's dividend rate, not the leveraged amount
+                            dividend_rate = div / base_price_prev if base_price_prev > 0 else 0
+                            rate_of_return = var + dividend_rate
+                        else:
+                            # Fallback: use leveraged price (may cause issues)
+                            rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                    else:
+                        # For regular tickers, use normal dividend reinvestment
+                        rate_of_return = var + (div / price_prev if price_prev > 0 else 0)
+                    
+                    # Calculate val_new for both leveraged and regular tickers
                     val_new = val_prev * (1 + rate_of_return)
             else:
                 val_new = val_prev * (1 + var)
@@ -3106,13 +3603,35 @@ def single_backtest(config, sim_index, reindexed_data):
         
         # Check if we should rebalance
         should_rebalance = False
-        if date in dates_rebal and set(tickers):
-            should_rebalance = True
-        elif rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"] and set(tickers):
-            # Buy & Hold: rebalance whenever there's cash available
-            total_cash = unallocated_cash[-1] + unreinvested_cash[-1]
-            if total_cash > 0:
+        
+        # If targeted rebalancing is enabled and not using momentum, only rebalance when thresholds are violated
+        if use_targeted_rebalancing and not use_momentum and set(tickers):
+            # Only check for rebalancing on rebalance dates
+            if date in dates_rebal:
+                current_asset_values = {t: values[t][-1] for t in tickers}
+                current_total_value = sum(current_asset_values.values())
+                if current_total_value > 0:
+                    current_allocations = {t: v / current_total_value for t, v in current_asset_values.items()}
+                    
+                    # Check if any ticker violates its thresholds
+                    for ticker, settings in targeted_rebalancing_settings.items():
+                        if settings.get('enabled', False):
+                            min_alloc = settings.get('min_allocation', 0.0) / 100.0
+                            max_alloc = settings.get('max_allocation', 100.0) / 100.0
+                            current_alloc = current_allocations.get(ticker, 0.0)
+                            
+                            if current_alloc > max_alloc or current_alloc < min_alloc:
+                                should_rebalance = True
+                                break
+        else:
+            # Original rebalancing logic for momentum strategies or when targeted rebalancing is disabled
+            if date in dates_rebal and set(tickers):
                 should_rebalance = True
+            elif rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"] and set(tickers):
+                # Buy & Hold: rebalance whenever there's cash available
+                total_cash = unallocated_cash[-1] + unreinvested_cash[-1]
+                if total_cash > 0:
+                    should_rebalance = True
         
         if should_rebalance:
             if use_momentum:
@@ -3231,6 +3750,72 @@ def single_backtest(config, sim_index, reindexed_data):
                                     capped_rebalance_allocations[t] = min(new_allocation, max_allocation_decimal)
                     
                     rebalance_allocations = capped_rebalance_allocations
+                
+                # Apply targeted rebalancing if enabled
+                if use_targeted_rebalancing and targeted_rebalancing_settings:
+                    current_asset_values = {t: values[t][-1] for t in tickers}
+                    current_total_value = sum(current_asset_values.values())
+                    
+                    if current_total_value > 0:
+                        current_allocations = {t: v / current_total_value for t, v in current_asset_values.items()}
+                        
+                        # Check if targeted rebalancing is needed
+                        targeted_rebalance_needed = False
+                        for ticker, settings in targeted_rebalancing_settings.items():
+                            if settings.get('enabled', False):
+                                min_alloc = settings.get('min_allocation', 0.0) / 100.0
+                                max_alloc = settings.get('max_allocation', 100.0) / 100.0
+                                current_alloc = current_allocations.get(ticker, 0.0)
+                                
+                                if current_alloc > max_alloc or current_alloc < min_alloc:
+                                    targeted_rebalance_needed = True
+                                    break
+                        
+                        if targeted_rebalance_needed:
+                            # Apply targeted rebalancing
+                            new_rebalance_allocations = {}
+                            total_available = 1.0  # Normalize to 1.0 for allocation percentages
+                            
+                            # First, ensure all tickers with targeted rebalancing are within bounds
+                            for ticker in tickers:
+                                if ticker in targeted_rebalancing_settings and targeted_rebalancing_settings[ticker].get('enabled', False):
+                                    settings = targeted_rebalancing_settings[ticker]
+                                    min_alloc = settings.get('min_allocation', 0.0) / 100.0
+                                    max_alloc = settings.get('max_allocation', 100.0) / 100.0
+                                    current_alloc = current_allocations.get(ticker, 0.0)
+                                    
+                                    if current_alloc > max_alloc:
+                                        # Reduce allocation to max
+                                        new_rebalance_allocations[ticker] = max_alloc
+                                    elif current_alloc < min_alloc:
+                                        # Increase allocation to min
+                                        new_rebalance_allocations[ticker] = min_alloc
+                                    else:
+                                        # Keep current allocation
+                                        new_rebalance_allocations[ticker] = current_alloc
+                                else:
+                                    # For tickers without targeted rebalancing, keep current allocation
+                                    new_rebalance_allocations[ticker] = current_allocations.get(ticker, 0.0)
+                            
+                            # Redistribute any excess/deficit proportionally among non-targeted tickers
+                            allocated_so_far = sum(new_rebalance_allocations.values())
+                            remaining = total_available - allocated_so_far
+                            
+                            if abs(remaining) > 0.001:  # Only redistribute if there's a meaningful difference
+                                # Find tickers that don't have targeted rebalancing enabled
+                                non_targeted_tickers = [t for t in tickers 
+                                                      if t not in targeted_rebalancing_settings or 
+                                                      not targeted_rebalancing_settings[t].get('enabled', False)]
+                                
+                                if non_targeted_tickers:
+                                    # Distribute remaining proportionally among non-targeted tickers
+                                    for ticker in non_targeted_tickers:
+                                        current_value = current_asset_values.get(ticker, 0.0)
+                                        if current_value > 0:
+                                            proportion = current_value / sum(current_asset_values.get(t, 0.0) for t in non_targeted_tickers)
+                                            new_rebalance_allocations[ticker] += remaining * proportion
+                            
+                            rebalance_allocations = new_rebalance_allocations
                 
                 sum_alloc = sum(rebalance_allocations.values())
                 if sum_alloc > 0:
@@ -3585,6 +4170,38 @@ def reset_portfolio_callback():
         del default_cfg_found['saved_momentum_settings']
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index] = default_cfg_found
     st.session_state.multi_backtest_rerun_flag = True
+
+# REMOVED - Causing too many issues
+# def delete_all_portfolios_callback():
+    """NUKE ALL PORTFOLIOS - Delete everything and start fresh with empty Portfolio 1"""
+    # Store debug info before deletion
+    before_count = len(st.session_state.multi_backtest_portfolio_configs)
+    before_names = [p['name'] for p in st.session_state.multi_backtest_portfolio_configs]
+    
+    # DESTROY EVERYTHING - Set to EMPTY LIST (ZERO portfolios)
+    st.session_state.multi_backtest_portfolio_configs = []
+    st.session_state.multi_backtest_active_portfolio_index = None
+    
+    # NUKE ALL SESSION STATE
+    st.session_state.multi_backtest_rerun_flag = True
+    
+    # Clear ALL portfolio-related session state
+    keys_to_clear = [key for key in st.session_state.keys() if key.startswith('multi_backtest_')]
+    for key in keys_to_clear:
+        if 'active_portfolio_index' not in key and 'portfolio_configs' not in key and 'rerun_flag' not in key:
+            del st.session_state[key]
+    
+    # Clear the portfolio selector cache
+    if 'multi_backtest_portfolio_selector' in st.session_state:
+        del st.session_state['multi_backtest_portfolio_selector']
+    
+    # Store debug info after deletion
+    after_count = len(st.session_state.multi_backtest_portfolio_configs)
+    after_names = [p['name'] for p in st.session_state.multi_backtest_portfolio_configs] if st.session_state.multi_backtest_portfolio_configs else []
+    
+    # Store debug info in session state to display later
+    st.session_state['nuke_debug_before'] = f"Before: {before_count} portfolios - {before_names}"
+    st.session_state['nuke_debug_after'] = f"After: {after_count} portfolios - {after_names}"
 
 def reset_stock_selection_callback():
     current_name = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['name']
@@ -3941,6 +4558,8 @@ def paste_json_callback():
             'minimal_threshold_percent': json_data.get('minimal_threshold_percent', 2.0),
             'use_max_allocation': json_data.get('use_max_allocation', False),
             'max_allocation_percent': json_data.get('max_allocation_percent', 10.0),
+            'use_targeted_rebalancing': json_data.get('use_targeted_rebalancing', False),
+            'targeted_rebalancing_settings': json_data.get('targeted_rebalancing_settings', {}),
             'calc_beta': json_data.get('calc_beta', True),
             'calc_volatility': json_data.get('calc_volatility', True),
             'beta_window_days': json_data.get('beta_window_days', 365),
@@ -4032,6 +4651,7 @@ def update_active_portfolio_index():
         st.session_state['multi_backtest_active_negative_momentum_strategy'] = active_portfolio.get('negative_momentum_strategy', 'Cash')
         st.session_state['multi_backtest_active_calc_beta'] = active_portfolio.get('calc_beta', True)
         st.session_state['multi_backtest_active_calc_vol'] = active_portfolio.get('calc_volatility', True)
+        st.session_state['multi_backtest_active_use_targeted_rebalancing'] = active_portfolio.get('use_targeted_rebalancing', False)
         st.session_state['multi_backtest_active_beta_window'] = active_portfolio.get('beta_window_days', 365)
         st.session_state['multi_backtest_active_beta_exclude'] = active_portfolio.get('exclude_days_beta', 30)
         st.session_state['multi_backtest_active_vol_window'] = active_portfolio.get('vol_window_days', 365)
@@ -4161,11 +4781,12 @@ def update_rebal_freq():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['rebalancing_frequency'] = st.session_state.multi_backtest_active_rebal_freq
 
 def update_benchmark():
-    # Convert benchmark ticker to uppercase
+    # Convert benchmark ticker to uppercase and resolve alias
     upper_benchmark = st.session_state.multi_backtest_active_benchmark.upper()
-    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['benchmark_ticker'] = upper_benchmark
-    # Update the widget to show uppercase value
-    st.session_state.multi_backtest_active_benchmark = upper_benchmark
+    resolved_benchmark = resolve_ticker_alias(upper_benchmark)
+    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['benchmark_ticker'] = resolved_benchmark
+    # Update the widget to show resolved ticker
+    st.session_state.multi_backtest_active_benchmark = resolved_benchmark
 
 def update_use_momentum():
     current_val = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['use_momentum']
@@ -4235,6 +4856,28 @@ def update_use_momentum():
             # Don't clear momentum_windows - preserve them for variant generation
         
         portfolio['use_momentum'] = new_val
+        
+        # If enabling momentum, disable targeted rebalancing
+        if new_val:
+            portfolio['use_targeted_rebalancing'] = False
+            st.session_state['multi_backtest_active_use_targeted_rebalancing'] = False
+        
+        st.session_state.multi_backtest_rerun_flag = True
+
+def update_use_targeted_rebalancing():
+    """Callback function for targeted rebalancing checkbox"""
+    current_val = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index].get('use_targeted_rebalancing', False)
+    new_val = st.session_state.multi_backtest_active_use_targeted_rebalancing
+    
+    if current_val != new_val:
+        portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
+        portfolio['use_targeted_rebalancing'] = new_val
+        
+        # If enabling targeted rebalancing, disable momentum
+        if new_val:
+            portfolio['use_momentum'] = False
+            st.session_state['multi_backtest_active_use_momentum'] = False
+        
         st.session_state.multi_backtest_rerun_flag = True
 
 
@@ -4480,6 +5123,11 @@ if len(st.session_state.multi_backtest_portfolio_configs) > 1:
 # Reset selected portfolio button
 if st.sidebar.button("Reset Selected Portfolio", on_click=reset_portfolio_callback):
     pass
+
+# Cache clearing button (useful after fixing leverage calculations)
+if st.sidebar.button("🔄 Clear Data Cache", help="Clear cached ticker data. Use this after fixing leverage calculations to see updated results."):
+    st.cache_data.clear()
+    st.success("Cache cleared! Please refresh the page or run a new backtest.")
 
 # NEW: Enhanced bulk portfolio management dropdown
 if len(st.session_state.multi_backtest_portfolio_configs) > 1:
@@ -5478,8 +6126,14 @@ with col_stock_buttons[2]:
         pass
 
 # Calculate live total ticker allocation
-valid_tickers = [s for s in st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'] if s['ticker']]
-total_ticker_allocation = sum(s['allocation'] for s in valid_tickers)
+if (st.session_state.multi_backtest_portfolio_configs and 
+    st.session_state.multi_backtest_active_portfolio_index is not None and
+    st.session_state.multi_backtest_active_portfolio_index < len(st.session_state.multi_backtest_portfolio_configs)):
+    valid_tickers = [s for s in st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'] if s['ticker']]
+    total_ticker_allocation = sum(s['allocation'] for s in valid_tickers)
+else:
+    valid_tickers = []
+    total_ticker_allocation = 0.0
 
 use_mom_flag = st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.get('use_momentum', True))
 if use_mom_flag:
@@ -5512,12 +6166,15 @@ def update_stock_ticker(index):
         
         # Convert the input value to uppercase
         upper_val = val.upper()
-
-        # Update the portfolio configuration with the uppercase value
-        st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['ticker'] = upper_val
         
-        # Update the text box's state to show the uppercase value
-        st.session_state[key] = upper_val
+        # Resolve alias if it exists
+        resolved_ticker = resolve_ticker_alias(upper_val)
+
+        # Update the portfolio configuration with the resolved ticker
+        st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['ticker'] = resolved_ticker
+        
+        # Update the text box's state to show the resolved ticker
+        st.session_state[key] = resolved_ticker
     except Exception:
         # Defensive: if portfolio index or structure changed, skip silently
         return
@@ -5543,6 +6200,7 @@ for i in range(len(active_portfolio['stocks'])):
         ticker_key = f"multi_backtest_ticker_{st.session_state.multi_backtest_active_portfolio_index}_{i}"
         st.session_state[ticker_key] = stock['ticker']  # Always update to current value
         st.text_input("Ticker", key=ticker_key, label_visibility="visible", on_change=update_stock_ticker, args=(i,))
+        
     with col_a:
         use_mom = st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.get('use_momentum', True))
         if not use_mom:
@@ -5569,6 +6227,189 @@ for i in range(len(active_portfolio['stocks'])):
 if st.button("Add Ticker", on_click=add_stock_callback):
     pass
 
+# Leverage Summary Section
+leveraged_tickers = []
+for stock in active_portfolio['stocks']:
+    if "?L=" in stock['ticker']:
+        try:
+            base_ticker, leverage = parse_leverage_ticker(stock['ticker'])
+            leveraged_tickers.append((base_ticker, leverage))
+        except:
+            pass
+
+if leveraged_tickers:
+    st.markdown("---")
+    st.markdown("### ⚡ Leverage Summary")
+    
+    # Get risk-free rate for drag calculation
+    try:
+        risk_free_rates = get_risk_free_rate_robust([pd.Timestamp.now()])
+        daily_rf = risk_free_rates.iloc[0] if len(risk_free_rates) > 0 else 0.000105
+    except:
+        daily_rf = 0.000105  # fallback
+    
+    # Group by leverage level
+    leverage_groups = {}
+    for base_ticker, leverage in leveraged_tickers:
+        if leverage not in leverage_groups:
+            leverage_groups[leverage] = []
+        leverage_groups[leverage].append(base_ticker)
+    
+    for leverage in sorted(leverage_groups.keys()):
+        base_tickers = leverage_groups[leverage]
+        daily_drag = (leverage - 1) * daily_rf * 100
+        st.markdown(f"🚀 **{leverage}x leverage** on {', '.join(base_tickers)}")
+        st.markdown(f"📉 **Daily drag:** {daily_drag:.3f}% (RF: {daily_rf*100:.1f}%)")
+
+# Special Tickers Dropdown and Aliases
+def get_ticker_aliases():
+    """Define ticker aliases for easier entry"""
+    return {
+        # Stock Market Indices
+        'SPX': '^GSPC',           # S&P 500 (price only, no dividends)
+        'SPXTR': '^SP500TR',      # S&P 500 Total Return (with dividends)
+        'SP500': '^GSPC',         # S&P 500 (price only, no dividends)
+        'SP500TR': '^SP500TR',    # S&P 500 Total Return (with dividends)
+        'SPYTR': '^SP500TR',      # S&P 500 Total Return (with dividends)
+        'NASDAQ': '^IXIC',        # NASDAQ Composite (price only, no dividends)
+        'NDX': '^NDX',           # NASDAQ 100 (price only, no dividends)
+        'QQQTR': '^NDX',         # NASDAQ 100 (price only, no dividends)
+        'DOW': '^DJI',           # Dow Jones Industrial Average (price only, no dividends)
+        
+        # Treasury Yield Indices (LONGEST HISTORY - 1960s+)
+        'TNX': '^TNX',           # 10-Year Treasury Yield (1962+) - Price only, no coupons
+        'TYX': '^TYX',           # 30-Year Treasury Yield (1977+) - Price only, no coupons
+        'FVX': '^FVX',           # 5-Year Treasury Yield (1962+) - Price only, no coupons
+        'IRX': '^IRX',           # 3-Month Treasury Yield (1982+) - Price only, no coupons
+        
+        # Treasury Bond ETFs (MODERN - WITH COUPONS/DIVIDENDS)
+        'TLTTR': 'TLT',          # 20+ Year Treasury Bond ETF (2002+) - With coupons
+        'IEFTR': 'IEF',          # 7-10 Year Treasury Bond ETF (2002+) - With coupons
+        'ZROZX': 'ZROZ',         # 25+ Year Zero Coupon Treasury ETF (2009+) - With coupons
+        'GOVZTR': 'GOVZ',        # 25+ Year Treasury STRIPS ETF (2019+) - With coupons
+        'EDVTR': 'EDV',          # Extended Duration Treasury ETF (2007+) - With coupons
+        
+        # Short-Term Treasury (LONGEST HISTORY)
+        'TBILL': '^IRX',         # 3-Month Treasury Yield (1982+) - Longest T-bill history
+        'SHY': 'SHY',            # 1-3 Year Treasury Bond ETF (2002+) - With coupons
+        'BIL': 'BIL',            # 1-3 Month T-Bill ETF (2007+) - With coupons
+        'SGOV': 'SGOV',          # 0-3 Month T-Bill ETF (2020+) - With coupons
+        'ZEROX': 'ZERO',         # Zero-cost portfolio (literally cash doing nothing)
+        
+        # Gold & Commodities (LONGEST HISTORY - 1970s+)
+        'GOLDX': 'GC=F',         # Gold Futures (1975+) - Longest gold history
+        'GOLD': 'GC=F',          # Gold Futures (1975+) - Longest gold history
+        'GOLDF': 'GC=F',         # Gold Futures (1975+) - Longest gold history
+        'XAUUSD': 'XAUUSD=X',    # Gold vs USD (1971+) - Longest forex gold history
+        'GLD': 'GLD',            # SPDR Gold Trust ETF (2004+) - Most accurate gold ETF
+        'IAU': 'IAU',            # iShares Gold Trust ETF (2005+) - Alternative gold ETF
+        'XAU': '^XAU',           # Gold & Silver Index (1983+) - Price only, no dividends
+        'CRB': '^CRB',           # Commodity Research Bureau Index (1957+) - Price only, no dividends
+    }
+
+def resolve_ticker_alias(ticker):
+    """Resolve ticker alias to actual ticker symbol"""
+    aliases = get_ticker_aliases()
+    return aliases.get(ticker.upper(), ticker)
+
+# Special Tickers Section
+with st.expander("🎯 Special Long-Term Tickers", expanded=False):
+    st.markdown("**Quick access to tickers with extended historical data:**")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("**📈 Stock Indices**")
+        stock_tickers = {
+            'S&P 500 (Price)': '^GSPC',
+            'S&P 500 (Total Return)': '^SP500TR', 
+            'NASDAQ Composite': '^IXIC',
+            'NASDAQ 100': '^NDX',
+            'Dow Jones': '^DJI'
+        }
+        
+        for name, ticker in stock_tickers.items():
+            if st.button(f"➕ {name}", key=f"add_stock_{ticker}", help=f"Add {ticker}"):
+                # Add to current portfolio
+                portfolio_index = st.session_state.multi_backtest_active_portfolio_index
+                st.session_state.multi_backtest_portfolio_configs[portfolio_index]['stocks'].append({
+                    'ticker': ticker, 
+                    'allocation': 0.0, 
+                    'include_dividends': True
+                })
+                st.rerun()
+    
+    with col2:
+        st.markdown("**🏛️ Treasury Bonds & T-Bills**")
+        bond_tickers = {
+            '10Y Treasury Yield (1962+)': '^TNX',
+            '30Y Treasury Yield (1977+)': '^TYX',
+            '3M Treasury Yield (1982+)': '^IRX',
+            '20+ Year Treasury ETF (2002+)': 'TLT',
+            '7-10 Year Treasury ETF (2002+)': 'IEF',
+            '25+ Year Zero Coupon (2009+)': 'ZROZ',
+            '25+ Year Treasury STRIPS (2019+)': 'GOVZ',
+            '1-3 Year Treasury ETF (2002+)': 'SHY',
+            '1-3 Month T-Bill ETF (2007+)': 'BIL',
+            '0-3 Month T-Bill ETF (2020+)': 'SGOV',
+            'Cash (Zero Return)': 'ZERO'
+        }
+        
+        for name, ticker in bond_tickers.items():
+            if st.button(f"➕ {name}", key=f"add_bond_{ticker}", help=f"Add {ticker}"):
+                portfolio_index = st.session_state.multi_backtest_active_portfolio_index
+                st.session_state.multi_backtest_portfolio_configs[portfolio_index]['stocks'].append({
+                    'ticker': ticker, 
+                    'allocation': 0.0, 
+                    'include_dividends': True
+                })
+                st.rerun()
+    
+    with col3:
+        st.markdown("**🥇 Gold & Commodities**")
+        commodity_tickers = {
+            'Gold Futures (1975+)': 'GC=F',
+            'Gold vs USD (1971+)': 'XAUUSD=X',
+            'SPDR Gold ETF (2004+)': 'GLD',
+            'iShares Gold ETF (2005+)': 'IAU',
+            'Gold & Silver Index (1983+)': '^XAU',
+            'Commodity Index (1957+)': '^CRB'
+        }
+        
+        for name, ticker in commodity_tickers.items():
+            if st.button(f"➕ {name}", key=f"add_commodity_{ticker}", help=f"Add {ticker}"):
+                portfolio_index = st.session_state.multi_backtest_active_portfolio_index
+                st.session_state.multi_backtest_portfolio_configs[portfolio_index]['stocks'].append({
+                    'ticker': ticker, 
+                    'allocation': 0.0, 
+                    'include_dividends': True
+                })
+                st.rerun()
+    
+    st.markdown("---")
+    st.markdown("**💡 Ticker Aliases:** You can also use these shortcuts in the text input below:")
+    st.markdown("- `SPX` → `^GSPC` (S&P 500, 1957+), `SPXTR` → `^SP500TR` (S&P 500 with dividends, 1957+)")
+    st.markdown("- `SPYTR` → `^SP500TR` (S&P 500 Total Return, 1957+), `QQQTR` → `^NDX` (NASDAQ 100, 1985+)")
+    st.markdown("- `TLTTR` → `TLT` (20+ Year Treasury ETF, 2002+), `IEFTR` → `IEF` (7-10 Year Treasury ETF, 2002+)")
+    st.markdown("- `ZROZX` → `ZROZ` (25+ Year Zero Coupon Treasury, 2009+), `GOVZTR` → `GOVZ` (25+ Year Treasury STRIPS, 2019+)")
+    st.markdown("- `TNX` → `^TNX` (10Y Treasury Yield, 1962+), `TYX` → `^TYX` (30Y Treasury Yield, 1977+)")
+    st.markdown("- `TBILL` → `^IRX` (3M Treasury Yield, 1982+), `SHY` → `SHY` (1-3 Year Treasury ETF, 2002+)")
+    st.markdown("- `ZEROX` → `ZERO` (Cash doing nothing), `GOLDX` → `GC=F` (Gold Futures, 1975+)")
+
+# Leverage Explanation
+with st.expander("🚀 Leverage Guide", expanded=False):
+    st.markdown("**How to add leverage to any ticker:**")
+    st.markdown("Use the format `TICKER?L=N` where N is the leverage multiplier:")
+    st.markdown("- `SPY?L=3` = 3x leveraged SPY (like SPXL)")
+    st.markdown("- `QQQ?L=2` = 2x leveraged QQQ (like QLD)")
+    st.markdown("- `^GSPC?L=1.5` = 1.5x leveraged S&P 500")
+    
+    st.markdown("**Important Notes:**")
+    st.markdown("- ✅ Leverage resets daily (realistic ETF behavior)")
+    st.markdown("- ✅ Includes daily cost drag based on current risk-free rates")
+    st.markdown("- ✅ Dividends remain at original rate (not leveraged)")
+    st.markdown("- ⚠️ Higher leverage = higher risk and volatility")
+
 # Bulk ticker input section - FIXED VERSION
 with st.expander("📝 Bulk Ticker Input", expanded=False):
     st.markdown("**Enter multiple tickers separated by spaces or commas:**")
@@ -5587,21 +6428,23 @@ with st.expander("📝 Bulk Ticker Input", expanded=False):
     
     # Text area for bulk ticker input
     bulk_tickers = st.text_area(
-        "Tickers (e.g., SPY QQQ GLD TLT or SPY,QQQ,GLD,TLT)",
+        "Tickers (e.g., SPY QQQ GLD TLT or SPY?L=3 QQQ?L=2 GLD TLT)",
         value=st.session_state.multi_backtest_bulk_tickers,
         key="multi_backtest_bulk_ticker_input",
         height=100,
-        help="Enter ticker symbols separated by spaces or commas. Click 'Fill Tickers' to replace tickers (keeps existing allocations)."
+        help="Enter ticker symbols separated by spaces or commas. Click 'Fill Tickers' to replace tickers (keeps existing allocations).\n\n💡 **Leverage Support**: Add leverage to any ticker using ?L=N format (e.g., SPY?L=3 for 3x leverage, QQQ?L=2 for 2x leverage). This simulates leveraged ETFs that reset daily and includes realistic cost drag based on current risk-free rates."
     )
     
     if st.button("Fill Tickers", key="multi_backtest_fill_tickers_btn"):
         if bulk_tickers.strip():
-            # Parse tickers (split by comma or space)
+            # Parse tickers (split by comma or space) and resolve aliases
             ticker_list = []
             for ticker in bulk_tickers.replace(',', ' ').split():
                 ticker = ticker.strip().upper()
                 if ticker:
-                    ticker_list.append(ticker)
+                    # Resolve alias if it exists
+                    resolved_ticker = resolve_ticker_alias(ticker)
+                    ticker_list.append(resolved_ticker)
             
             if ticker_list:
                 portfolio_index = st.session_state.multi_backtest_active_portfolio_index
@@ -5649,9 +6492,15 @@ with st.expander("📝 Bulk Ticker Input", expanded=False):
 
 
 st.subheader("Strategy")
-if "multi_backtest_active_use_momentum" not in st.session_state:
-    st.session_state["multi_backtest_active_use_momentum"] = active_portfolio['use_momentum']
-st.checkbox("Use Momentum Strategy", key="multi_backtest_active_use_momentum", on_change=update_use_momentum, help="Enables momentum-based weighting of stocks.")
+
+# Session states are initialized early in the page
+
+# Only show momentum strategy if targeted rebalancing is disabled
+if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", False):
+    st.checkbox("Use Momentum Strategy", key="multi_backtest_active_use_momentum", on_change=update_use_momentum, help="Enables momentum-based weighting of stocks.")
+else:
+    # Hide momentum strategy when targeted rebalancing is enabled
+    st.session_state["multi_backtest_active_use_momentum"] = False
 
 if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.get('use_momentum', True)):
     st.markdown("---")
@@ -5850,7 +6699,101 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
 else:
     # Don't clear momentum_windows - they should persist when momentum is disabled
     # so they're available when momentum is re-enabled or for variant generation
-    pass
+    
+    # Targeted Rebalancing Section (only when momentum is disabled)
+    st.markdown("---")
+    st.subheader("Targeted Rebalancing")
+    
+    # Only show targeted rebalancing if momentum strategy is disabled
+    if not st.session_state.get('multi_backtest_active_use_momentum', False):
+        st.checkbox(
+            "Enable Targeted Rebalancing", 
+            key="multi_backtest_active_use_targeted_rebalancing", 
+            on_change=update_use_targeted_rebalancing,
+            help="Automatically rebalance when ticker allocations exceed min/max thresholds"
+        )
+    else:
+        # Hide targeted rebalancing when momentum strategy is enabled
+        st.session_state["multi_backtest_active_use_targeted_rebalancing"] = False
+    
+    if st.session_state.get("multi_backtest_active_use_targeted_rebalancing", False):
+        st.markdown("**Configure per-ticker allocation limits:**")
+        st.markdown("💡 *Example: TQQQ 70-40% means if TQQQ goes above 70%, sell to buy others; if below 40%, buy TQQQ with others*")
+        
+        # Get current tickers
+        stocks_list = active_portfolio.get('stocks', [])
+        current_tickers = [s['ticker'] for s in stocks_list if s.get('ticker')]
+        
+        if current_tickers:
+            # Initialize targeted rebalancing settings for each ticker
+            if 'targeted_rebalancing_settings' not in active_portfolio:
+                active_portfolio['targeted_rebalancing_settings'] = {}
+            
+            for ticker in current_tickers:
+                if ticker not in active_portfolio.get('targeted_rebalancing_settings', {}):
+                    if 'targeted_rebalancing_settings' not in active_portfolio:
+                        active_portfolio['targeted_rebalancing_settings'] = {}
+                    active_portfolio['targeted_rebalancing_settings'][ticker] = {
+                        'enabled': False,
+                        'min_allocation': 0.0,
+                        'max_allocation': 100.0
+                    }
+            
+            # Create columns for ticker settings
+            cols = st.columns(min(len(current_tickers), 3))
+            
+            for i, ticker in enumerate(current_tickers):
+                with cols[i % 3]:
+                    st.markdown(f"**{ticker}**")
+                    
+                    # Enable/disable for this ticker
+                    enabled_key = f"targeted_rebalancing_enabled_{ticker}_{st.session_state.multi_backtest_active_portfolio_index}"
+                    if enabled_key not in st.session_state:
+                        st.session_state[enabled_key] = active_portfolio['targeted_rebalancing_settings'][ticker]['enabled']
+                    
+                    enabled = st.checkbox(
+                        "Enable", 
+                        key=enabled_key,
+                        help=f"Enable targeted rebalancing for {ticker}"
+                    )
+                    active_portfolio['targeted_rebalancing_settings'][ticker]['enabled'] = enabled
+                    
+                    if enabled:
+                        # Max allocation (on top)
+                        max_key = f"targeted_rebalancing_max_{ticker}_{st.session_state.multi_backtest_active_portfolio_index}"
+                        if max_key not in st.session_state:
+                            st.session_state[max_key] = active_portfolio['targeted_rebalancing_settings'][ticker]['max_allocation']
+                        
+                        max_allocation = st.number_input(
+                            "Max %", 
+                            min_value=0.0, 
+                            max_value=100.0, 
+                            step=0.1,
+                            key=max_key,
+                            help=f"Maximum allocation percentage for {ticker}"
+                        )
+                        active_portfolio['targeted_rebalancing_settings'][ticker]['max_allocation'] = max_allocation
+                        
+                        # Min allocation (below)
+                        min_key = f"targeted_rebalancing_min_{ticker}_{st.session_state.multi_backtest_active_portfolio_index}"
+                        if min_key not in st.session_state:
+                            st.session_state[min_key] = active_portfolio['targeted_rebalancing_settings'][ticker]['min_allocation']
+                        
+                        min_allocation = st.number_input(
+                            "Min %", 
+                            min_value=0.0, 
+                            max_value=100.0, 
+                            step=0.1,
+                            key=min_key,
+                            help=f"Minimum allocation percentage for {ticker}"
+                        )
+                        active_portfolio['targeted_rebalancing_settings'][ticker]['min_allocation'] = min_allocation
+                        
+                        # Validation
+                        if min_allocation >= max_allocation:
+                            st.error(f"Min % must be less than Max % for {ticker}")
+        else:
+            st.info("Add tickers to configure targeted rebalancing settings.")
 
 with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     # Clean portfolio config for export by removing unused settings
@@ -5868,6 +6811,10 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     # Update maximum allocation settings from session state
     cleaned_config['use_max_allocation'] = st.session_state.get('multi_backtest_active_use_max_allocation', False)
     cleaned_config['max_allocation_percent'] = st.session_state.get('multi_backtest_active_max_allocation_percent', 10.0)
+    
+    # Update targeted rebalancing settings from session state
+    cleaned_config['use_targeted_rebalancing'] = st.session_state.get('multi_backtest_active_use_targeted_rebalancing', False)
+    cleaned_config['targeted_rebalancing_settings'] = active_portfolio.get('targeted_rebalancing_settings', {})
     
     # Convert date objects to strings for JSON serialization
     if cleaned_config.get('start_date_user') is not None:
@@ -6092,6 +7039,18 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         all_tickers = sorted(list(set(s['ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs for s in cfg['stocks'] if s['ticker']) | set(cfg['benchmark_ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs if 'benchmark_ticker' in cfg)))
         all_tickers = [t for t in all_tickers if t]
         
+        # CRITICAL FIX: Add base tickers for leveraged tickers to ensure dividend data is available
+        base_tickers_to_add = set()
+        for ticker in all_tickers:
+            if "?L=" in ticker:
+                base_ticker, leverage = parse_leverage_ticker(ticker)
+                base_tickers_to_add.add(base_ticker)
+        
+        # Add base tickers to the list if they're not already there
+        for base_ticker in base_tickers_to_add:
+            if base_ticker not in all_tickers:
+                all_tickers.append(base_ticker)
+        
         # BULLETPROOF VALIDATION: Check for empty ticker list first
         if not all_tickers:
             st.error("❌ **No valid tickers found!** Please add at least one ticker to your portfolios before running the backtest.")
@@ -6211,7 +7170,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     st.error(f"Start date {final_start.date()} is after end date {common_end.date()}. Cannot proceed.")
                     st.stop()
                 
-                # Create simulation index for the entire period
+                # Create simulation index for the entire period using calendar days
                 simulation_index = pd.date_range(start=final_start, end=common_end, freq='D')
                 
                 # Reindex all data to the simulation period (only valid tickers)
@@ -6858,6 +7817,14 @@ def paste_all_json_callback():
                     portfolio['use_minimal_threshold'] = False
                 if 'minimal_threshold_percent' not in portfolio:
                     portfolio['minimal_threshold_percent'] = 2.0
+                if 'use_max_allocation' not in portfolio:
+                    portfolio['use_max_allocation'] = False
+                if 'max_allocation_percent' not in portfolio:
+                    portfolio['max_allocation_percent'] = 10.0
+                if 'use_targeted_rebalancing' not in portfolio:
+                    portfolio['use_targeted_rebalancing'] = False
+                if 'targeted_rebalancing_settings' not in portfolio:
+                    portfolio['targeted_rebalancing_settings'] = {}
         
         if isinstance(obj, list):
             # Clear widget keys to force re-initialization
@@ -6866,7 +7833,7 @@ def paste_all_json_callback():
                 "multi_backtest_active_added_amount", "multi_backtest_active_rebal_freq",
                 "multi_backtest_active_add_freq", "multi_backtest_active_benchmark",
                 "multi_backtest_active_use_momentum", "multi_backtest_active_collect_dividends_as_cash",
-                "multi_backtest_start_with_radio", "multi_backtest_first_rebalance_strategy_radio"
+                "multi_backtest_active_use_targeted_rebalancing", "multi_backtest_start_with_radio", "multi_backtest_first_rebalance_strategy_radio"
             ]
             for key in widget_keys_to_clear:
                 if key in st.session_state:
@@ -6947,6 +7914,10 @@ def paste_all_json_callback():
                     st.info(f"Momentum windows for {cfg.get('name', 'Unknown')}: {cfg['momentum_windows']}")
                 if 'use_momentum' in cfg:
                     st.info(f"Use momentum for {cfg.get('name', 'Unknown')}: {cfg['use_momentum']}")
+                if 'use_targeted_rebalancing' in cfg:
+                    st.info(f"Use targeted rebalancing for {cfg.get('name', 'Unknown')}: {cfg['use_targeted_rebalancing']}")
+                if 'targeted_rebalancing_settings' in cfg:
+                    st.info(f"Targeted rebalancing settings for {cfg.get('name', 'Unknown')}: {cfg['targeted_rebalancing_settings']}")
                 
                 # Map frequency values from app.py format to Multi-Backtest format
                 def map_frequency(freq):
@@ -7005,6 +7976,9 @@ def paste_all_json_callback():
                     # Preserve sync exclusion settings from imported JSON
                     'exclude_from_cashflow_sync': cfg.get('exclude_from_cashflow_sync', False),
                     'exclude_from_rebalancing_sync': cfg.get('exclude_from_rebalancing_sync', False),
+                    # Targeted rebalancing settings
+                    'use_targeted_rebalancing': cfg.get('use_targeted_rebalancing', False),
+                    'targeted_rebalancing_settings': cfg.get('targeted_rebalancing_settings', {}),
                     # Note: Ignoring Backtest Engine specific fields like 'portfolio_drag_pct', 'use_custom_dates', etc.
                 }
                 processed_configs.append(multi_backtest_config)
@@ -7040,6 +8014,7 @@ def paste_all_json_callback():
                 st.session_state['multi_backtest_benchmark_portfolio_tracker'] = 0
                 st.session_state['multi_backtest_active_use_momentum'] = bool(processed_configs[0].get('use_momentum', True))
                 st.session_state['multi_backtest_active_collect_dividends_as_cash'] = bool(processed_configs[0].get('collect_dividends_as_cash', False))
+                st.session_state['multi_backtest_active_use_targeted_rebalancing'] = bool(processed_configs[0].get('use_targeted_rebalancing', False))
             else:
                 st.session_state.multi_backtest_active_portfolio_index = None
                 st.session_state.multi_backtest_portfolio_selector = ''
@@ -7050,6 +8025,7 @@ def paste_all_json_callback():
             if processed_configs:
                 st.info(f"Final momentum windows for first portfolio: {processed_configs[0]['momentum_windows']}")
                 st.info(f"Final use_momentum for first portfolio: {processed_configs[0]['use_momentum']}")
+                st.info(f"Final use_targeted_rebalancing for first portfolio: {processed_configs[0].get('use_targeted_rebalancing', False)}")
                 st.info(f"Sync exclusions for first portfolio - Cash Flow: {processed_configs[0].get('exclude_from_cashflow_sync', False)}, Rebalancing: {processed_configs[0].get('exclude_from_rebalancing_sync', False)}")
             # Sync date widgets with the updated portfolio
             sync_date_widgets_with_portfolio()
@@ -7084,6 +8060,8 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
             cleaned_config['minimal_threshold_percent'] = config.get('minimal_threshold_percent', 2.0)
             cleaned_config['use_max_allocation'] = config.get('use_max_allocation', False)
             cleaned_config['max_allocation_percent'] = config.get('max_allocation_percent', 10.0)
+            cleaned_config['use_targeted_rebalancing'] = config.get('use_targeted_rebalancing', False)
+            cleaned_config['targeted_rebalancing_settings'] = config.get('targeted_rebalancing_settings', {})
             
             # Convert date objects to strings for JSON serialization
             if cleaned_config.get('start_date_user') is not None:
@@ -7381,6 +8359,158 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         # Store in session state for PDF export
         st.session_state.fig2 = fig2
 
+        # Third plot: Daily Risk-Free Rate
+        fig3 = go.Figure()
+        try:
+            # Get risk-free rate data for the same date range
+            risk_free_rates = get_risk_free_rate_robust(pd.date_range(start=first_date, end=last_date, freq='D'))
+            
+            # Convert timestamp index to proper datetime for plotting
+            if hasattr(risk_free_rates.index, 'to_pydatetime'):
+                x_dates = risk_free_rates.index.to_pydatetime()
+            else:
+                x_dates = pd.to_datetime(risk_free_rates.index)
+            
+            # Convert to daily basis points for display (multiply by 10000)
+            daily_rates_bp = risk_free_rates * 10000
+            
+            fig3.add_trace(go.Scatter(
+                x=x_dates, 
+                y=daily_rates_bp.values, 
+                mode='lines', 
+                name='Daily Risk-Free Rate', 
+                line=dict(color='#00ff88'),
+                hovertemplate='<b>Daily Risk-Free Rate</b><br>' +
+                             'Date: %{x}<br>' +
+                             'Rate: %{y:.2f} bps<br>' +
+                             '<extra></extra>'
+            ))
+            
+        except Exception as e:
+            # Fallback: create a simple line at default rate if risk-free rate fetching fails
+            x_dates = pd.date_range(start=first_date, end=last_date, freq='D')
+            default_daily_bp = 0.02 / 365.25 * 10000  # Convert 2% annual to daily basis points
+            fig3.add_trace(go.Scatter(
+                x=x_dates, 
+                y=[default_daily_bp] * len(x_dates), 
+                mode='lines', 
+                name='Daily Risk-Free Rate (Default)', 
+                line=dict(color='#00ff88')
+            ))
+        
+        fig3.update_layout(
+            title="Daily Risk-Free Rate (13-Week Treasury)",
+            xaxis_title="Date",
+            legend_title="Rate",
+            hovermode="x unified",
+            template="plotly_dark",
+            # EXACT same formatting as the other two plots
+            xaxis=dict(
+                type='date',  # Explicitly set as date type
+                tickformat="%Y-%m-%d",  # Proper date format
+                tickmode="auto",
+                nticks=10,  # Reasonable number of ticks
+                tickangle=45,  # Angle labels for better readability
+                automargin=True,  # Ensure labels fit
+                range=None  # Let Plotly auto-range to ensure perfect alignment
+            ),
+            legend=dict(
+                orientation="h",  # Horizontal legend
+                yanchor="top",
+                y=1.15,
+                xanchor="center",
+                x=0.5
+            ),
+            margin=dict(l=80, r=80, t=120, b=80),  # EXACT same margins as the other plots
+            height=600,  # Same height as the other plots
+            yaxis=dict(
+                title="Daily Risk-Free Rate (basis points)", 
+                title_standoff=20,
+                side="left",
+                position=0.0,  # Force left alignment for perfect positioning
+                range=[0, max(daily_rates_bp) * 1.1] if 'daily_rates_bp' in locals() and len(daily_rates_bp) > 0 else [0, 2]
+            )
+        )
+        st.plotly_chart(fig3, use_container_width=True, key="multi_daily_risk_free_chart")
+        # Store in session state for PDF export
+        st.session_state.fig3 = fig3
+
+        # Fourth plot: Annualized Risk-Free Rate
+        fig4 = go.Figure()
+        try:
+            # Get risk-free rate data for the same date range
+            risk_free_rates = get_risk_free_rate_robust(pd.date_range(start=first_date, end=last_date, freq='D'))
+            
+            # Convert timestamp index to proper datetime for plotting
+            if hasattr(risk_free_rates.index, 'to_pydatetime'):
+                x_dates = risk_free_rates.index.to_pydatetime()
+            else:
+                x_dates = pd.to_datetime(risk_free_rates.index)
+            
+            # Convert to annualized percentage for display
+            # Daily rate to annual: (1 + daily_rate)^365.25 - 1
+            annual_rates = ((1 + risk_free_rates) ** 365.25 - 1) * 100
+            
+            fig4.add_trace(go.Scatter(
+                x=x_dates, 
+                y=annual_rates.values, 
+                mode='lines', 
+                name='Annualized Risk-Free Rate', 
+                line=dict(color='#ff8800'),
+                hovertemplate='<b>Annualized Risk-Free Rate</b><br>' +
+                             'Date: %{x}<br>' +
+                             'Rate: %{y:.2f}%<br>' +
+                             '<extra></extra>'
+            ))
+            
+        except Exception as e:
+            # Fallback: create a simple line at 2% if risk-free rate fetching fails
+            x_dates = pd.date_range(start=first_date, end=last_date, freq='D')
+            fig4.add_trace(go.Scatter(
+                x=x_dates, 
+                y=[2.0] * len(x_dates), 
+                mode='lines', 
+                name='Annualized Risk-Free Rate (Default)', 
+                line=dict(color='#ff8800')
+            ))
+        
+        fig4.update_layout(
+            title="Annualized Risk-Free Rate (13-Week Treasury)",
+            xaxis_title="Date",
+            legend_title="Rate",
+            hovermode="x unified",
+            template="plotly_dark",
+            # EXACT same formatting as the other plots
+            xaxis=dict(
+                type='date',  # Explicitly set as date type
+                tickformat="%Y-%m-%d",  # Proper date format
+                tickmode="auto",
+                nticks=10,  # Reasonable number of ticks
+                tickangle=45,  # Angle labels for better readability
+                automargin=True,  # Ensure labels fit
+                range=None  # Let Plotly auto-range to ensure perfect alignment
+            ),
+            legend=dict(
+                orientation="h",  # Horizontal legend
+                yanchor="top",
+                y=1.15,
+                xanchor="center",
+                x=0.5
+            ),
+            margin=dict(l=80, r=80, t=120, b=80),  # EXACT same margins as the other plots
+            height=600,  # Same height as the other plots
+            yaxis=dict(
+                title="Annualized Risk-Free Rate (%)", 
+                title_standoff=20,
+                side="left",
+                position=0.0,  # Force left alignment for perfect positioning
+                range=[0, max(annual_rates) * 1.1] if 'annual_rates' in locals() and len(annual_rates) > 0 else [0, 6]
+            )
+        )
+        st.plotly_chart(fig4, use_container_width=True, key="multi_annual_risk_free_chart")
+        # Store in session state for PDF export
+        st.session_state.fig4 = fig4
+
         # --- Variation summary chart: compares total return, CAGR, volatility and max drawdown across portfolios ---
         try:
             def get_no_additions_series(obj):
@@ -7612,10 +8742,10 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 max_dd, drawdowns = calculate_max_drawdown(stats_values)
                 vol = calculate_volatility(stats_returns)
                 
-                # Use 2% annual risk-free rate (same as Backtest_Engine.py default)
-                risk_free_rate = 0.02
-                sharpe = calculate_sharpe(stats_returns, risk_free_rate)
-                sortino = calculate_sortino(stats_returns, risk_free_rate)
+                # Use time-varying risk-free rates (independent implementation)
+                risk_free_rates = get_risk_free_rate_robust(stats_returns.index)
+                sharpe = calculate_sharpe(stats_returns, risk_free_rates)
+                sortino = calculate_sortino(stats_returns, risk_free_rates)
                 ulcer = calculate_ulcer_index(pd.Series(stats_values, index=stats_dates))
                 upi = calculate_upi(cagr, ulcer)
                 # Compute Beta based on the no-additions portfolio returns and the portfolio's benchmark (if available)
@@ -7717,11 +8847,23 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 'Final Value (no_additions)': 'Final Value (No Contributions)',
                 'Total Return (Contributed)': 'Total Return (All Money)'
             }, inplace=True)
-            # Ensure ordering: Beta then MWRR at end, Total Return columns and Total Money Added at the very end
+            # Ensure ordering: MWRR after CAGR, Total Return columns after MWRR, then risk metrics, then Beta and Total Money Added at the end
             cols = list(stats_df_display.columns)
-            if 'Beta' in cols and 'MWRR' in cols and 'Total Return' in cols and 'Total Return (All Money)' in cols and 'Total Money Added' in cols:
-                cols.remove('Beta'); cols.remove('MWRR'); cols.remove('Total Return'); cols.remove('Total Return (All Money)'); cols.remove('Total Money Added')
-                cols.extend(['Beta','MWRR','Total Return','Total Return (All Money)','Total Money Added'])
+            if 'MWRR' in cols and 'Total Return' in cols and 'Total Return (All Money)' in cols and 'Beta' in cols and 'Total Money Added' in cols:
+                # Remove the columns we want to reorder
+                cols.remove('MWRR'); cols.remove('Total Return'); cols.remove('Total Return (All Money)'); cols.remove('Beta'); cols.remove('Total Money Added')
+                
+                # Find the position after CAGR to insert MWRR and Total Return columns
+                cagr_index = cols.index('CAGR') if 'CAGR' in cols else 0
+                insert_position = cagr_index + 1
+                
+                # Insert MWRR and Total Return columns after CAGR
+                cols.insert(insert_position, 'MWRR')
+                cols.insert(insert_position + 1, 'Total Return')
+                cols.insert(insert_position + 2, 'Total Return (All Money)')
+                
+                # Add Beta and Total Money Added at the end
+                cols.extend(['Beta', 'Total Money Added'])
                 stats_df_display = stats_df_display[cols]
 
             # Display start and end dates next to the title
@@ -7857,7 +8999,11 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 st.dataframe(styled_df, use_container_width=True)
             except Exception as e1:
                 try:
-                    st.dataframe(stats_df_clean, use_container_width=True)
+                    # Ensure all values are properly converted to strings to avoid PyArrow issues
+                    stats_df_safe = stats_df_clean.copy()
+                    for col in stats_df_safe.columns:
+                        stats_df_safe[col] = stats_df_safe[col].astype(str)
+                    st.dataframe(stats_df_safe, use_container_width=True)
                 except Exception as e2:
                     # Last resort: convert all values to strings
                     stats_df_strings = stats_df_clean.astype(str)
@@ -7956,12 +9102,12 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 'Stocks': ', '.join([s.get('ticker', '') for s in cfg.get('stocks', [])]),
                 'Benchmark': cfg.get('benchmark_ticker', 'N/A'),
                 'Momentum Windows': str(cfg.get('momentum_windows', [])),
-                'Beta Enabled': 'Yes' if cfg.get('use_beta', False) else 'No',
-                'Volatility Enabled': 'Yes' if cfg.get('use_vol', False) else 'No',
-                'Beta Window': f"{cfg.get('beta_window_days', 0)} days" if cfg.get('use_beta', False) else 'N/A',
-                'Volatility Window': f"{cfg.get('vol_window_days', 0)} days" if cfg.get('use_vol', False) else 'N/A',
-                'Beta Exclude Days': f"{cfg.get('beta_exclude_days', 0)} days" if cfg.get('use_beta', False) else 'N/A',
-                'Volatility Exclude Days': f"{cfg.get('vol_exclude_days', 0)} days" if cfg.get('use_vol', False) else 'N/A',
+                'Beta Enabled': 'Yes' if cfg.get('calc_beta', False) else 'No',
+                'Volatility Enabled': 'Yes' if cfg.get('calc_volatility', False) else 'No',
+                'Beta Window': f"{cfg.get('beta_window_days', 0)} days" if cfg.get('calc_beta', False) else 'N/A',
+                'Volatility Window': f"{cfg.get('vol_window_days', 0)} days" if cfg.get('calc_volatility', False) else 'N/A',
+                'Beta Exclude Days': f"{cfg.get('exclude_days_beta', 0)} days" if cfg.get('calc_beta', False) else 'N/A',
+                'Volatility Exclude Days': f"{cfg.get('exclude_days_vol', 0)} days" if cfg.get('calc_volatility', False) else 'N/A',
                 'Minimal Threshold': f"{cfg.get('minimal_threshold_percent', 2.0):.1f}%" if cfg.get('use_minimal_threshold', False) else 'Disabled',
                 'Maximum Allocation': f"{cfg.get('max_allocation_percent', 10.0):.1f}%" if cfg.get('use_max_allocation', False) else 'Disabled'
             }
