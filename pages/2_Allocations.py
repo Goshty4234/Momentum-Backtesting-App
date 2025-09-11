@@ -23,7 +23,65 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 import base64
 warnings.filterwarnings('ignore')
 
+# =============================================================================
+# TICKER ALIASES FUNCTIONS
+# =============================================================================
 
+def get_ticker_aliases():
+    """Define ticker aliases for easier entry"""
+    return {
+        # Stock Market Indices
+        'SPX': '^GSPC',           # S&P 500 (price only, no dividends) - 1927+
+        'SPXTR': '^SP500TR',      # S&P 500 Total Return (with dividends) - 1988+
+        'SP500': '^GSPC',         # S&P 500 (price only, no dividends) - 1927+
+        'SP500TR': '^SP500TR',    # S&P 500 Total Return (with dividends) - 1988+
+        'SPYTR': '^SP500TR',      # S&P 500 Total Return (with dividends) - 1988+
+        'NASDAQ': '^IXIC',        # NASDAQ Composite (price only, no dividends) - 1971+
+        'NDX': '^NDX',           # NASDAQ 100 (price only, no dividends) - 1985+
+        'QQQTR': '^NDX',         # NASDAQ 100 (price only, no dividends) - 1985+
+        'DOW': '^DJI',           # Dow Jones Industrial Average (price only, no dividends) - 1992+
+        
+        # Treasury Yield Indices (LONGEST HISTORY - 1960s+)
+        'TNX': '^TNX',           # 10-Year Treasury Yield (1962+) - Price only, no coupons
+        'TYX': '^TYX',           # 30-Year Treasury Yield (1977+) - Price only, no coupons
+        'FVX': '^FVX',           # 5-Year Treasury Yield (1962+) - Price only, no coupons
+        'IRX': '^IRX',           # 3-Month Treasury Yield (1960+) - Price only, no coupons
+        
+        # Treasury Bond ETFs (MODERN - WITH COUPONS/DIVIDENDS)
+        'TLTTR': 'TLT',          # 20+ Year Treasury Bond ETF (2002+) - With coupons
+        'IEFTR': 'IEF',          # 7-10 Year Treasury Bond ETF (2002+) - With coupons
+        'SHY': 'SHY',            # 1-3 Year Treasury Bond ETF (2002+) - With coupons
+        'BIL': 'BIL',            # 1-3 Month T-Bill ETF (2007+) - With coupons
+        'GOVT': 'GOVT',          # US Treasury Bond ETF (2012+) - With coupons
+        'SPTL': 'SPTL',          # Long Term Treasury ETF (2007+) - With coupons
+        'SPTS': 'SPTS',          # Short Term Treasury ETF (2011+) - With coupons
+        'SPTI': 'SPTI',          # Intermediate Term Treasury ETF (2007+) - With coupons
+        
+        # Cash/Zero Return
+        'ZEROX': 'ZEROX',        # Zero-cost portfolio (literally cash doing nothing)
+        
+        # Gold & Commodities
+        'GOLDX': 'GOLDX',        # Fidelity Gold Fund (1994+) - With dividends
+        'GLD': 'GLD',            # SPDR Gold Trust ETF (2004+) - With dividends
+        'IAU': 'IAU',            # iShares Gold Trust ETF (2005+) - With dividends
+        'GOLDF': 'GC=F',         # Gold Futures (2000+) - No dividends
+        'SILVER': 'SI=F',        # Silver Futures (2000+) - No dividends
+        'OIL': 'CL=F',           # Crude Oil Futures (2000+) - No dividends
+        'NATGAS': 'NG=F',        # Natural Gas Futures (2000+) - No dividends
+        'CORN': 'ZC=F',          # Corn Futures (2000+) - No dividends
+        'SOYBEAN': 'ZS=F',       # Soybean Futures (2000+) - No dividends
+        'COFFEE': 'KC=F',        # Coffee Futures (2000+) - No dividends
+        'SUGAR': 'SB=F',         # Sugar Futures (2000+) - No dividends
+        'COTTON': 'CT=F',        # Cotton Futures (2000+) - No dividends
+        'COPPER': 'HG=F',        # Copper Futures (2000+) - No dividends
+        'PLATINUM': 'PL=F',      # Platinum Futures (1997+) - No dividends
+        'PALLADIUM': 'PA=F',     # Palladium Futures (1998+) - No dividends
+    }
+
+def resolve_ticker_alias(ticker):
+    """Resolve ticker alias to actual ticker symbol"""
+    aliases = get_ticker_aliases()
+    return aliases.get(ticker.upper(), ticker)
 
 # =============================================================================
 # PERFORMANCE OPTIMIZATION: CACHING FUNCTIONS
@@ -236,45 +294,51 @@ def get_ticker_aliases():
     """Define ticker aliases for easier entry"""
     return {
         # Stock Market Indices
-        'SPX': '^GSPC',           # S&P 500 (price only, no dividends)
-        'SPXTR': '^SP500TR',      # S&P 500 Total Return (with dividends)
-        'SP500': '^GSPC',         # S&P 500 (price only, no dividends)
-        'SP500TR': '^SP500TR',    # S&P 500 Total Return (with dividends)
-        'SPYTR': '^SP500TR',      # S&P 500 Total Return (with dividends)
-        'NASDAQ': '^IXIC',        # NASDAQ Composite (price only, no dividends)
-        'NDX': '^NDX',           # NASDAQ 100 (price only, no dividends)
-        'QQQTR': '^NDX',         # NASDAQ 100 (price only, no dividends)
-        'DOW': '^DJI',           # Dow Jones Industrial Average (price only, no dividends)
+        'SPX': '^GSPC',           # S&P 500 (price only, no dividends) - 1927+
+        'SPXTR': '^SP500TR',      # S&P 500 Total Return (with dividends) - 1988+
+        'SP500': '^GSPC',         # S&P 500 (price only, no dividends) - 1927+
+        'SP500TR': '^SP500TR',    # S&P 500 Total Return (with dividends) - 1988+
+        'SPYTR': '^SP500TR',      # S&P 500 Total Return (with dividends) - 1988+
+        'NASDAQ': '^IXIC',        # NASDAQ Composite (price only, no dividends) - 1971+
+        'NDX': '^NDX',           # NASDAQ 100 (price only, no dividends) - 1985+
+        'QQQTR': '^NDX',         # NASDAQ 100 (price only, no dividends) - 1985+
+        'DOW': '^DJI',           # Dow Jones Industrial Average (price only, no dividends) - 1992+
         
         # Treasury Yield Indices (LONGEST HISTORY - 1960s+)
         'TNX': '^TNX',           # 10-Year Treasury Yield (1962+) - Price only, no coupons
         'TYX': '^TYX',           # 30-Year Treasury Yield (1977+) - Price only, no coupons
         'FVX': '^FVX',           # 5-Year Treasury Yield (1962+) - Price only, no coupons
-        'IRX': '^IRX',           # 3-Month Treasury Yield (1982+) - Price only, no coupons
+        'IRX': '^IRX',           # 3-Month Treasury Yield (1960+) - Price only, no coupons
         
         # Treasury Bond ETFs (MODERN - WITH COUPONS/DIVIDENDS)
         'TLTTR': 'TLT',          # 20+ Year Treasury Bond ETF (2002+) - With coupons
         'IEFTR': 'IEF',          # 7-10 Year Treasury Bond ETF (2002+) - With coupons
-        'ZROZX': 'ZROZ',         # 25+ Year Zero Coupon Treasury ETF (2009+) - With coupons
-        'GOVZTR': 'GOVZ',        # 25+ Year Treasury STRIPS ETF (2019+) - With coupons
-        'EDVTR': 'EDV',          # Extended Duration Treasury ETF (2007+) - With coupons
-        
-        # Short-Term Treasury (LONGEST HISTORY)
-        'TBILL': '^IRX',         # 3-Month Treasury Yield (1982+) - Longest T-bill history
         'SHY': 'SHY',            # 1-3 Year Treasury Bond ETF (2002+) - With coupons
         'BIL': 'BIL',            # 1-3 Month T-Bill ETF (2007+) - With coupons
-        'SGOV': 'SGOV',          # 0-3 Month T-Bill ETF (2020+) - With coupons
-        'ZEROX': 'ZERO',         # Zero-cost portfolio (literally cash doing nothing)
+        'GOVT': 'GOVT',          # US Treasury Bond ETF (2012+) - With coupons
+        'SPTL': 'SPTL',          # Long Term Treasury ETF (2007+) - With coupons
+        'SPTS': 'SPTS',          # Short Term Treasury ETF (2011+) - With coupons
+        'SPTI': 'SPTI',          # Intermediate Term Treasury ETF (2007+) - With coupons
         
-        # Gold & Commodities (LONGEST HISTORY - 1970s+)
-        'GOLDX': 'GC=F',         # Gold Futures (1975+) - Longest gold history
-        'GOLD': 'GC=F',          # Gold Futures (1975+) - Longest gold history
-        'GOLDF': 'GC=F',         # Gold Futures (1975+) - Longest gold history
-        'XAUUSD': 'XAUUSD=X',    # Gold vs USD (1971+) - Longest forex gold history
-        'GLD': 'GLD',            # SPDR Gold Trust ETF (2004+) - Most accurate gold ETF
-        'IAU': 'IAU',            # iShares Gold Trust ETF (2005+) - Alternative gold ETF
-        'XAU': '^XAU',           # Gold & Silver Index (1983+) - Price only, no dividends
-        'CRB': '^CRB',           # Commodity Research Bureau Index (1957+) - Price only, no dividends
+        # Cash/Zero Return
+        'ZEROX': 'ZEROX',        # Zero-cost portfolio (literally cash doing nothing)
+        
+        # Gold & Commodities
+        'GOLDX': 'GOLDX',        # Fidelity Gold Fund (1994+) - With dividends
+        'GLD': 'GLD',            # SPDR Gold Trust ETF (2004+) - With dividends
+        'IAU': 'IAU',            # iShares Gold Trust ETF (2005+) - With dividends
+        'GOLDF': 'GC=F',         # Gold Futures (2000+) - No dividends
+        'SILVER': 'SI=F',        # Silver Futures (2000+) - No dividends
+        'OIL': 'CL=F',           # Crude Oil Futures (2000+) - No dividends
+        'NATGAS': 'NG=F',        # Natural Gas Futures (2000+) - No dividends
+        'CORN': 'ZC=F',          # Corn Futures (2000+) - No dividends
+        'SOYBEAN': 'ZS=F',       # Soybean Futures (2000+) - No dividends
+        'COFFEE': 'KC=F',        # Coffee Futures (2000+) - No dividends
+        'SUGAR': 'SB=F',         # Sugar Futures (2000+) - No dividends
+        'COTTON': 'CT=F',        # Cotton Futures (2000+) - No dividends
+        'COPPER': 'HG=F',        # Copper Futures (2000+) - No dividends
+        'PLATINUM': 'PL=F',      # Platinum Futures (1997+) - No dividends
+        'PALLADIUM': 'PA=F',     # Palladium Futures (1998+) - No dividends
     }
 
 def resolve_ticker_alias(ticker):
@@ -506,8 +570,8 @@ if 'alloc_portfolio_configs' not in st.session_state:
                 {"lookback": 180, "exclude": 30, "weight": 0.3},
                 {"lookback": 120, "exclude": 30, "weight": 0.2},
             ],
-            'calc_beta': True,
-            'calc_volatility': True,
+            'calc_beta': False,
+            'calc_volatility': False,
             'beta_window_days': 365,
             'exclude_days_beta': 30,
             'vol_window_days': 365,
@@ -533,6 +597,12 @@ if 'alloc_paste_json_text' not in st.session_state:
 
 # Use page-scoped active portfolio for the allocations page
 active_portfolio = st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index] if 'alloc_portfolio_configs' in st.session_state and 'alloc_active_portfolio_index' in st.session_state else None
+
+# NUCLEAR SYNC: FORCE momentum widgets to sync with the active portfolio
+if active_portfolio:
+    # NUCLEAR APPROACH: FORCE momentum session state widget to sync
+    st.session_state['alloc_active_use_momentum'] = active_portfolio.get('use_momentum', False)
+
 if active_portfolio:
     # Removed duplicate Portfolio Name input field
     if st.session_state.get('alloc_rerun_flag', False):
@@ -729,8 +799,8 @@ default_configs = [
     'start_with': 'oldest',
         'use_momentum': False,
         'momentum_windows': [],
-    'calc_beta': True,
-    'calc_volatility': True,
+    'calc_beta': False,
+    'calc_volatility': False,
         'beta_window_days': 365,
         'exclude_days_beta': 30,
                     'vol_window_days': 365,
@@ -2969,7 +3039,36 @@ def single_backtest(config, sim_index, reindexed_data):
         portfolio_no_additions.append(portfolio_no_additions[-1] * daily_growth_factor)
         
         current_total = sum(values[t][-1] for t in tickers) + unallocated_cash[-1] + unreinvested_cash[-1]
-        if date in dates_rebal and set(tickers):
+        
+        # Check if we should rebalance
+        should_rebalance = False
+        
+        # If targeted rebalancing is enabled and not using momentum, only rebalance when thresholds are violated
+        if config.get('use_targeted_rebalancing', False) and not config.get('use_momentum', True) and set(tickers):
+            # Only check for rebalancing on rebalance dates
+            if date in dates_rebal:
+                current_asset_values = {t: values[t][-1] for t in tickers}
+                current_total_value = sum(current_asset_values.values())
+                if current_total_value > 0:
+                    current_allocations = {t: v / current_total_value for t, v in current_asset_values.items()}
+                    
+                    # Check if any ticker violates its thresholds
+                    targeted_settings = config.get('targeted_rebalancing_settings', {})
+                    for ticker, settings in targeted_settings.items():
+                        if settings.get('enabled', False):
+                            min_alloc = settings.get('min_allocation', 0.0) / 100.0
+                            max_alloc = settings.get('max_allocation', 100.0) / 100.0
+                            current_alloc = current_allocations.get(ticker, 0.0)
+                            
+                            if current_alloc > max_alloc or current_alloc < min_alloc:
+                                should_rebalance = True
+                                break
+        else:
+            # Original rebalancing logic for momentum strategies or when targeted rebalancing is disabled
+            if date in dates_rebal and set(tickers):
+                should_rebalance = True
+        
+        if should_rebalance and set(tickers):
             if use_momentum:
                 returns, valid_assets = calculate_momentum(date, set(tickers), momentum_windows)
                 if valid_assets:
@@ -3135,6 +3234,40 @@ def single_backtest(config, sim_index, reindexed_data):
                                         capped_rebalance_allocations[t] = min(new_allocation, max_allocation_decimal)
                         
                         rebalance_allocations = capped_rebalance_allocations
+                    
+                    # Apply targeted rebalancing if enabled and thresholds are violated
+                    if config.get('use_targeted_rebalancing', False) and should_rebalance:
+                        targeted_settings = config.get('targeted_rebalancing_settings', {})
+                        current_asset_values = {t: values[t][-1] for t in tickers}
+                        current_total_value = sum(current_asset_values.values())
+                        
+                        if current_total_value > 0:
+                            current_allocations = {t: v / current_total_value for t, v in current_asset_values.items()}
+                            
+                            # Apply targeted rebalancing
+                            new_allocations = {}
+                            
+                            # Set allocations for tickers with targeted rebalancing
+                            for ticker in tickers:
+                                if ticker in targeted_settings and targeted_settings[ticker].get('enabled', False):
+                                    settings = targeted_settings[ticker]
+                                    min_alloc = settings.get('min_allocation', 0.0) / 100.0
+                                    max_alloc = settings.get('max_allocation', 100.0) / 100.0
+                                    current_alloc = current_allocations.get(ticker, 0.0)
+                                    
+                                    if current_alloc > max_alloc:
+                                        new_allocations[ticker] = max_alloc
+                                    elif current_alloc < min_alloc:
+                                        new_allocations[ticker] = min_alloc
+                                    else:
+                                        new_allocations[ticker] = current_alloc
+                                else:
+                                    new_allocations[ticker] = current_allocations.get(ticker, 0.0)
+                            
+                            # Normalize to ensure allocations sum to 1.0
+                            total_alloc = sum(new_allocations.values())
+                            if total_alloc > 0:
+                                rebalance_allocations = {t: alloc / total_alloc for t, alloc in new_allocations.items()}
                     
                     sum_alloc = sum(rebalance_allocations.values())
                     if sum_alloc > 0:
@@ -3582,6 +3715,8 @@ def paste_json_callback():
             'exclude_days_beta': json_data.get('exclude_days_beta', 30),
             'vol_window_days': json_data.get('vol_window_days', 365),
             'exclude_days_vol': json_data.get('exclude_days_vol', 30),
+            'use_targeted_rebalancing': json_data.get('use_targeted_rebalancing', False),
+            'targeted_rebalancing_settings': json_data.get('targeted_rebalancing_settings', {}),
         }
         
         st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index] = allocations_config
@@ -3591,6 +3726,10 @@ def paste_json_callback():
         st.session_state['alloc_active_threshold_percent'] = allocations_config.get('minimal_threshold_percent', 2.0)
         st.session_state['alloc_active_use_max_allocation'] = allocations_config.get('use_max_allocation', False)
         st.session_state['alloc_active_max_allocation_percent'] = allocations_config.get('max_allocation_percent', 10.0)
+        
+        
+        # Update portfolio name input field to match the imported portfolio
+        st.session_state.alloc_portfolio_name = allocations_config.get('name', 'Allocation Portfolio')
         
         st.success("Portfolio configuration updated from JSON (Allocations page).")
         st.info(f"Final stocks list: {[s['ticker'] for s in allocations_config['stocks']]}")
@@ -3613,6 +3752,12 @@ def update_active_portfolio_index():
         st.session_state.alloc_active_portfolio_index = portfolio_names.index(selected_name)
     else:
         st.session_state.alloc_active_portfolio_index = 0 if portfolio_names else None
+    
+    # Update portfolio name input field to match the active portfolio
+    if st.session_state.alloc_active_portfolio_index is not None and portfolio_configs:
+        active_portfolio = portfolio_configs[st.session_state.alloc_active_portfolio_index]
+        st.session_state.alloc_portfolio_name = active_portfolio.get('name', 'Allocation Portfolio')
+    
     st.session_state.alloc_rerun_flag = True
 
 def update_name():
@@ -3633,7 +3778,9 @@ def update_rebal_freq():
 def update_benchmark():
     # Convert benchmark ticker to uppercase and resolve alias
     benchmark_val = st.session_state.get('alloc_active_benchmark', '')
-    upper_benchmark = benchmark_val.upper()
+    # Convert commas to dots for decimal separators (like case conversion)
+    converted_benchmark = benchmark_val.replace(",", ".")
+    upper_benchmark = converted_benchmark.upper()
     resolved_benchmark = resolve_ticker_alias(upper_benchmark)
     st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['benchmark_ticker'] = resolved_benchmark
     # Update the widget to show resolved ticker
@@ -3645,6 +3792,12 @@ def update_use_momentum():
     if current_val != new_val:
         st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['use_momentum'] = new_val
         if new_val:
+            # When momentum is enabled for the first time, turn off beta and volatility
+            st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['calc_beta'] = False
+            st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['calc_volatility'] = False
+            # Update the UI checkboxes to reflect the change
+            st.session_state['alloc_active_calc_beta'] = False
+            st.session_state['alloc_active_calc_vol'] = False
             st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['momentum_windows'] = [
                 {"lookback": 365, "exclude": 30, "weight": 0.5},
                 {"lookback": 180, "exclude": 30, "weight": 0.3},
@@ -3653,6 +3806,7 @@ def update_use_momentum():
         else:
             st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['momentum_windows'] = []
         st.session_state.alloc_rerun_flag = True
+
 
 
 
@@ -3763,8 +3917,11 @@ def update_stock_ticker(index):
         if val is None:
             return
         
+        # Convert commas to dots for decimal separators (like case conversion)
+        converted_val = val.replace(",", ".")
+        
         # Convert the input value to uppercase
-        upper_val = val.upper()
+        upper_val = converted_val.upper()
         
         # Resolve alias if it exists
         resolved_ticker = resolve_ticker_alias(upper_val)
@@ -3840,7 +3997,7 @@ for stock in active_portfolio['stocks']:
 
 if leveraged_tickers:
     st.markdown("---")
-    st.markdown("### ⚡ Leverage Summary")
+    st.markdown("### 🚀 Leverage Summary")
     
     # Get risk-free rate for drag calculation
     try:
@@ -3863,7 +4020,7 @@ if leveraged_tickers:
         st.markdown(f"📉 **Daily drag:** {daily_drag:.3f}% (RF: {daily_rf*100:.1f}%)")
 
 # Special tickers and leverage guide sections
-with st.expander("🚀 Special Long-Term Tickers", expanded=False):
+with st.expander("📈 Broad Long-Term Tickers", expanded=False):
     st.markdown("""
     **Recommended tickers for long-term strategies:**
     
@@ -3894,16 +4051,94 @@ with st.expander("🚀 Special Long-Term Tickers", expanded=False):
     - **USO** - Oil (0.60% expense ratio)
     """)
 
-# Ticker Aliases Section
-st.markdown("---")
-st.markdown("**💡 Ticker Aliases:** You can also use these shortcuts in the text input below:")
-st.markdown("- `SPX` → `^GSPC` (S&P 500, 1957+), `SPXTR` → `^SP500TR` (S&P 500 with dividends, 1957+)")
-st.markdown("- `SPYTR` → `^SP500TR` (S&P 500 Total Return, 1957+), `QQQTR` → `^NDX` (NASDAQ 100, 1985+)")
-st.markdown("- `TLTTR` → `TLT` (20+ Year Treasury ETF, 2002+), `IEFTR` → `IEF` (7-10 Year Treasury ETF, 2002+)")
-st.markdown("- `ZROZX` → `ZROZ` (25+ Year Zero Coupon Treasury, 2009+), `GOVZTR` → `GOVZ` (25+ Year Treasury STRIPS, 2019+)")
-st.markdown("- `TNX` → `^TNX` (10Y Treasury Yield, 1962+), `TYX` → `^TYX` (30Y Treasury Yield, 1977+)")
-st.markdown("- `TBILL` → `^IRX` (3M Treasury Yield, 1982+), `SHY` → `SHY` (1-3 Year Treasury ETF, 2002+)")
-st.markdown("- `ZEROX` → `ZERO` (Cash doing nothing), `GOLDX` → `GC=F` (Gold Futures, 1975+)")
+# Special Tickers Section
+with st.expander("🎯 Special Long-Term Tickers", expanded=False):
+    st.markdown("**Quick access to ticker aliases that the system accepts:**")
+    
+    # Get the actual ticker aliases from the function
+    aliases = get_ticker_aliases()
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("**📈 Stock Indices**")
+        stock_tickers = {
+            'S&P 500 (Price) (1927+)': '^GSPC',
+            'S&P 500 (Total Return) (1988+)': '^SP500TR', 
+            'NASDAQ Composite (1971+)': '^IXIC',
+            'NASDAQ 100 (1985+)': '^NDX',
+            'Dow Jones (1992+)': '^DJI'
+        }
+        
+        for name, ticker in stock_tickers.items():
+            if st.button(f"➕ {name}", key=f"add_stock_{ticker}", help=f"Add {ticker}"):
+                portfolio_index = st.session_state.alloc_active_portfolio_index
+                st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
+                    'ticker': ticker, 
+                    'allocation': 0.0, 
+                    'include_dividends': True
+                })
+                st.rerun()
+    
+    with col2:
+        st.markdown("**🏛️ Treasury Bonds & T-Bills**")
+        bond_tickers = {
+            '10Y Treasury Yield (1962+)': '^TNX',
+            '30Y Treasury Yield (1977+)': '^TYX',
+            '5Y Treasury Yield (1962+)': '^FVX',
+            '3M Treasury Yield (1960+)': '^IRX',
+            '20+ Year Treasury ETF (2002+)': 'TLT',
+            '7-10 Year Treasury ETF (2002+)': 'IEF',
+            '25+ Year Zero Coupon (2009+)': 'ZROZ',
+            '25+ Year Treasury STRIPS (2020+)': 'GOVZ',
+            'Extended Duration Treasury ETF (2008+)': 'EDV',
+            '1-3 Year Treasury ETF (2002+)': 'SHY',
+            '1-3 Month T-Bill ETF (2007+)': 'BIL',
+            '0-3 Month T-Bill ETF (2020+)': 'SGOV',
+            'Cash (Zero Return)': 'ZERO'
+        }
+        
+        for name, ticker in bond_tickers.items():
+            if st.button(f"➕ {name}", key=f"add_bond_{ticker}", help=f"Add {ticker}"):
+                portfolio_index = st.session_state.alloc_active_portfolio_index
+                st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
+                    'ticker': ticker, 
+                    'allocation': 0.0, 
+                    'include_dividends': True
+                })
+                st.rerun()
+    
+    with col3:
+        st.markdown("**🥇 Gold & Commodities**")
+        commodity_tickers = {
+            'Gold Futures (2000+)': 'GC=F',
+            'SPDR Gold ETF (2004+)': 'GLD',
+            'iShares Gold ETF (2005+)': 'IAU',
+            'Gold & Silver Index (1983+)': '^XAU'
+        }
+        
+        for name, ticker in commodity_tickers.items():
+            if st.button(f"➕ {name}", key=f"add_commodity_{ticker}", help=f"Add {ticker}"):
+                portfolio_index = st.session_state.alloc_active_portfolio_index
+                st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
+                    'ticker': ticker, 
+                    'allocation': 0.0, 
+                    'include_dividends': True
+                })
+                st.rerun()
+    
+    st.markdown("---")
+    
+    # Ticker Aliases Section INSIDE the expander
+    st.markdown("**💡 Ticker Aliases:** You can also use these shortcuts in the text input below:")
+    st.markdown("- `SPX` → `^GSPC` (S&P 500 Price, 1927+), `SPXTR` → `^SP500TR` (S&P 500 Total Return, 1988+)")
+    st.markdown("- `SPYTR` → `^SP500TR` (S&P 500 Total Return, 1988+), `QQQTR` → `^NDX` (NASDAQ 100, 1985+)")
+    st.markdown("- `TLTTR` → `TLT` (20+ Year Treasury ETF, 2002+), `IEFTR` → `IEF` (7-10 Year Treasury ETF, 2002+)")
+    st.markdown("- `ZROZX` → `ZROZ` (25+ Year Zero Coupon Treasury, 2009+), `GOVZTR` → `GOVZ` (25+ Year Treasury STRIPS, 2020+)")
+    st.markdown("- `TNX` → `^TNX` (10Y Treasury Yield, 1962+), `TYX` → `^TYX` (30Y Treasury Yield, 1977+)")
+    st.markdown("- `TBILL` → `^IRX` (3M Treasury Yield, 1960+), `SHY` → `SHY` (1-3 Year Treasury ETF, 2002+)")
+    st.markdown("- `ZEROX` → `ZERO` (Cash doing nothing), `GOLDX` → `GC=F` (Gold Futures, 2000+), `XAU` → `^XAU` (Gold & Silver Index, 1983+)")
+
 
 with st.expander("⚡ Leverage Guide", expanded=False):
     st.markdown("""
@@ -4023,7 +4258,12 @@ if "alloc_active_use_max_allocation" not in st.session_state:
     st.session_state["alloc_active_use_max_allocation"] = active_portfolio.get('use_max_allocation', False)
 if "alloc_active_max_allocation_percent" not in st.session_state:
     st.session_state["alloc_active_max_allocation_percent"] = active_portfolio.get('max_allocation_percent', 10.0)
-st.checkbox("Use Momentum Strategy", key="alloc_active_use_momentum", on_change=update_use_momentum, help="Enables momentum-based weighting of stocks.")
+# Only show momentum strategy if targeted rebalancing is disabled
+if not active_portfolio.get('use_targeted_rebalancing', False):
+    st.checkbox("Use Momentum Strategy", key="alloc_active_use_momentum", on_change=update_use_momentum, help="Enables momentum-based weighting of stocks.")
+else:
+    # Hide momentum strategy when targeted rebalancing is enabled
+    st.session_state["alloc_active_use_momentum"] = False
 
 if active_portfolio['use_momentum']:
     st.markdown("---")
@@ -4092,9 +4332,8 @@ if active_portfolio['use_momentum']:
     if st.session_state.get("alloc_active_use_threshold", False):
         st.number_input(
             "Minimal Threshold (%)", 
-            min_value=0.1, 
+            min_value=2.0, 
             max_value=50.0, 
-            value=st.session_state.get("alloc_active_threshold_percent", 2.0), 
             step=0.1,
             key="alloc_active_threshold_percent", 
             on_change=update_threshold_percent,
@@ -4123,7 +4362,6 @@ if active_portfolio['use_momentum']:
             "Maximum Allocation (%)", 
             min_value=1.0, 
             max_value=100.0, 
-            value=st.session_state.get("alloc_active_max_allocation_percent", 10.0), 
             step=0.1,
             key="alloc_active_max_allocation_percent", 
             on_change=update_max_allocation_percent,
@@ -4220,14 +4458,111 @@ if active_portfolio['use_momentum']:
             with col_mw3:
                 st.number_input(f"Weight {j+1}", min_value=0, max_value=100, step=1, format="%d", key=weight_key, label_visibility="collapsed", on_change=update_momentum_weight, args=(j,))
 else:
+    # Don't clear momentum_windows - they should persist when momentum is disabled
+    # so they're available when momentum is re-enabled or for variant generation
     
     active_portfolio['momentum_windows'] = []
+
+# Targeted Rebalancing Section (only when momentum is disabled)
+st.markdown("---")
+st.subheader("Targeted Rebalancing")
+
+# Only show targeted rebalancing if momentum strategy is disabled
+if not active_portfolio.get('use_momentum', False):
+    use_targeted_rebalancing = st.checkbox(
+        "Enable Targeted Rebalancing", 
+        value=active_portfolio.get('use_targeted_rebalancing', False),
+        help="Automatically rebalance when ticker allocations exceed min/max thresholds"
+    )
+    
+    # Update the portfolio config directly
+    active_portfolio['use_targeted_rebalancing'] = use_targeted_rebalancing
+    
+    # If enabling targeted rebalancing, disable momentum
+    if use_targeted_rebalancing:
+        active_portfolio['use_momentum'] = False
+else:
+    # Hide targeted rebalancing when momentum strategy is enabled
+    active_portfolio['use_targeted_rebalancing'] = False
+
+if active_portfolio.get('use_targeted_rebalancing', False):
+    st.markdown("**Configure allocation limits for each ticker:**")
+    
+    # Get current tickers
+    stocks_list = active_portfolio.get('stocks', [])
+    current_tickers = [s['ticker'] for s in stocks_list if s.get('ticker')]
+    
+    if current_tickers:
+        # Initialize settings if not exists
+        if 'targeted_rebalancing_settings' not in active_portfolio:
+            active_portfolio['targeted_rebalancing_settings'] = {}
+        
+        # Create columns for ticker settings
+        cols = st.columns(min(len(current_tickers), 3))
+        
+        for i, ticker in enumerate(current_tickers):
+            with cols[i % 3]:
+                st.markdown(f"**{ticker}**")
+                
+                # Initialize default settings for this ticker
+                if ticker not in active_portfolio['targeted_rebalancing_settings']:
+                    active_portfolio['targeted_rebalancing_settings'][ticker] = {
+                        'enabled': False,
+                        'min_allocation': 0.0,
+                        'max_allocation': 100.0
+                    }
+                
+                # Enable/disable checkbox
+                enabled = st.checkbox(
+                    "Enable", 
+                    value=active_portfolio['targeted_rebalancing_settings'][ticker]['enabled'],
+                    key=f"targeted_enabled_{ticker}",
+                    help=f"Enable targeted rebalancing for {ticker}"
+                )
+                active_portfolio['targeted_rebalancing_settings'][ticker]['enabled'] = enabled
+                
+                if enabled:
+                    # Max allocation (on top)
+                    max_alloc = st.number_input(
+                        "Max %", 
+                        min_value=0.0, 
+                        max_value=100.0, 
+                        step=0.1,
+                        value=active_portfolio['targeted_rebalancing_settings'][ticker]['max_allocation'],
+                        key=f"targeted_max_{ticker}",
+                        help=f"Maximum allocation percentage for {ticker}"
+                    )
+                    active_portfolio['targeted_rebalancing_settings'][ticker]['max_allocation'] = max_alloc
+                    
+                    # Min allocation (below)
+                    min_alloc = st.number_input(
+                        "Min %", 
+                        min_value=0.0, 
+                        max_value=100.0, 
+                        step=0.1,
+                        value=active_portfolio['targeted_rebalancing_settings'][ticker]['min_allocation'],
+                        key=f"targeted_min_{ticker}",
+                        help=f"Minimum allocation percentage for {ticker}"
+                    )
+                    active_portfolio['targeted_rebalancing_settings'][ticker]['min_allocation'] = min_alloc
+                    
+                    # Validation
+                    if min_alloc >= max_alloc:
+                        st.error(f"Min must be less than Max for {ticker}")
+    else:
+        st.info("Add tickers to configure targeted rebalancing settings.")
 
 with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     # Clean portfolio config for export by removing unused settings
     cleaned_config = active_portfolio.copy()
     cleaned_config.pop('use_relative_momentum', None)
     cleaned_config.pop('equal_if_all_negative', None)
+    
+    # Ensure targeted rebalancing settings are included
+    cleaned_config['use_targeted_rebalancing'] = active_portfolio.get('use_targeted_rebalancing', False)
+    cleaned_config['targeted_rebalancing_settings'] = active_portfolio.get('targeted_rebalancing_settings', {})
+    
+    
     config_json = json.dumps(cleaned_config, indent=4)
     st.code(config_json, language='json')
     # Fixed JSON copy button
@@ -4408,6 +4743,79 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
 # Validation constants
 _TOTAL_TOL = 1.0
 _ALLOC_TOL = 1.0
+
+# Clear all portfolios button - quick access for single portfolio pages
+if st.sidebar.button("🗑️ Clear All Portfolios", key="alloc_clear_all_portfolios_immediate", 
+                    help="Delete ALL portfolios and create a blank one", use_container_width=True):
+    # Clear all portfolios and create a single blank portfolio
+    st.session_state.alloc_portfolio_configs = [{
+        'name': 'New Portfolio 1',
+        'stocks': [],
+        'benchmark_ticker': '^GSPC',
+        'initial_value': 10000,
+        'added_amount': 0,
+        'added_frequency': 'none',
+        'rebalancing_frequency': 'Monthly',
+        'start_with': 'all',
+        'first_rebalance_strategy': 'rebalancing_date',
+        'use_momentum': False,
+        'momentum_strategy': 'Classic',
+        'negative_momentum_strategy': 'Cash',
+        'momentum_windows': [
+            {"lookback": 365, "exclude": 30, "weight": 1.0}
+        ],
+        'calc_beta': True,
+        'beta_window_days': 365,
+        'exclude_days_beta': 30,
+        'calc_volatility': True,
+        'vol_window_days': 365,
+        'exclude_days_vol': 30,
+        'use_minimal_threshold': False,
+        'minimal_threshold_percent': 2.0,
+        'use_max_allocation': False,
+        'max_allocation_percent': 10.0,
+        'collect_dividends_as_cash': False,
+        'start_date_user': None,
+        'end_date_user': None,
+        'fusion_portfolio': {'enabled': False, 'selected_portfolios': [], 'allocations': {}}
+    }]
+    st.session_state.alloc_active_portfolio_index = 0
+    st.success("✅ All portfolios cleared! Created 'New Portfolio 1'")
+    st.rerun()
+
+# Clear All Outputs Function
+def clear_all_outputs():
+    """Clear all backtest results and outputs while preserving portfolio configurations"""
+    # Clear all result data
+    st.session_state.multi_all_results = None
+    st.session_state.multi_all_allocations = None
+    st.session_state.multi_all_metrics = None
+    st.session_state.multi_backtest_all_drawdowns = None
+    st.session_state.multi_backtest_stats_df_display = None
+    st.session_state.multi_backtest_all_years = None
+    st.session_state.multi_backtest_portfolio_key_map = {}
+    st.session_state.multi_backtest_ran = False
+    
+    # Clear allocations page specific data
+    st.session_state.alloc_all_allocations = None
+    st.session_state.alloc_all_metrics = None
+    st.session_state.alloc_snapshot_data = None
+    
+    # Clear any processing flags
+    for key in list(st.session_state.keys()):
+        if key.startswith("processing_portfolio_"):
+            del st.session_state[key]
+    
+    # Clear any cached data
+    if 'raw_data' in st.session_state:
+        del st.session_state['raw_data']
+    
+    st.success("✅ All outputs cleared! Portfolio configurations preserved.")
+
+# Clear All Outputs Button
+if st.sidebar.button("🗑️ Clear All Outputs", type="secondary", use_container_width=True, help="Clear all charts and results while keeping portfolio configurations"):
+    clear_all_outputs()
+    st.rerun()
 
 # Move Run Backtest to the first sidebar to make it conspicuous and separate from config
 if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=True):
@@ -5089,6 +5497,8 @@ def paste_all_json_callback():
                     'exclude_days_beta': cfg.get('exclude_days_beta', 30),
                     'vol_window_days': cfg.get('vol_window_days', 365),
                     'exclude_days_vol': cfg.get('exclude_days_vol', 30),
+                    'use_targeted_rebalancing': cfg.get('use_targeted_rebalancing', False),
+                    'targeted_rebalancing_settings': cfg.get('targeted_rebalancing_settings', {}),
                 }
                 processed_configs.append(allocations_config)
             
@@ -5107,6 +5517,7 @@ def paste_all_json_callback():
                 st.session_state['alloc_active_add_freq'] = processed_configs[0].get('added_frequency', 'none')
                 st.session_state['alloc_active_benchmark'] = processed_configs[0].get('benchmark_ticker', '')
                 st.session_state['alloc_active_use_momentum'] = bool(processed_configs[0].get('use_momentum', True))
+                
             else:
                 st.session_state.alloc_active_portfolio_index = None
                 st.session_state.alloc_portfolio_selector = ''
@@ -5523,7 +5934,8 @@ if st.session_state.get('alloc_backtest_run', False):
                 
                 # Clear progress indicators
                 progress_bar.empty()
-                status_text.empty()
+                if 'status_text' in locals():
+                    status_text.empty()
                 
                 if rows:
                     df_comprehensive = pd.DataFrame(rows)
