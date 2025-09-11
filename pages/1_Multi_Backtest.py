@@ -7,6 +7,10 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import json
 import io
+import re
+from numba import jit
+import concurrent.futures
+from functools import lru_cache
 
 # Set pandas options for handling large dataframes
 pd.set_option("styler.render.max_elements", 1000000)  # Allow up to 1M cells for styling
@@ -421,7 +425,7 @@ def resolve_ticker_alias(ticker):
     aliases = get_ticker_aliases()
     return aliases.get(ticker.upper(), ticker)
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+# @st.cache_data(ttl=300)  # Cache for 5 minutes - DISABLED for parallel processing
 def generate_zero_return_data(period="max"):
     """Generate synthetic zero return data for ZEROX ticker"""
     try:
@@ -481,7 +485,7 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes  
+# @st.cache_data(ttl=300)  # Cache for 5 minutes - DISABLED for parallel processing
 def get_ticker_info(ticker_symbol):
     """Cache ticker info to improve performance across multiple tabs"""
     try:
@@ -2705,6 +2709,15 @@ st.set_page_config(layout="wide", page_title="Multi-Portfolio Analysis")
 st.title("Multi-Portfolio Backtest")
 st.markdown("Use the forms below to configure and run backtests for multiple portfolios.")
 
+# Performance Settings
+col1, col2 = st.columns([3, 1])
+with col1:
+    st.markdown("### 🚀 Performance Settings")
+with col2:
+    use_parallel = st.checkbox("Parallel Processing", value=True,
+                              help="Process multiple portfolios simultaneously for faster execution")
+    st.session_state.use_parallel_processing = use_parallel
+
 # Portfolio name is handled in the main UI below
 
 # -----------------------
@@ -2926,7 +2939,7 @@ def get_dates_by_freq(freq, start, end, market_days):
                     for market_day in market_days:
                         if market_day >= quarter_start:
                             market_day_quarter = market_day
-                        break
+                            break
                     
                     if market_day_quarter:
                         dates.append(market_day_quarter)
@@ -2949,7 +2962,7 @@ def get_dates_by_freq(freq, start, end, market_days):
                     for market_day in market_days:
                         if market_day >= semi_start:
                             market_day_semi = market_day
-                        break
+                            break
                     
                     if market_day_semi:
                         dates.append(market_day_semi)
@@ -3285,6 +3298,33 @@ def calculate_total_money_added(config, start_date, end_date):
     total_additions = num_additions * added_amount
     
     return initial_value + total_additions
+
+# -----------------------
+# PERFORMANCE OPTIMIZATIONS (Safe - No Logic Changes)
+# -----------------------
+
+@jit(nopython=True)
+def fast_calculate_returns(prices):
+    """Fast calculation of price changes using Numba JIT"""
+    returns = np.zeros_like(prices)
+    for i in range(1, len(prices)):
+        if prices[i-1] > 0:
+            returns[i] = (prices[i] - prices[i-1]) / prices[i-1]
+    return returns
+
+@jit(nopython=True)
+def fast_momentum_calculation(returns, window):
+    """Fast momentum calculation using Numba JIT"""
+    momentum = np.zeros_like(returns)
+    for i in range(window, len(returns)):
+        momentum[i] = np.sum(returns[i-window+1:i+1])
+    return momentum
+
+@lru_cache(maxsize=128)
+def cached_momentum_calculation(ticker_data_hash, window):
+    """Cache momentum calculations to avoid recomputation"""
+    # This is a placeholder - actual implementation would hash the data
+    return None
 
 # -----------------------
 # Single-backtest core (adapted from your code, robust)
@@ -4535,7 +4575,7 @@ def fusion_portfolio_backtest(fusion_portfolio_config, all_portfolio_configs, si
         if is_fusion_rebalance:
             last_rebalance_date = current_date
             print(f"   📅 Fusion rebalancing on {current_date}")
-                
+            
             # Get current portfolio values at this date
             current_values = {}
             for portfolio_name in selected_portfolios:
@@ -4570,7 +4610,7 @@ def fusion_portfolio_backtest(fusion_portfolio_config, all_portfolio_configs, si
                             portfolio_series.iloc[date_idx:] *= adjustment_factor
                             portfolio_series_no_additions.iloc[date_idx:] *= adjustment_factor
                             
-                        print(f"         - {portfolio_name}: {current_value:,.2f} → {target_value:,.2f} (factor: {adjustment_factor:.4f})")
+                            print(f"         - {portfolio_name}: {current_value:,.2f} → {target_value:,.2f} (factor: {adjustment_factor:.4f})")
                 
                 # Update fusion allocation tracking to reflect rebalancing
                 for portfolio_name, target_allocation in allocations.items():
@@ -4691,10 +4731,10 @@ def fusion_portfolio_backtest(fusion_portfolio_config, all_portfolio_configs, si
                             # For stocks, combine normally
                             if ticker_name not in fusion_historical_metrics[current_date]:
                                 fusion_historical_metrics[current_date][ticker_name] = {}
-                        
-                        for metric_key, metric_value in ticker_metrics.items():
-                            if metric_key not in fusion_historical_metrics[current_date][ticker_name]:
-                                fusion_historical_metrics[current_date][ticker_name][metric_key] = 0
+                            
+                            for metric_key, metric_value in ticker_metrics.items():
+                                if metric_key not in fusion_historical_metrics[current_date][ticker_name]:
+                                    fusion_historical_metrics[current_date][ticker_name][metric_key] = 0
                                 fusion_historical_metrics[current_date][ticker_name][metric_key] += metric_value * portfolio_weight
     
     print(f"   ✅ FUSION HISTORICAL DATA COMPLETED")
@@ -4948,9 +4988,9 @@ def remove_stock_callback(ticker):
         for i, stock in enumerate(stocks):
             if stock['ticker'] == ticker:
                 stocks.pop(i)
-                # If this was the last stock, add an empty one
-                if len(stocks) == 0:
-                    stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+            # If this was the last stock, add an empty one
+            if len(stocks) == 0:
+                stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
                 
                 # Clear session state keys for all remaining stocks to force re-initialization
                 portfolio_index = st.session_state.multi_backtest_active_portfolio_index
@@ -4968,7 +5008,7 @@ def remove_stock_callback(ticker):
                     if div_key in st.session_state:
                         del st.session_state[div_key]
                 
-                # Removed rerun flag - no need to refresh entire page for removing a stock
+            # Removed rerun flag - no need to refresh entire page for removing a stock
                 break
     except (IndexError, KeyError):
         pass
@@ -6178,8 +6218,8 @@ if len(st.session_state.multi_backtest_portfolio_configs) >= 2:
                                 allocations[name] = allocations[name] / total * 100.0
                         
                         # Generate descriptive default name based on allocations
-                        def generate_fusion_name(allocations_dict, rebalancing_freq=None):
-                            """Generate a descriptive fusion portfolio name based on allocations and rebalancing frequency"""
+                        def generate_fusion_name(allocations_dict):
+                            """Generate a descriptive fusion portfolio name based on allocations"""
                             if not allocations_dict:
                                 return f"Fusion {len(existing_fusion_portfolios) + 1}"
                             
@@ -6193,29 +6233,16 @@ if len(st.session_state.multi_backtest_portfolio_configs) >= 2:
                                     name_parts.append(f"{portfolio_name} {percentage:.0f}%")
                             
                             if name_parts:
-                                base_name = f"Fusion Portfolio {' '.join(name_parts)}"
-                                # Add rebalancing frequency to the name
-                                if rebalancing_freq:
-                                    base_name += f" ({rebalancing_freq})"
-                                return base_name
+                                return f"Fusion Portfolio {' '.join(name_parts)}"
                             else:
                                 return f"Fusion {len(existing_fusion_portfolios) + 1}"
                         
-                        # Portfolio name - generate with current frequency
-                        current_freq = st.session_state.get("fusion_rebalancing_frequency", "Monthly")
-                        default_name = generate_fusion_name(allocations, current_freq)
-                        
-                        # Use a dynamic key that includes the frequency to force updates
-                        fusion_name_key = f"fusion_name_input_{current_freq}"
-                        
-                        # Initialize fusion name in session state if not exists
-                        if fusion_name_key not in st.session_state:
-                            st.session_state[fusion_name_key] = default_name
-                        
+                        # Portfolio name
+                        default_name = generate_fusion_name(allocations)
                         fusion_name = st.text_input(
                             "Fusion Name",
-                            value=st.session_state.get(fusion_name_key, default_name),
-                            key=fusion_name_key
+                            value=default_name,
+                            key="fusion_name_input"
                         )
                         
                         
@@ -8424,301 +8451,404 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 successful_portfolios = 0
                 failed_portfolios = []
                 
-                # Create temporary status containers that will be cleared at the end
-                status_container = st.empty()
-                status_container.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with FUSION PRIORITY SYSTEM...**")
+                st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability (NO CACHE)...**")
                 
-                # =============================================================================
-                # FUSION PRIORITY SYSTEM - Fusion portfolios ALWAYS run last
-                # =============================================================================
+                # Start timing for performance measurement
+                import time
+                start_time = time.time()
                 
-                # Step 1: Separate individual and fusion portfolios
-                individual_portfolios = []
+                # Separate regular and fusion portfolios for two-phase processing
+                regular_portfolios = []
                 fusion_portfolios = []
                 
-                for i, cfg in enumerate(st.session_state.multi_backtest_portfolio_configs):
+                for i, cfg in enumerate(st.session_state.multi_backtest_portfolio_configs, start=1):
                     if 'fusion_portfolio' in cfg and cfg['fusion_portfolio'].get('enabled', False):
                         fusion_portfolios.append((i, cfg))
                     else:
-                        individual_portfolios.append((i, cfg))
+                        regular_portfolios.append((i, cfg))
                 
-                st.info(f"📊 **Portfolio Separation:** {len(individual_portfolios)} individual, {len(fusion_portfolios)} fusion")
-                
-                # Step 2: Process individual portfolios FIRST
-                if individual_portfolios:
-                    status_container.info(f"🚀 **Phase 1: Processing {len(individual_portfolios)} individual portfolios...**")
-                    for i, (original_index, cfg) in enumerate(individual_portfolios, start=1):
+                # Process portfolios in parallel for maximum speed
+                def process_single_regular_portfolio(args):
+                    """Process a single regular portfolio - designed for parallel execution"""
+                    i, cfg = args
+                    try:
+                        name = cfg.get('name', f'Portfolio {i}')
+                        
+                        # Run single backtest for this portfolio
+                        total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
+                        
+                        # Compute today_weights_map for regular portfolios
+                        today_weights_map = {}
                         try:
-                            # Update progress for individual portfolios
-                            progress_percent = i / len(individual_portfolios)
-                            progress_bar.progress(progress_percent, text=f"Phase 1 - Individual: {i}/{len(individual_portfolios)}: {cfg.get('name', f'Portfolio {i}')}")
-                            
-                            name = cfg.get('name', f'Portfolio {i}')
-                            
-                            # Ensure unique key for storage
-                            base_name = name
-                            unique_name = base_name
-                            suffix = 1
-                            while unique_name in all_results or unique_name in all_allocations:
-                                unique_name = f"{base_name} ({suffix})"
-                                suffix += 1
-                            
-                            # Run single backtest for this individual portfolio
-                            total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
-                            
-                            # Compute today_weights_map for regular portfolios
-                            today_weights_map = {}
-                            try:
-                                alloc_dates = sorted(list(historical_allocations.keys()))
-                                if alloc_dates:
-                                    final_d = alloc_dates[-1]
-                                    metrics_local = historical_metrics
-                                    
-                                    # Check if momentum is used for this portfolio
-                                    use_momentum = cfg.get('use_momentum', True)
-                                    
-                                    if final_d in metrics_local:
-                                        if use_momentum:
-                                            # Extract Calculated_Weight if present (momentum-based)
-                                            weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
-                                            # Normalize (ensure sums to 1 excluding CASH)
-                                            sumw = sum(w for k, w in weights.items() if k != 'CASH')
-                                            if sumw > 0:
-                                                norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
-                                            else:
-                                                norm = weights
-                                            today_weights_map = norm
+                            alloc_dates = sorted(list(historical_allocations.keys()))
+                            if alloc_dates:
+                                final_d = alloc_dates[-1]
+                                metrics_local = historical_metrics
+                                
+                                # Check if momentum is used for this portfolio
+                                use_momentum = cfg.get('use_momentum', True)
+                                
+                                if final_d in metrics_local:
+                                    if use_momentum:
+                                        # Extract Calculated_Weight if present (momentum-based)
+                                        weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
+                                        # Normalize (ensure sums to 1 excluding CASH)
+                                        sumw = sum(w for k, w in weights.items() if k != 'CASH')
+                                        if sumw > 0:
+                                            norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
                                         else:
-                                            # Use user-defined allocations from portfolio config
-                                            today_weights_map = {}
-                                            for stock in cfg.get('stocks', []):
-                                                ticker = stock.get('ticker', '').strip()
-                                                if ticker:
-                                                    today_weights_map[ticker] = stock.get('allocation', 0)
-                                            # Add CASH if needed
-                                            total_alloc = sum(today_weights_map.values())
-                                            if total_alloc < 1.0:
-                                                today_weights_map['CASH'] = 1.0 - total_alloc
-                                            else:
-                                                today_weights_map['CASH'] = 0
-                                    else:
-                                        # Fallback: use allocation snapshot at final date
-                                        final_alloc = historical_allocations.get(final_d, {})
-                                        noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
-                                        s = sum(noncash.values())
-                                        if s > 0:
-                                            norm = {k: (v / s) for k, v in noncash.items()}
-                                            norm['CASH'] = final_alloc.get('CASH', 0)
-                                        else:
-                                            norm = final_alloc
+                                            norm = weights
                                         today_weights_map = norm
-                            except Exception as e:
-                                # If computation fails, use user-defined allocations as fallback
-                                today_weights_map = {}
-                                for stock in cfg.get('stocks', []):
-                                    ticker = stock.get('ticker', '').strip()
-                                    if ticker:
-                                        today_weights_map[ticker] = stock.get('allocation', 0)
-                                # Add CASH if needed
-                                total_alloc = sum(today_weights_map.values())
-                                if total_alloc < 1.0:
-                                    today_weights_map['CASH'] = 1.0 - total_alloc
+                                    else:
+                                        # Use user-defined allocations from portfolio config
+                                        today_weights_map = {}
+                                        for stock in cfg.get('stocks', []):
+                                            ticker = stock.get('ticker', '').strip()
+                                            if ticker:
+                                                today_weights_map[ticker] = stock.get('allocation', 0)
+                                        # Add CASH if needed
+                                        total_alloc = sum(today_weights_map.values())
+                                        if total_alloc < 1.0:
+                                            today_weights_map['CASH'] = 1.0 - total_alloc
+                                        else:
+                                            today_weights_map['CASH'] = 0
                                 else:
-                                    today_weights_map['CASH'] = 0
-                            
-                            if total_series is not None and len(total_series) > 0:
-                                
-                                # Store results in simplified format
-                                all_results[unique_name] = {
-                                    'no_additions': total_series_no_additions,
-                                    'with_additions': total_series,
-                                    'today_weights_map': today_weights_map
-                                }
-                                
-                                all_allocations[unique_name] = historical_allocations
-                                all_metrics[unique_name] = historical_metrics
-                                
-                                # --- CASH FLOW LOGIC FOR MWRR (stored for later calculation) ---
-                                # Track cash flows as pandas Series indexed by date
-                                cash_flows = pd.Series(0.0, index=total_series.index)
-                                # Initial investment: negative cash flow on first date
-                                if len(total_series.index) > 0:
-                                    cash_flows.iloc[0] = -cfg.get('initial_value', 0)
-                                # Periodic additions: negative cash flow on their respective dates
-                                dates_added = get_dates_by_freq(cfg.get('added_frequency'), total_series.index[0], total_series.index[-1], total_series.index)
-                                for d in dates_added:
-                                    if d in cash_flows.index and d != cash_flows.index[0]:
-                                        cash_flows.loc[d] -= cfg.get('added_amount', 0)
-                                # Final value: positive cash flow on last date for MWRR
-                                if len(total_series.index) > 0:
-                                    cash_flows.iloc[-1] += total_series.iloc[-1]
-                                
-                                # Store cash flows and portfolio values for MWRR calculation after all portfolios are processed
-                                all_results[unique_name]['cash_flows'] = cash_flows
-                                all_results[unique_name]['portfolio_values'] = total_series
-                                
-                                # Remember mapping from portfolio index (0-based) to unique key
-                                portfolio_key_map[i-1] = unique_name
-                                
-                                successful_portfolios += 1
-                                
-                                # Memory cleanup every 20 portfolios
-                                if successful_portfolios % 20 == 0:
-                                    import gc
-                                    gc.collect()
-                                    
-                            else:
-                                failed_portfolios.append((name, "Empty results from backtest"))
-                                st.warning(f"⚠️ Portfolio {name} failed: Empty results from backtest")
-                                
+                                    # Fallback: use allocation snapshot at final date
+                                    final_alloc = historical_allocations.get(final_d, {})
+                                    noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
+                                    s = sum(noncash.values())
+                                    if s > 0:
+                                        norm = {k: (v / s) for k, v in noncash.items()}
+                                        norm['CASH'] = final_alloc.get('CASH', 0)
+                                    else:
+                                        norm = final_alloc
+                                        today_weights_map = norm
                         except Exception as e:
-                            failed_portfolios.append((cfg.get('name', f'Portfolio {i}'), str(e)))
-                            st.warning(f"⚠️ Portfolio {cfg.get('name', f'Portfolio {i}')} failed: {str(e)}")
-                            continue
+                            # If computation fails, use user-defined allocations as fallback
+                            today_weights_map = {}
+                            for stock in cfg.get('stocks', []):
+                                ticker = stock.get('ticker', '').strip()
+                                if ticker:
+                                    today_weights_map[ticker] = stock.get('allocation', 0)
+                            # Add CASH if needed
+                            total_alloc = sum(today_weights_map.values())
+                            if total_alloc < 1.0:
+                                today_weights_map['CASH'] = 1.0 - total_alloc
+                            else:
+                                today_weights_map['CASH'] = 0
+                        
+                        if total_series is not None and len(total_series) > 0:
+                            # Prepare results for this portfolio
+                            result = {
+                                'index': i-1,  # 0-based index for mapping
+                                'name': name,
+                            'success': True,
+                                'no_additions': total_series_no_additions,
+                                'with_additions': total_series,
+                                'today_weights_map': today_weights_map,
+                            'historical_allocations': historical_allocations,
+                                'historical_metrics': historical_metrics
+                            }
+                            
+                            # --- CASH FLOW LOGIC FOR MWRR (stored for later calculation) ---
+                            # Track cash flows as pandas Series indexed by date
+                            cash_flows = pd.Series(0.0, index=total_series.index)
+                            # Initial investment: negative cash flow on first date
+                            if len(total_series.index) > 0:
+                                cash_flows.iloc[0] = -cfg.get('initial_value', 0)
+                            # Periodic additions: negative cash flow on their respective dates
+                            dates_added = get_dates_by_freq(cfg.get('added_frequency'), total_series.index[0], total_series.index[-1], total_series.index)
+                            for d in dates_added:
+                                if d in cash_flows.index and d != cash_flows.index[0]:
+                                    cash_flows.loc[d] -= cfg.get('added_amount', 0)
+                            # Final value: positive cash flow on last date for MWRR
+                            if len(total_series.index) > 0:
+                                cash_flows.iloc[-1] += total_series.iloc[-1]
+                            
+                            # Store cash flows and portfolio values for MWRR calculation
+                            result['cash_flows'] = cash_flows
+                            result['portfolio_values'] = total_series
+                            
+                            return result
+                        else:
+                            return {
+                                'index': i-1,
+                                'name': name,
+                                'success': False,
+                                'error': "Empty results from backtest"
+                            }
+                            
+                    except Exception as e:
+                        return {
+                            'index': i-1,
+                            'name': cfg.get('name', f'Portfolio {i}'),
+                            'success': False,
+                            'error': str(e)
+                        }
                 
-                # Step 3: Process fusion portfolios LAST (after all individual portfolios are done)
-                if fusion_portfolios:
-                    status_container.info(f"🚀 **Phase 2: Processing {len(fusion_portfolios)} fusion portfolios...**")
-                    
-                    # Step 3a: Resolve fusion dependencies (fusion-of-fusion support)
-                    def resolve_fusion_dependencies(fusion_list):
-                        """Resolve dependencies between fusion portfolios"""
-                        resolved = []
-                        remaining = fusion_list.copy()
+                def process_single_fusion_portfolio(args):
+                    """Process a single fusion portfolio - runs after regular portfolios are complete"""
+                    i, cfg, all_configs = args
+                    try:
+                        name = cfg.get('name', f'Portfolio {i}')
                         
-                        while remaining:
-                            # Find fusion portfolios that can be processed (all dependencies are resolved)
-                            ready_to_process = []
-                            for i, (original_index, cfg) in enumerate(remaining):
-                                fusion_config = cfg.get('fusion_portfolio', {})
-                                selected_portfolios = fusion_config.get('selected_portfolios', [])
+                        # Debug: Check if all_configs is available
+                        if not all_configs:
+                            return {
+                                'index': i-1,
+                                'name': name,
+                                'success': False,
+                                'error': "No portfolio configs available for fusion portfolio"
+                            }
+                        
+                        # Run fusion portfolio backtest - pass the entire fusion portfolio config
+                        total_series, total_series_no_additions, historical_allocations, historical_metrics, today_weights_map, current_alloc, current_weights_map = fusion_portfolio_backtest(
+                            cfg, all_configs, simulation_index, data_reindexed
+                        )
+                        
+                        if total_series is not None and len(total_series) > 0:
+                            # Prepare results for this portfolio
+                            result = {
+                                'index': i-1,  # 0-based index for mapping
+                                'name': name,
+                            'success': True,
+                                'no_additions': total_series_no_additions,
+                                'with_additions': total_series,
+                                'today_weights_map': today_weights_map,
+                            'historical_allocations': historical_allocations,
+                            'historical_metrics': historical_metrics,
+                                'current_alloc': current_alloc,
+                                'current_weights_map': current_weights_map
+                            }
+                            
+                            # --- CASH FLOW LOGIC FOR MWRR (stored for later calculation) ---
+                            # Track cash flows as pandas Series indexed by date
+                            cash_flows = pd.Series(0.0, index=total_series.index)
+                            # Initial investment: negative cash flow on first date
+                            if len(total_series.index) > 0:
+                                cash_flows.iloc[0] = -cfg.get('initial_value', 0)
+                            # Periodic additions: negative cash flow on their respective dates
+                            dates_added = get_dates_by_freq(cfg.get('added_frequency'), total_series.index[0], total_series.index[-1], total_series.index)
+                            for d in dates_added:
+                                if d in cash_flows.index and d != cash_flows.index[0]:
+                                    cash_flows.loc[d] -= cfg.get('added_amount', 0)
+                            # Final value: positive cash flow on last date for MWRR
+                            if len(total_series.index) > 0:
+                                cash_flows.iloc[-1] += total_series.iloc[-1]
+                            
+                            # Store cash flows and portfolio values for MWRR calculation
+                            result['cash_flows'] = cash_flows
+                            result['portfolio_values'] = total_series
+                            
+                            return result
+                        else:
+                            return {
+                                'index': i-1,
+                                'name': name,
+                                'success': False,
+                                'error': "Empty results from fusion backtest"
+                            }
+                            
+                    except Exception as e:
+                        return {
+                            'index': i-1,
+                            'name': cfg.get('name', f'Portfolio {i}'),
+                            'success': False,
+                            'error': str(e)
+                        }
+                
+                # Determine number of workers (use CPU count but cap at 8 for stability)
+                import os
+                max_workers = min(8, os.cpu_count() or 4)
+                
+                # For very large datasets, reduce workers to avoid memory issues
+                total_portfolios = len(regular_portfolios) + len(fusion_portfolios)
+                if total_portfolios > 20:
+                    max_workers = min(4, max_workers)
+                elif total_portfolios > 50:
+                    max_workers = min(2, max_workers)
+                
+                # PHASE 1: Process regular portfolios first
+                if regular_portfolios:
+                    processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and len(regular_portfolios) > 1 else "sequential"
+                    worker_info = f" using {max_workers} workers" if processing_mode == "parallel" else ""
+                    st.info(f"🚀 **Phase 1: Processing {len(regular_portfolios)} regular portfolios in {processing_mode} mode{worker_info}...**")
+                    
+                    if st.session_state.get('use_parallel_processing', True) and len(regular_portfolios) > 1:
+                        # Process regular portfolios in parallel
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                            # Submit all regular portfolio tasks
+                            future_to_index = {executor.submit(process_single_regular_portfolio, args): args[0] for args in regular_portfolios}
+                            
+                            # Collect results as they complete
+                            completed_count = 0
+                            for future in concurrent.futures.as_completed(future_to_index):
+                                completed_count += 1
+                                progress_percent = completed_count / len(regular_portfolios)
+                                progress_bar.progress(progress_percent, text=f"Phase 1: Completed {completed_count}/{len(regular_portfolios)} regular portfolios...")
                                 
-                                # Check if all selected portfolios are already processed
-                                all_dependencies_ready = True
-                                for dep_name in selected_portfolios:
-                                    # Check if dependency is in resolved individual portfolios
-                                    dep_found = False
-                                    for _, resolved_cfg in resolved:
-                                        if resolved_cfg.get('name') == dep_name:
-                                            dep_found = True
-                                            break
-                                    # Check if dependency is in already processed fusion portfolios
-                                    if not dep_found:
-                                        for _, resolved_cfg in resolved:
-                                            if resolved_cfg.get('name') == dep_name:
-                                                dep_found = True
-                                                break
-                                    # Check if dependency is in individual portfolios
-                                    if not dep_found:
-                                        for _, ind_cfg in individual_portfolios:
-                                            if ind_cfg.get('name') == dep_name:
-                                                dep_found = True
-                                                break
+                                result = future.result()
+                                
+                                if result['success']:
+                                    # Ensure unique key for storage
+                                    base_name = result['name']
+                                    unique_name = base_name
+                                    suffix = 1
+                                    while unique_name in all_results or unique_name in all_allocations:
+                                        unique_name = f"{base_name} ({suffix})"
+                                        suffix += 1
                                     
-                                    if not dep_found:
-                                        all_dependencies_ready = False
-                                        break
+                                    # Store results
+                                    all_results[unique_name] = {
+                                        'no_additions': result['no_additions'],
+                                        'with_additions': result['with_additions'],
+                                        'today_weights_map': result['today_weights_map'],
+                                        'cash_flows': result['cash_flows'],
+                                        'portfolio_values': result['portfolio_values']
+                                    }
+                                    
+                                    all_allocations[unique_name] = result['historical_allocations']
+                                    all_metrics[unique_name] = result['historical_metrics']
+                                    portfolio_key_map[result['index']] = unique_name
+                                    successful_portfolios += 1
+                                else:
+                                    failed_portfolios.append((result['name'], result['error']))
+                                    st.warning(f"⚠️ Regular Portfolio {result['name']} failed: {result['error']}")
+                    else:
+                        # Process regular portfolios sequentially
+                        for i, args in enumerate(regular_portfolios, start=1):
+                            progress_percent = i / len(regular_portfolios)
+                            progress_bar.progress(progress_percent, text=f"Phase 1: Processing regular portfolio {i}/{len(regular_portfolios)}: {args[1].get('name', f'Portfolio {i}')}")
+                            
+                            result = process_single_regular_portfolio(args)
+                            
+                            if result['success']:
+                                # Ensure unique key for storage
+                                base_name = result['name']
+                                unique_name = base_name
+                                suffix = 1
+                                while unique_name in all_results or unique_name in all_allocations:
+                                    unique_name = f"{base_name} ({suffix})"
+                                    suffix += 1
                                 
-                                if all_dependencies_ready:
-                                    ready_to_process.append((original_index, cfg))
-                            
-                            if not ready_to_process:
-                                # If no fusion portfolios can be processed, there's a circular dependency
-                                st.error("❌ **Circular dependency detected in fusion portfolios!** Cannot resolve dependencies.")
-                                break
-                            
-                            # Process ready fusion portfolios and remove them from remaining
-                            for original_index, cfg in ready_to_process:
-                                resolved.append((original_index, cfg))
-                                # Remove from remaining list by finding the matching item
-                                remaining = [(orig_idx, cfg_item) for orig_idx, cfg_item in remaining 
-                                          if not (orig_idx == original_index and cfg_item == cfg)]
-                        
-                        return resolved
-                    
-                    # Resolve fusion dependencies
-                    resolved_fusion_portfolios = resolve_fusion_dependencies(fusion_portfolios)
-                    
-                    for i, (original_index, cfg) in enumerate(resolved_fusion_portfolios, start=1):
-                        try:
-                            # Update progress for fusion portfolios
-                            progress_percent = i / len(resolved_fusion_portfolios)
-                            progress_bar.progress(progress_percent, text=f"Phase 2 - Fusion: {i}/{len(resolved_fusion_portfolios)}: {cfg.get('name', f'Portfolio {i}')}")
-                            
-                            name = cfg.get('name', f'Portfolio {i}')
-                            
-                            # Ensure unique key for storage
-                            base_name = name
-                            unique_name = base_name
-                            suffix = 1
-                            while unique_name in all_results or unique_name in all_allocations:
-                                unique_name = f"{base_name} ({suffix})"
-                                suffix += 1
-                            
-                            # Run fusion portfolio backtest - pass the entire fusion portfolio config
-                            total_series, total_series_no_additions, historical_allocations, historical_metrics, today_weights_map, current_alloc, current_weights_map = fusion_portfolio_backtest(
-                                cfg, st.session_state.multi_backtest_portfolio_configs, simulation_index, data_reindexed
-                            )
-                            
-                            if total_series is not None and len(total_series) > 0:
-                                # Store results in simplified format
+                                # Store results
                                 all_results[unique_name] = {
-                                    'no_additions': total_series_no_additions,
-                                    'with_additions': total_series,
-                                    'today_weights_map': today_weights_map,
-                                    'current_alloc': current_alloc,
-                                    'current_weights_map': current_weights_map
+                                    'no_additions': result['no_additions'],
+                                    'with_additions': result['with_additions'],
+                                    'today_weights_map': result['today_weights_map'],
+                                    'cash_flows': result['cash_flows'],
+                                    'portfolio_values': result['portfolio_values']
                                 }
-                                all_allocations[unique_name] = historical_allocations
-                                all_metrics[unique_name] = historical_metrics
                                 
-                                # --- CASH FLOW LOGIC FOR MWRR (stored for later calculation) ---
-                                # Track cash flows as pandas Series indexed by date
-                                cash_flows = pd.Series(0.0, index=total_series.index)
-                                # Initial investment: negative cash flow on first date
-                                if len(total_series.index) > 0:
-                                    cash_flows.iloc[0] = -cfg.get('initial_value', 0)
-                                # Periodic additions: negative cash flow on their respective dates
-                                dates_added = get_dates_by_freq(cfg.get('added_frequency'), total_series.index[0], total_series.index[-1], total_series.index)
-                                for d in dates_added:
-                                    if d in cash_flows.index and d != cash_flows.index[0]:
-                                        cash_flows.loc[d] -= cfg.get('added_amount', 0)
-                                # Final value: positive cash flow on last date for MWRR
-                                if len(total_series.index) > 0:
-                                    cash_flows.iloc[-1] += total_series.iloc[-1]
-                                
-                                # Store cash flows and portfolio values for MWRR calculation after all portfolios are processed
-                                all_results[unique_name]['cash_flows'] = cash_flows
-                                all_results[unique_name]['portfolio_values'] = total_series
-                                
-                                # Remember mapping from portfolio index (0-based) to unique key
-                                portfolio_key_map[original_index] = unique_name
-                                
+                                all_allocations[unique_name] = result['historical_allocations']
+                                all_metrics[unique_name] = result['historical_metrics']
+                                portfolio_key_map[result['index']] = unique_name
                                 successful_portfolios += 1
-                                
-                                # Memory cleanup every 20 portfolios
-                                if successful_portfolios % 20 == 0:
-                                    import gc
-                                    gc.collect()
-                                    
                             else:
-                                failed_portfolios.append((name, "Empty results from fusion backtest"))
-                                st.warning(f"⚠️ Fusion Portfolio {name} failed: Empty results from fusion backtest")
+                                failed_portfolios.append((result['name'], result['error']))
+                                st.warning(f"⚠️ Regular Portfolio {result['name']} failed: {result['error']}")
+                
+                # PHASE 2: Process fusion portfolios after regular portfolios are complete
+                if fusion_portfolios:
+                    processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and len(fusion_portfolios) > 1 else "sequential"
+                    worker_info = f" using {max_workers} workers" if processing_mode == "parallel" else ""
+                    st.info(f"🚀 **Phase 2: Processing {len(fusion_portfolios)} fusion portfolios in {processing_mode} mode{worker_info} (depends on regular portfolios)...**")
+                    
+                    if st.session_state.get('use_parallel_processing', True) and len(fusion_portfolios) > 1:
+                        # Process fusion portfolios in parallel
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                            # Submit all fusion portfolio tasks - pass all configs for fusion dependencies
+                            fusion_args = [(i, cfg, st.session_state.multi_backtest_portfolio_configs) for i, cfg in fusion_portfolios]
+                            future_to_index = {executor.submit(process_single_fusion_portfolio, args): args[0] for args in fusion_args}
+                            
+                            # Collect results as they complete
+                            completed_count = 0
+                            for future in concurrent.futures.as_completed(future_to_index):
+                                completed_count += 1
+                                progress_percent = completed_count / len(fusion_portfolios)
+                                progress_bar.progress(progress_percent, text=f"Phase 2: Completed {completed_count}/{len(fusion_portfolios)} fusion portfolios...")
                                 
-                        except Exception as e:
-                            failed_portfolios.append((cfg.get('name', f'Portfolio {i}'), str(e)))
-                            st.warning(f"⚠️ Fusion Portfolio {cfg.get('name', f'Portfolio {i}')} failed: {str(e)}")
-                        continue
+                                result = future.result()
+                                
+                                if result['success']:
+                                    # Ensure unique key for storage
+                                    base_name = result['name']
+                                    unique_name = base_name
+                                    suffix = 1
+                                    while unique_name in all_results or unique_name in all_allocations:
+                                        unique_name = f"{base_name} ({suffix})"
+                                        suffix += 1
+                                    
+                                    # Store results
+                                    all_results[unique_name] = {
+                                        'no_additions': result['no_additions'],
+                                        'with_additions': result['with_additions'],
+                                        'today_weights_map': result['today_weights_map'],
+                                        'cash_flows': result['cash_flows'],
+                                        'portfolio_values': result['portfolio_values'],
+                                        'current_alloc': result['current_alloc'],
+                                        'current_weights_map': result['current_weights_map']
+                                    }
+                                    
+                                    all_allocations[unique_name] = result['historical_allocations']
+                                    all_metrics[unique_name] = result['historical_metrics']
+                                    portfolio_key_map[result['index']] = unique_name
+                                    successful_portfolios += 1
+                                else:
+                                    failed_portfolios.append((result['name'], result['error']))
+                                    st.warning(f"⚠️ Fusion Portfolio {result['name']} failed: {result['error']}")
+                    else:
+                        # Process fusion portfolios sequentially
+                        for i, args in enumerate(fusion_portfolios, start=1):
+                            progress_percent = i / len(fusion_portfolios)
+                            progress_bar.progress(progress_percent, text=f"Phase 2: Processing fusion portfolio {i}/{len(fusion_portfolios)}: {args[1].get('name', f'Portfolio {i}')}")
+                            
+                            # Add all configs for fusion dependencies
+                            fusion_args = (args[0], args[1], st.session_state.multi_backtest_portfolio_configs)
+                            result = process_single_fusion_portfolio(fusion_args)
+                            
+                            if result['success']:
+                                # Ensure unique key for storage
+                                base_name = result['name']
+                                unique_name = base_name
+                                suffix = 1
+                                while unique_name in all_results or unique_name in all_allocations:
+                                    unique_name = f"{base_name} ({suffix})"
+                                    suffix += 1
+                                
+                                # Store results
+                                all_results[unique_name] = {
+                                    'no_additions': result['no_additions'],
+                                    'with_additions': result['with_additions'],
+                                    'today_weights_map': result['today_weights_map'],
+                                    'cash_flows': result['cash_flows'],
+                                    'portfolio_values': result['portfolio_values'],
+                                    'current_alloc': result['current_alloc'],
+                                    'current_weights_map': result['current_weights_map']
+                                }
+                                
+                                all_allocations[unique_name] = result['historical_allocations']
+                                all_metrics[unique_name] = result['historical_metrics']
+                                portfolio_key_map[result['index']] = unique_name
+                            successful_portfolios += 1
+                        else:
+                                failed_portfolios.append((result['name'], result['error']))
+                                st.warning(f"⚠️ Fusion Portfolio {result['name']} failed: {result['error']}")
                 
                 # Final progress update
                 progress_bar.progress(1.0, text="Portfolio processing completed!")
                 
-                # Clear temporary status messages
-                status_container.empty()
+                # Calculate and display performance metrics
+                end_time = time.time()
+                total_time = end_time - start_time
+                avg_time_per_portfolio = total_time / len(st.session_state.multi_backtest_portfolio_configs) if st.session_state.multi_backtest_portfolio_configs else 0
                 
-                # Show results summary
+                # Show results summary with performance info
                 if successful_portfolios > 0:
-                    st.success(f"🎉 **Successfully processed {successful_portfolios}/{len(st.session_state.multi_backtest_portfolio_configs)} portfolios!**")
+                    processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and total_portfolios > 1 else "sequential"
+                    phase_info = f" (Phase 1: {len(regular_portfolios)} regular, Phase 2: {len(fusion_portfolios)} fusion)" if fusion_portfolios else f" ({len(regular_portfolios)} regular portfolios only)"
+                    st.success(f"🎉 **Successfully processed {successful_portfolios}/{len(st.session_state.multi_backtest_portfolio_configs)} portfolios in {processing_mode} mode{phase_info}!**")
+                    st.info(f"⏱️ **Performance:** Total time: {total_time:.2f}s | Average per portfolio: {avg_time_per_portfolio:.2f}s | Mode: {processing_mode.upper()}")
                     if failed_portfolios:
                         st.warning(f"⚠️ **{len(failed_portfolios)} portfolios failed** - check warnings above for details")
                 else:
@@ -10839,7 +10969,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 help='Choose which portfolio to inspect in detail', 
                 label_visibility='collapsed',
                 on_change=update_selected_portfolio,
-                format_func=lambda x: x  # Display full names without truncation
+                # Add format_func to handle long names better
+                format_func=lambda x: x[:60] + "..." if len(x) > 60 else x
             )
             # Add a prominent view button with a professional color
             view_clicked = st.button("View Details", key='view_details_btn')
@@ -11029,14 +11160,14 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 if not cash_exists:
                                     # Add CASH line to metrics
                                     use_momentum = portfolio_cfg.get('use_momentum', True) if portfolio_cfg else True
-                                
-                                if not use_momentum:
-                                    # When momentum is not used, calculate CASH allocation from entered allocations
-                                    total_alloc = sum(stock.get('allocation', 0) for stock in portfolio_cfg.get('stocks', []))
-                                    cash_weight = max(0, 1.0 - total_alloc)
-                                    cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': cash_weight}
-                                    metrics_records.append(cash_record)
-                                # For momentum portfolios, do NOT add CASH - let momentum strategy determine allocations
+                                    
+                                    if not use_momentum:
+                                        # When momentum is not used, calculate CASH allocation from entered allocations
+                                        total_alloc = sum(stock.get('allocation', 0) for stock in portfolio_cfg.get('stocks', []))
+                                        cash_weight = max(0, 1.0 - total_alloc)
+                                        cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': cash_weight}
+                                        metrics_records.append(cash_record)
+                                    # For momentum portfolios, do NOT add CASH - let momentum strategy determine allocations
                     
                     # Add CASH line if fully allocated to cash (100%) or all asset weights are 0% (fallback logic)
                     cash_line_needed = False
@@ -11051,7 +11182,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         # If no explicit CASH data, create a default line
                         cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': 1.0}
                         metrics_records.append(cash_record)
-
+                
                 if metrics_records:
                     metrics_df = pd.DataFrame(metrics_records)
                     
@@ -12248,16 +12379,16 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 if not cash_exists:
                                     # Add CASH line to metrics
                                     use_momentum = portfolio_cfg.get('use_momentum', True) if portfolio_cfg else True
-                                
-                                if not use_momentum:
-                                    # When momentum is not used, calculate CASH allocation from entered allocations
-                                    total_alloc = sum(stock.get('allocation', 0) for stock in portfolio_cfg.get('stocks', []))
-                                    cash_weight = max(0, 1.0 - total_alloc)
-                                    cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': cash_weight}
-                                else:
-                                    # For momentum portfolios, only add CASH if the momentum strategy actually allocated to cash
-                                    cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': cash_alloc}
-                                metrics_records.append(cash_record)
+                                    
+                                    if not use_momentum:
+                                        # When momentum is not used, calculate CASH allocation from entered allocations
+                                        total_alloc = sum(stock.get('allocation', 0) for stock in portfolio_cfg.get('stocks', []))
+                                        cash_weight = max(0, 1.0 - total_alloc)
+                                        cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': cash_weight}
+                                    else:
+                                        # For momentum portfolios, only add CASH if the momentum strategy actually allocated to cash
+                                        cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': cash_alloc}
+                                    metrics_records.append(cash_record)
                     
                     # Add CASH line if fully allocated to cash (100%) or all asset weights are 0% (fallback logic)
                     cash_line_needed = False
@@ -12269,6 +12400,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     if all(w == 0 for w in asset_weights) and asset_weights:
                         cash_line_needed = True
                     if cash_line_needed and 'CASH' not in [r['Ticker'] for r in metrics_records if r['Date'] == date]:
+                        # If no explicit CASH data, create a default line
                         # If no explicit CASH data, create a default line
                         cash_record = {'Date': date, 'Ticker': 'CASH', 'Calculated_Weight': 1.0}
                         metrics_records.append(cash_record)
