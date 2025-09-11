@@ -33,7 +33,7 @@ def parse_leverage_ticker(ticker_symbol: str) -> tuple[str, float]:
     Parse ticker symbol to extract base ticker and leverage multiplier.
     
     Args:
-        ticker_symbol: Ticker symbol, potentially with leverage (e.g., "SPY?L=3")
+        ticker_symbol: Ticker symbol, potentially with leverage (e.g., "SPY?L=3" or "SPY?E=3")
         
     Returns:
         tuple: (base_ticker, leverage_multiplier)
@@ -41,8 +41,12 @@ def parse_leverage_ticker(ticker_symbol: str) -> tuple[str, float]:
     Examples:
         "SPY" -> ("SPY", 1.0)
         "SPY?L=3" -> ("SPY", 3.0)
-        "QQQ?L=2" -> ("QQQ", 2.0)
+        "QQQ?E=2" -> ("QQQ", 2.0)
+        "QQQ?E=1,4" -> ("QQQ", 1.4)  # Handles comma decimal separator
     """
+    # Convert comma decimal separators to dots for proper parsing
+    ticker_symbol = ticker_symbol.replace(",", ".")
+    
     if "?L=" in ticker_symbol:
         try:
             base_ticker, leverage_part = ticker_symbol.split("?L=", 1)
@@ -55,6 +59,18 @@ def parse_leverage_ticker(ticker_symbol: str) -> tuple[str, float]:
             return base_ticker.strip(), leverage
         except (ValueError, IndexError) as e:
             raise ValueError(f"Invalid leverage format in ticker '{ticker_symbol}'. Use format: TICKER?L=NUMBER (e.g., SPY?L=3)")
+    elif "?E=" in ticker_symbol:
+        try:
+            base_ticker, leverage_part = ticker_symbol.split("?E=", 1)
+            leverage = float(leverage_part)
+            
+            # Validate leverage range (reasonable bounds for leveraged ETFs)
+            if leverage < 0.1 or leverage > 10.0:
+                raise ValueError(f"Leverage {leverage} is outside reasonable range (0.1-10.0)")
+                
+            return base_ticker.strip(), leverage
+        except (ValueError, IndexError) as e:
+            raise ValueError(f"Invalid leverage format in ticker '{ticker_symbol}'. Use format: TICKER?E=NUMBER (e.g., SPY?E=3)")
     else:
         return ticker_symbol.strip(), 1.0
 
@@ -1595,7 +1611,7 @@ def run_backtest(
     # CRITICAL FIX: Add base tickers for leveraged tickers to ensure dividend data is available
     base_tickers_to_add = set()
     for ticker in all_tickers_to_fetch:
-        if "?L=" in ticker:
+        if "?L=" in ticker or "?E=" in ticker:
             base_ticker, leverage = parse_leverage_ticker(ticker)
             base_tickers_to_add.add(base_ticker)
     
@@ -1818,7 +1834,7 @@ def run_backtest(
                 if price > 0 and dividend > 0 and include_dividends.get(t, False):
                     # CRITICAL FIX: For leveraged tickers, dividends should be handled differently
                     # The dividend RATE should be the same as the base asset
-                    if "?L=" in t:
+                    if "?L=" in t or "?E=" in t:
                         # For leveraged tickers, get the base ticker's dividend rate (not amount)
                         base_ticker, leverage = parse_leverage_ticker(t)
                         if base_ticker in data:
@@ -2996,15 +3012,21 @@ def remove_ticker_callback(ticker: str):
         pass
 
 def update_ticker_callback(index: int):
-    """Callback for ticker input to convert to uppercase"""
+    """Callback for ticker input to convert commas to dots and to uppercase"""
     try:
         key = f"ticker_{index}"
         val = st.session_state.get(key, None)
         if val is not None:
+            # Convert commas to dots for decimal separators (like case conversion)
+            converted_val = val.replace(",", ".")
+            
             # Convert the input value to uppercase
-            upper_val = val.upper()
+            upper_val = converted_val.upper()
+            
+            # Update the portfolio configuration with the uppercase value
             st.session_state.tickers[index] = upper_val
-            # Update the text box's state to show the uppercase value
+            
+            # Update the text box's state to show the converted value (with dots and uppercase)
             st.session_state[key] = upper_val
     except Exception:
         # Defensive: if index is out of range, skip silently
@@ -4134,7 +4156,7 @@ with st.sidebar:
     
     benchmark_ticker = st.text_input(
                         "Benchmark Ticker (default: ^GSPC, used for beta calculation)", value=default_benchmark
-    ).upper()
+    ).replace(",", ".").upper()
 
 
 
