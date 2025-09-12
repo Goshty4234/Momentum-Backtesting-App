@@ -6218,10 +6218,10 @@ if len(st.session_state.multi_backtest_portfolio_configs) >= 2:
                                 allocations[name] = allocations[name] / total * 100.0
                         
                         # Generate descriptive default name based on allocations
-                        def generate_fusion_name(allocations_dict):
+                        def generate_fusion_name(allocations_dict, rebalancing_freq="Monthly"):
                             """Generate a descriptive fusion portfolio name based on allocations"""
                             if not allocations_dict:
-                                return f"Fusion {len(existing_fusion_portfolios) + 1}"
+                                return f"Fusion {len(existing_fusion_portfolios) + 1} ({rebalancing_freq})"
                             
                             # Sort by allocation percentage (descending)
                             sorted_allocs = sorted(allocations_dict.items(), key=lambda x: x[1], reverse=True)
@@ -6233,17 +6233,11 @@ if len(st.session_state.multi_backtest_portfolio_configs) >= 2:
                                     name_parts.append(f"{portfolio_name} {percentage:.0f}%")
                             
                             if name_parts:
-                                return f"Fusion Portfolio {' '.join(name_parts)}"
+                                return f"Fusion Portfolio {' '.join(name_parts)} ({rebalancing_freq})"
                             else:
-                                return f"Fusion {len(existing_fusion_portfolios) + 1}"
+                                return f"Fusion {len(existing_fusion_portfolios) + 1} ({rebalancing_freq})"
                         
-                        # Portfolio name
-                        default_name = generate_fusion_name(allocations)
-                        fusion_name = st.text_input(
-                            "Fusion Name",
-                            value=default_name,
-                            key="fusion_name_input"
-                        )
+                        # Portfolio name will be generated after frequency selection
                         
                         
                         # Fusion portfolio has its own independent rebalancing frequency
@@ -6265,6 +6259,14 @@ if len(st.session_state.multi_backtest_portfolio_configs) >= 2:
                         
                         # Update session state
                         st.session_state["fusion_rebalancing_frequency"] = fusion_rebalancing_frequency
+                        
+                        # Portfolio name (generated after rebalancing frequency is selected)
+                        default_name = generate_fusion_name(allocations, fusion_rebalancing_frequency)
+                        fusion_name = st.text_input(
+                            "Fusion Name",
+                            value=default_name,
+                            key="fusion_name_input"
+                        )
                         
                         # Information about independent rebalancing
                         st.info(f"""
