@@ -4399,7 +4399,7 @@ if active_portfolio['use_momentum']:
 
     with col_beta_vol:
         if "alloc_active_calc_beta" not in st.session_state:
-            st.session_state["alloc_active_calc_beta"] = active_portfolio.get('calc_beta', True)
+            st.session_state["alloc_active_calc_beta"] = active_portfolio.get('calc_beta', False)
         st.checkbox("Include Beta in momentum weighting", key="alloc_active_calc_beta", on_change=update_calc_beta, help="Incorporates a stock's Beta (volatility relative to the benchmark) into its momentum score.")
         if st.session_state.get('alloc_active_calc_beta', False):
             if "alloc_active_beta_window" not in st.session_state:
@@ -4411,7 +4411,7 @@ if active_portfolio['use_momentum']:
             if st.button("Reset Beta", on_click=reset_beta_callback):
                 pass
         if "alloc_active_calc_vol" not in st.session_state:
-            st.session_state["alloc_active_calc_vol"] = active_portfolio.get('calc_volatility', True)
+            st.session_state["alloc_active_calc_vol"] = active_portfolio.get('calc_volatility', False)
         st.checkbox("Include Volatility in momentum weighting", key="alloc_active_calc_vol", on_change=update_calc_vol, help="Incorporates a stock's volatility (standard deviation of returns) into its momentum score.")
         if st.session_state.get('alloc_active_calc_vol', False):
             if "alloc_active_vol_window" not in st.session_state:
