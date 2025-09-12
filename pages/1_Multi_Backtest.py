@@ -156,7 +156,7 @@ def get_risk_free_rate_robust(dates):
     except Exception:
         return _get_default_risk_free_rate(dates)
 import contextlib
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, time
 import warnings
 import os
 import plotly.io as pio
@@ -8454,8 +8454,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability (NO CACHE)...**")
                 
                 # Start timing for performance measurement
-                import time
-                start_time = time.time()
+                import time as time_module
+                start_time = time_module.time()
                 
                 # Separate regular and fusion portfolios for two-phase processing
                 regular_portfolios = []
@@ -8839,7 +8839,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 progress_bar.progress(1.0, text="Portfolio processing completed!")
                 
                 # Calculate and display performance metrics
-                end_time = time.time()
+                end_time = time_module.time()
                 total_time = end_time - start_time
                 avg_time_per_portfolio = total_time / len(st.session_state.multi_backtest_portfolio_configs) if st.session_state.multi_backtest_portfolio_configs else 0
                 
@@ -9047,7 +9047,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                 alloc_pct = float(today_weights.get(tk, 0))
                                 if tk == 'CASH':
                                     price = None
-                                    shares = 0
+                                    shares = 0.0
                                     total_val = portfolio_value * alloc_pct
                                 else:
                                     df = raw_data.get(tk)
@@ -9066,7 +9066,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                             shares = 0.0
                                             total_val = portfolio_value * alloc_pct
                                     except Exception:
-                                        shares = 0
+                                        shares = 0.0
                                         total_val = portfolio_value * alloc_pct
 
                                 pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
@@ -11396,23 +11396,23 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         
                         # Map frequency names to what the function expects
                         frequency_mapping = {
-                            'monthly': 'Monthly',
-                            'weekly': 'Weekly',
-                            'bi-weekly': 'Biweekly',
-                            'biweekly': 'Biweekly',
-                            'quarterly': 'Quarterly',
-                            'semi-annually': 'Semiannually',
-                            'semiannually': 'Semiannually',
-                            'annually': 'Annually',
-                            'yearly': 'Annually',
+                            'monthly': 'month',
+                            'weekly': 'week',
+                            'bi-weekly': '2weeks',
+                            'biweekly': '2weeks',
+                            'quarterly': '3months',
+                            'semi-annually': '6months',
+                            'semiannually': '6months',
+                            'annually': 'year',
+                            'yearly': 'year',
                             'market_day': 'market_day',
                             'calendar_day': 'calendar_day',
-                            'never': 'Never',
-                            'none': 'Never'
+                            'never': 'none',
+                            'none': 'none'
                         }
                         rebalancing_frequency = frequency_mapping.get(rebalancing_frequency.lower(), rebalancing_frequency)
                         
-                        if rebalancing_frequency != 'Never':
+                        if rebalancing_frequency != 'none':
                             # Calculate next rebalance date using the actual last rebalance date
                             next_date, time_until, next_rebalance_datetime = calculate_next_rebalance_date(
                                 rebalancing_frequency, actual_last_rebal_date
@@ -11540,7 +11540,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                         shares = 0.0
                                         total_val = portfolio_value * alloc_pct
                                 except Exception:
-                                    shares = 0
+                                    shares = 0.0
                                     total_val = portfolio_value * alloc_pct
 
                             pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
@@ -11548,7 +11548,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 'Ticker': tk,
                                 'Allocation %': alloc_pct * 100,
                                 'Price ($)': price if price is not None else float('nan'),
-                                'Shares': shares,
+                                'Shares': float(shares) if shares is not None else 0.0,
                                 'Total Value ($)': total_val,
                                 '% of Portfolio': pct_of_port,
                             })
@@ -11662,7 +11662,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     # Get current price (same logic as target allocation table)
                                     if ticker == 'CASH':
                                         price = None
-                                        shares = 0
+                                        shares = 0.0
                                         total_val = dollar_amount
                                     else:
                                         df = raw_data.get(ticker)
@@ -11687,7 +11687,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                         'Ticker': ticker,
                                         'Allocation %': f"{allocation_percent * 100:.1f}%",
                                         'Price ($)': f"${price:.2f}" if price is not None else "N/A",
-                                        'Shares': shares,
+                                        'Shares': float(shares) if shares is not None else 0.0,
                                         'Total Value ($)': f"${total_val:,.2f}",
                                         '% of Portfolio': f"{pct_of_port:.2f}%"
                                     })
@@ -11702,7 +11702,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 total_row = {
                                     'Allocation %': '100.0%',
                                     'Price ($)': '',
-                                    'Shares': '',
+                                    'Shares': 0.0,
                                     'Total Value ($)': f"${total_invested:,.2f}",
                                     '% of Portfolio': '100.00%'
                                 }
@@ -11972,7 +11972,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     alloc_pct = float(alloc_value) if alloc_value is not None else 0.0
                                 if tk == 'CASH':
                                     price = None
-                                    shares = 0
+                                    shares = 0.0
                                     total_val = portfolio_value * alloc_pct
                                 else:
                                     df = raw_data.get(tk)
@@ -11995,7 +11995,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                             shares = 0.0
                                             total_val = portfolio_value * alloc_pct
                                     except Exception:
-                                        shares = 0
+                                        shares = 0.0
                                         total_val = portfolio_value * alloc_pct
 
                                 pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
@@ -12003,7 +12003,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     'Ticker': tk,
                                     'Allocation %': alloc_pct * 100,
                                     'Price ($)': price if price is not None else float('nan'),
-                                    'Shares': shares,
+                                    'Shares': float(shares) if shares is not None else 0.0,
                                     'Total Value ($)': total_val,
                                     '% of Portfolio': pct_of_port,
                                 })
@@ -13086,7 +13086,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                     alloc_pct = float(alloc_dict.get(tk, 0))
                                                     if tk == 'CASH':
                                                         price = None
-                                                        shares = 0
+                                                        shares = 0.0
                                                         total_val = portfolio_value * alloc_pct
                                                     else:
                                                         df = raw_data.get(tk)
@@ -13110,7 +13110,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                                 shares = 0.0
                                                                 total_val = portfolio_value * alloc_pct
                                                         except Exception:
-                                                            shares = 0
+                                                            shares = 0.0
                                                             total_val = portfolio_value * alloc_pct
 
                                                     pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
@@ -13118,7 +13118,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                         'Ticker': tk,
                                                         'Allocation %': alloc_pct * 100,
                                                         'Price ($)': price if price is not None else float('nan'),
-                                                        'Shares': shares,
+                                                        'Shares': float(shares) if shares is not None else 0.0,
                                                         'Total Value ($)': total_val,
                                                         '% of Portfolio': pct_of_port,
                                                     })
@@ -13198,7 +13198,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                     alloc_pct = float(today_weights.get(tk, 0))
                                                     if tk == 'CASH':
                                                         price = None
-                                                        shares = 0
+                                                        shares = 0.0
                                                         total_val = portfolio_value * alloc_pct
                                                     else:
                                                         df = raw_data.get(tk)
@@ -13217,7 +13217,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                                 shares = 0.0
                                                                 total_val = portfolio_value * alloc_pct
                                                         except Exception:
-                                                            shares = 0
+                                                            shares = 0.0
                                                             total_val = portfolio_value * alloc_pct
 
                                                     pct_of_port = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
@@ -13225,7 +13225,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                         'Ticker': tk,
                                                         'Allocation %': alloc_pct * 100,
                                                         'Price ($)': price if price is not None else float('nan'),
-                                                        'Shares': shares,
+                                                        'Shares': float(shares) if shares is not None else 0.0,
                                                         'Total Value ($)': total_val,
                                                         '% of Portfolio': pct_of_port,
                                                     })
