@@ -27,4 +27,4 @@ ENV STREAMLIT_SERVER_PORT=8080
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 
 # Run the application
-CMD ["streamlit", "run", "run_app.py", "--server.port=8080", "--server.address=0.0.0.0"]
+CMD ["streamlit", "run", "Backtest_Engine.py", "--server.port=8080", "--server.address=0.0.0.0"]
