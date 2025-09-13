@@ -2083,40 +2083,91 @@ def generate_simple_pdf_report(custom_name=""):
                             # Add minimal spacing after pie chart before timer section
                             story.append(Spacer(1, 5))
                             
-                            # Add Next Rebalance Timer information - simple text display
+                            # Add Next Rebalance Timer information - calculate fresh for PDF
                             story.append(Paragraph(f"Next Rebalance Timer - {portfolio_name}", subheading_style))
                             story.append(Spacer(1, 5))
                             
-                            # Try to get timer information from session state
-                            timer_table_key = f"timer_table_{portfolio_name}"
-                            if timer_table_key in st.session_state:
-                                timer_fig = st.session_state[timer_table_key]
-                                if timer_fig and hasattr(timer_fig, 'data') and timer_fig.data:
-                                    # Extract timer information from the figure data
-                                    for trace in timer_fig.data:
-                                        if trace.type == 'table' and hasattr(trace, 'cells') and trace.cells:
-                                            cell_values = trace.cells.values
-                                            if cell_values and len(cell_values) >= 2:
-                                                # Format the timer information
-                                                timer_info = []
-                                                for i in range(len(cell_values[0])):
-                                                    if i < len(cell_values[0]) and i < len(cell_values[1]):
-                                                        param = cell_values[0][i]
-                                                        value = cell_values[1][i]
-                                                        timer_info.append(f"{param}: {value}")
-                                                
-                                                if timer_info:
-                                                    for info in timer_info:
-                                                        story.append(Paragraph(info, styles['Normal']))
-                                                else:
-                                                    story.append(Paragraph("Next rebalance information not available", styles['Normal']))
-                                                break
+                            # Calculate timer information fresh for PDF using the actual last rebalance date
+                            try:
+                                # Get portfolio configuration
+                                portfolio_cfg = None
+                                for cfg in st.session_state.multi_backtest_portfolio_configs:
+                                    if cfg.get('name') == portfolio_name:
+                                        portfolio_cfg = cfg
+                                        break
+                                
+                                if portfolio_cfg:
+                                    rebalancing_frequency = portfolio_cfg.get('rebalancing_frequency', 'Monthly')
+                                    initial_value = portfolio_cfg.get('initial_value', 10000)
+                                    
+                                    # Get last rebalance date from allocation data
+                                    all_allocations = st.session_state.get('multi_all_allocations', {})
+                                    portfolio_allocations = all_allocations.get(portfolio_name, {})
+                                    
+                                    if portfolio_allocations:
+                                        alloc_dates = sorted(list(portfolio_allocations.keys()))
+                                        
+                                        # Find the actual last rebalance date by looking at the backtest results
+                                        # The last rebalance date should be from the actual rebalancing dates, not just any date
+                                        last_rebal_date = None
+                                        if 'multi_all_results' in st.session_state and portfolio_name in st.session_state.multi_all_results:
+                                            portfolio_results = st.session_state.multi_all_results[portfolio_name]
+                                            if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
+                                                # Get the simulation index (actual trading days)
+                                                sim_index = portfolio_results['with_additions'].index
+                                                # Get the rebalancing frequency to calculate actual rebalance dates
+                                                rebalancing_frequency = portfolio_cfg.get('rebalancing_frequency', 'none')
+                                                # Get actual rebalancing dates
+                                                actual_rebal_dates = get_dates_by_freq(rebalancing_frequency, sim_index[0], sim_index[-1], sim_index)
+                                                if actual_rebal_dates:
+                                                    # Find the most recent actual rebalance date that's in our allocation data
+                                                    actual_rebal_dates_sorted = sorted(list(actual_rebal_dates))
+                                                    for rebal_date in reversed(actual_rebal_dates_sorted):
+                                                        if rebal_date in portfolio_allocations:
+                                                            last_rebal_date = rebal_date
+                                                            break
+                                        
+                                        # Fallback to second-to-last date if we couldn't find an actual rebalance date
+                                        if last_rebal_date is None:
+                                            last_rebal_date = alloc_dates[-2] if len(alloc_dates) > 1 else alloc_dates[-1] if alloc_dates else None
+                                        
+                                        if last_rebal_date:
+                                            # Map frequency to function expectations
+                                            frequency_mapping = {
+                                                'monthly': 'month',
+                                                'weekly': 'week',
+                                                'bi-weekly': '2weeks',
+                                                'biweekly': '2weeks',
+                                                'quarterly': '3months',
+                                                'semi-annually': '6months',
+                                                'semiannually': '6months',
+                                                'annually': 'year',
+                                                'yearly': 'year',
+                                                'never': 'none',
+                                                'none': 'none'
+                                            }
+                                            mapped_frequency = frequency_mapping.get(rebalancing_frequency.lower(), rebalancing_frequency.lower())
+                                            
+                                            # Calculate next rebalance date
+                                            next_date, time_until, next_rebalance_datetime = calculate_next_rebalance_date(
+                                                mapped_frequency, last_rebal_date
+                                            )
+                                            
+                                            if next_date and time_until:
+                                                story.append(Paragraph(f"Time Until Next Rebalance: {format_time_until(time_until)}", styles['Normal']))
+                                                story.append(Paragraph(f"Target Rebalance Date: {next_date.strftime('%B %d, %Y')}", styles['Normal']))
+                                                story.append(Paragraph(f"Rebalancing Frequency: {rebalancing_frequency}", styles['Normal']))
+                                                story.append(Paragraph(f"Portfolio Value: ${initial_value:,.2f}", styles['Normal']))
+                                            else:
+                                                story.append(Paragraph("Next rebalance date calculation not available", styles['Normal']))
+                                        else:
+                                            story.append(Paragraph("No rebalancing history available", styles['Normal']))
                                     else:
-                                        story.append(Paragraph("Next rebalance information not available", styles['Normal']))
+                                        story.append(Paragraph("No allocation data available for timer calculation", styles['Normal']))
                                 else:
-                                    story.append(Paragraph("Next rebalance information not available", styles['Normal']))
-                            else:
-                                story.append(Paragraph("Next rebalance information not available", styles['Normal']))
+                                    story.append(Paragraph("Portfolio configuration not found", styles['Normal']))
+                            except Exception as e:
+                                story.append(Paragraph(f"Error calculating timer: {str(e)}", styles['Normal']))
                             
                             # Add page break so Allocation Details starts on a new page
                             story.append(PageBreak())
@@ -3073,7 +3124,7 @@ def calculate_next_rebalance_date(rebalancing_frequency, last_rebalance_date):
     Calculate the next rebalance date based on rebalancing frequency and last rebalance date.
     Excludes today and yesterday as mentioned in the requirements.
     """
-    if rebalancing_frequency == 'none':
+    if not last_rebalance_date or rebalancing_frequency == 'none':
         return None, None, None
     
     # Convert to datetime if it's a pandas Timestamp
@@ -3083,15 +3134,11 @@ def calculate_next_rebalance_date(rebalancing_frequency, last_rebalance_date):
     today = datetime.now().date()
     yesterday = today - timedelta(days=1)
     
-    # If no last rebalance date, use yesterday as base
-    if not last_rebalance_date:
-        base_date = yesterday
+    # If last rebalance was today or yesterday, use the day before yesterday as base
+    if last_rebalance_date.date() >= yesterday:
+        base_date = yesterday - timedelta(days=1)
     else:
-        # If last rebalance was today or yesterday, use the day before yesterday as base
-        if last_rebalance_date.date() >= yesterday:
-            base_date = yesterday - timedelta(days=1)
-        else:
-            base_date = last_rebalance_date.date()
+        base_date = last_rebalance_date.date()
     
     # Calculate next rebalance date based on frequency
     if rebalancing_frequency == 'market_day':
@@ -6491,7 +6538,7 @@ if use_custom_dates:
         start_date = st.date_input("Start Date", min_value=date(1900, 1, 1), key="multi_backtest_start_date", on_change=update_start_date)
     
     with col_end_date:
-        end_date = st.date_input("End Date", key="multi_backtest_end_date", on_change=update_end_date)
+        end_date = st.date_input("End Date", min_value=date(1900, 1, 1), key="multi_backtest_end_date", on_change=update_end_date)
     
     with col_clear_dates:
         st.markdown("<br>", unsafe_allow_html=True) # Spacer for alignment
@@ -9170,10 +9217,55 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         if last_rebal_date and hasattr(last_rebal_date, 'tzinfo') and last_rebal_date.tzinfo is not None:
                             last_rebal_date = last_rebal_date.replace(tzinfo=None)
                         
-                        # Calculate next rebalance for this portfolio (works even with None last_rebal_date)
-                        next_date_port, time_until_port, next_rebalance_datetime_port = calculate_next_rebalance_date(
-                            rebal_freq, last_rebal_date
-                        )
+                        # Calculate next rebalance for this portfolio using the actual last rebalance date
+                        # This matches the "Last Rebalance Allocation" date shown in the UI
+                        if last_rebal_date:
+                            # Calculate the next rebalance date from the last rebalance date
+                            if rebal_freq == 'market_day':
+                                next_date_port = last_rebal_date.date() + timedelta(days=1)
+                            elif rebal_freq == 'calendar_day':
+                                next_date_port = last_rebal_date.date() + timedelta(days=1)
+                            elif rebal_freq == 'week':
+                                next_date_port = last_rebal_date.date() + timedelta(weeks=1)
+                            elif rebal_freq == '2weeks':
+                                next_date_port = last_rebal_date.date() + timedelta(weeks=2)
+                            elif rebal_freq == 'month':
+                                # Add one month
+                                if last_rebal_date.date().month == 12:
+                                    next_date_port = last_rebal_date.date().replace(year=last_rebal_date.date().year + 1, month=1)
+                                else:
+                                    next_date_port = last_rebal_date.date().replace(month=last_rebal_date.date().month + 1)
+                            elif rebal_freq == 'quarter':
+                                # Add 3 months
+                                new_month = last_rebal_date.date().month + 3
+                                if new_month > 12:
+                                    next_date_port = last_rebal_date.date().replace(year=last_rebal_date.date().year + 1, month=new_month - 12)
+                                else:
+                                    next_date_port = last_rebal_date.date().replace(month=new_month)
+                            elif rebal_freq == 'semi':
+                                # Add 6 months
+                                new_month = last_rebal_date.date().month + 6
+                                if new_month > 12:
+                                    next_date_port = last_rebal_date.date().replace(year=last_rebal_date.date().year + 1, month=new_month - 12)
+                                else:
+                                    next_date_port = last_rebal_date.date().replace(month=new_month)
+                            elif rebal_freq == 'year':
+                                next_date_port = last_rebal_date.date().replace(year=last_rebal_date.date().year + 1)
+                            else:
+                                next_date_port = None
+                            
+                            if next_date_port:
+                                # Calculate time until next rebalance from the last rebalance date
+                                time_diff = next_date_port - last_rebal_date.date()
+                                time_until_port = time_diff.total_seconds() / (24 * 3600)  # Convert to days
+                                next_rebalance_datetime_port = datetime.combine(next_date_port, datetime.min.time())
+                            else:
+                                time_until_port = None
+                                next_rebalance_datetime_port = None
+                        else:
+                            next_date_port = None
+                            time_until_port = None
+                            next_rebalance_datetime_port = None
                         
                         
                         if next_date_port and time_until_port:
@@ -9183,41 +9275,48 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                 ['Target Rebalance Date', next_date_port.strftime("%B %d, %Y")],
                                 ['Rebalancing Frequency', rebal_freq.replace('_', ' ').title()]
                             ]
-                            
-                            # Create timer table figure for this portfolio
-                            fig_timer_port = go.Figure(data=[go.Table(
-                                header=dict(
-                                    values=['Parameter', 'Value'],
-                                    fill_color='#2E86AB',
-                                    align='center',
-                                    font=dict(color='white', size=16, family='Arial Black')
-                                ),
-                                cells=dict(
-                                    values=[[row[0] for row in timer_data_port], [row[1] for row in timer_data_port]],
-                                    fill_color=[['#F8F9FA', '#FFFFFF'] * 2, ['#F8F9FA', '#FFFFFF'] * 2],
-                                    align='center',
-                                    font=dict(color='black', size=14, family='Arial'),
-                                    height=40
-                                )
-                            )])
-                            
-                            fig_timer_port.update_layout(
-                                title=dict(
-                                    text=f"⏰ Next Rebalance Timer - {portfolio_name}",
-                                    x=0.5,
-                                    font=dict(size=18, color='#2E86AB', family='Arial Black')
-                                ),
-                                width=700,
-                                height=250,
-                                margin=dict(l=20, r=20, t=60, b=20)
-                            )
-                            
-                            # Store in session state for PDF export
-                            st.session_state[f'timer_table_{portfolio_name}'] = fig_timer_port
                         else:
-                            pass
+                            # Fallback timer data when calculation fails
+                            timer_data_port = [
+                                ['Last Rebalance Date', last_rebal_date.strftime("%B %d, %Y") if last_rebal_date else "Unknown"],
+                                ['Rebalancing Frequency', rebal_freq.replace('_', ' ').title()],
+                                ['Status', 'Timer calculation unavailable']
+                            ]
+                        
+                        # Create timer table figure for this portfolio
+                        fig_timer_port = go.Figure(data=[go.Table(
+                            header=dict(
+                                values=['Parameter', 'Value'],
+                                fill_color='#2E86AB',
+                                align='center',
+                                font=dict(color='white', size=16, family='Arial Black')
+                            ),
+                            cells=dict(
+                                values=[[row[0] for row in timer_data_port], [row[1] for row in timer_data_port]],
+                                fill_color=[['#F8F9FA', '#FFFFFF'] * 2, ['#F8F9FA', '#FFFFFF'] * 2],
+                                align='center',
+                                font=dict(color='black', size=14, family='Arial'),
+                                height=40
+                            )
+                        )])
+                        
+                        fig_timer_port.update_layout(
+                            title=dict(
+                                text=f"⏰ Next Rebalance Timer - {portfolio_name}",
+                                x=0.5,
+                                font=dict(size=18, color='#2E86AB', family='Arial Black')
+                            ),
+                            width=700,
+                            height=250,
+                            margin=dict(l=20, r=20, t=60, b=20)
+                        )
+                        
+                        # Store in session state for PDF export
+                        st.session_state[f'timer_table_{portfolio_name}'] = fig_timer_port
                     else:
                         pass
+                else:
+                    pass
             except Exception as e:
                 import traceback
                 traceback.print_exc()
@@ -10557,6 +10656,435 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             except Exception as e:
                 pass
 
+        # Focused Performance Analysis with Date Range
+        # Initialize session state variables first
+        if 'focused_analysis_results' not in st.session_state:
+            st.session_state.focused_analysis_results = None
+        if 'focused_analysis_show_essential' not in st.session_state:
+            st.session_state.focused_analysis_show_essential = False
+        if 'focused_analysis_period' not in st.session_state:
+            st.session_state.focused_analysis_period = None
+        if 'focused_analysis_start_date' not in st.session_state:
+            st.session_state.focused_analysis_start_date = None
+        if 'focused_analysis_end_date' not in st.session_state:
+            st.session_state.focused_analysis_end_date = None
+        
+        # Date range controls
+        col_date1, col_date2, col_metrics = st.columns([1, 1, 1])
+        
+        # Get the earliest and latest available dates from backtest data
+        min_date = None
+        max_date = None
+        if 'multi_all_results' in st.session_state and st.session_state.multi_all_results:
+            # Use the same reliable method as used elsewhere in the code
+            try:
+                first_date = min(series['no_additions'].index.min() for series in st.session_state.multi_all_results.values() if 'no_additions' in series)
+                last_date = max(series['no_additions'].index.max() for series in st.session_state.multi_all_results.values() if 'no_additions' in series)
+                min_date = first_date.date()
+                max_date = last_date.date()
+            except (ValueError, KeyError, AttributeError):
+                # Fallback to the previous method if the above fails
+                all_dates = []
+                for portfolio_name, results in st.session_state.multi_all_results.items():
+                    if isinstance(results, dict) and 'no_additions' in results:
+                        series = results['no_additions']
+                        if hasattr(series, 'index') and len(series.index) > 0:
+                            all_dates.extend(series.index.tolist())
+                
+                if all_dates:
+                    min_date = min(all_dates).date()
+                    max_date = max(all_dates).date()
+        
+        with col_date1:
+            # Check if we need to update the date range due to new portfolio data
+            current_min_date = min_date if min_date else datetime.date(1900, 1, 1)
+            current_max_date = max_date if max_date else datetime.date.today()
+            
+            # Update session state if the available date range has changed
+            if 'focused_analysis_available_min_date' not in st.session_state:
+                st.session_state.focused_analysis_available_min_date = current_min_date
+                st.session_state.focused_analysis_available_max_date = current_max_date
+            elif (st.session_state.focused_analysis_available_min_date != current_min_date or 
+                  st.session_state.focused_analysis_available_max_date != current_max_date):
+                # Date range has changed, update session state and reset selected dates
+                st.session_state.focused_analysis_available_min_date = current_min_date
+                st.session_state.focused_analysis_available_max_date = current_max_date
+                st.session_state.focused_analysis_start_date = current_min_date
+                st.session_state.focused_analysis_end_date = current_max_date
+            
+            # Initialize start date in session state with fallback and validation
+            if st.session_state.focused_analysis_start_date is None:
+                st.session_state.focused_analysis_start_date = current_min_date
+            
+            # Ensure the start date is valid and within bounds
+            start_date_value = st.session_state.focused_analysis_start_date
+            if start_date_value is None:
+                start_date_value = current_min_date
+            else:
+                # Convert to datetime.date if it's a pandas Timestamp or other datetime-like object
+                try:
+                    if hasattr(start_date_value, 'date'):
+                        start_date_value = start_date_value.date()
+                    elif not isinstance(start_date_value, datetime.date):
+                        start_date_value = pd.to_datetime(start_date_value).date()
+                except:
+                    start_date_value = current_min_date
+                
+                # Check bounds after conversion
+                if start_date_value < current_min_date:
+                    start_date_value = current_min_date
+                elif start_date_value > current_max_date:
+                    start_date_value = current_max_date
+            
+            start_date = st.date_input(
+                "Start Date", 
+                value=start_date_value,
+                min_value=current_min_date,
+                max_value=current_max_date,
+                key="focused_analysis_start_date_input",
+                help="Start date for focused performance analysis"
+            )
+            
+            # Store the selected start date in session state
+            if start_date != st.session_state.focused_analysis_start_date:
+                st.session_state.focused_analysis_start_date = start_date
+        
+        with col_date2:
+            # Initialize end date in session state with fallback and validation
+            if st.session_state.focused_analysis_end_date is None:
+                st.session_state.focused_analysis_end_date = current_max_date
+            
+            # Ensure the end date is valid and within bounds
+            end_date_value = st.session_state.focused_analysis_end_date
+            if end_date_value is None:
+                end_date_value = current_max_date
+            else:
+                # Convert to datetime.date if it's a pandas Timestamp or other datetime-like object
+                try:
+                    if hasattr(end_date_value, 'date'):
+                        end_date_value = end_date_value.date()
+                    elif not isinstance(end_date_value, datetime.date):
+                        end_date_value = pd.to_datetime(end_date_value).date()
+                except:
+                    end_date_value = current_max_date
+                
+                # Check bounds after conversion
+                if end_date_value < current_min_date:
+                    end_date_value = current_min_date
+                elif end_date_value > current_max_date:
+                    end_date_value = current_max_date
+            
+            end_date = st.date_input(
+                "End Date", 
+                value=end_date_value,
+                min_value=current_min_date,
+                max_value=current_max_date,
+                key="focused_analysis_end_date_input",
+                help="End date for focused performance analysis"
+            )
+            
+            # Store the selected end date in session state
+            if end_date != st.session_state.focused_analysis_end_date:
+                st.session_state.focused_analysis_end_date = end_date
+        
+        with col_metrics:
+            show_essential_only = st.checkbox(
+                "Essential Metrics Only", 
+                value=False,
+                help="Show only CAGR, Max Drawdown, Volatility, and Total Return for quick analysis"
+            )
+        
+        # Add title after date inputs are defined
+        st.subheader("📊 Focused Performance Analysis")
+        
+        # Calculate Analysis Button
+        calculate_analysis = st.button(
+            "📊 Calculate Analysis", 
+            type="primary",
+            use_container_width=True,
+            help="Click to generate the focused performance analysis with your selected date range"
+        )
+        
+        # Session state variables are already initialized above
+        
+        # Update session state when essential metrics checkbox changes
+        if show_essential_only != st.session_state.focused_analysis_show_essential:
+            st.session_state.focused_analysis_show_essential = show_essential_only
+            # Recalculate if we have existing results
+            if st.session_state.focused_analysis_results is not None:
+                calculate_analysis = True
+        
+        # Calculate focused performance metrics only when button is clicked
+        if calculate_analysis and start_date and end_date and 'multi_all_results' in st.session_state and st.session_state.multi_all_results:
+            focused_stats = {}
+            
+            for portfolio_name, results in st.session_state.multi_all_results.items():
+                if isinstance(results, dict) and 'no_additions' in results:
+                    series = results['no_additions']
+                    if hasattr(series, 'index') and len(series.index) > 0:
+                        # Filter series by date range
+                        # Convert dates to datetime for proper comparison
+                        start_datetime = pd.to_datetime(start_date)
+                        end_datetime = pd.to_datetime(end_date) + pd.Timedelta(days=1)  # Include the end date
+                        mask = (series.index >= start_datetime) & (series.index < end_datetime)
+                        filtered_series = series[mask]
+                        
+                        if len(filtered_series) > 1:
+                            # Calculate returns with ffill compatibility
+                            returns = filtered_series.pct_change().fillna(0)
+                            
+                            if len(returns) > 0:
+                                # Smart weekend filter for win/loss rates
+                                zero_rate = (abs(returns) < 1e-5).mean()
+                                if zero_rate > 0.25:  # If more than 25% are zero (likely weekends)
+                                    # Filter to include only non-zero returns or returns on weekdays
+                                    weekday_mask = returns.index.weekday < 5  # Monday=0, Friday=4
+                                    non_zero_mask = abs(returns) > 1e-5
+                                    smart_mask = weekday_mask | non_zero_mask
+                                    returns = returns[smart_mask]
+                                
+                                # Calculate metrics for the date range
+                                # Use original returns (before smart filtering) for consistency with Final Performance Statistics
+                                original_returns = filtered_series.pct_change().fillna(0)
+                                cagr = calculate_cagr(filtered_series, filtered_series.index)
+                                volatility = calculate_volatility(original_returns)
+                                sharpe = calculate_sharpe(original_returns, 0.02)  # 2% risk-free rate
+                                sortino = calculate_sortino(original_returns, 0.02)
+                                
+                                # Calculate max drawdown using original returns
+                                cumulative = (1 + original_returns).cumprod()
+                                running_max = cumulative.expanding().max()
+                                drawdown = (cumulative - running_max) / running_max
+                                max_drawdown = drawdown.min()
+                                
+                                # Calculate Ulcer Index using original returns
+                                ulcer_index = np.sqrt((drawdown ** 2).mean()) * 100
+                                
+                                # Calculate UPI
+                                upi = calculate_upi(cagr, ulcer_index) if ulcer_index > 0 else np.nan
+                                
+                                # Calculate Beta (same method as Final Performance Statistics)
+                                beta = np.nan
+                                cfg_for_name = next((c for c in st.session_state.multi_backtest_portfolio_configs if c['name'] == portfolio_name), None)
+                                if cfg_for_name:
+                                    bench_ticker = cfg_for_name.get('benchmark_ticker')
+                                    raw_data = st.session_state.get('multi_backtest_raw_data')
+                                    if bench_ticker and raw_data and bench_ticker in raw_data:
+                                        try:
+                                            bench_df = raw_data[bench_ticker].reindex(filtered_series.index)
+                                            if 'Price_change' in bench_df.columns:
+                                                bench_returns = bench_df['Price_change'].fillna(0)
+                                            else:
+                                                bench_returns = bench_df['Close'].pct_change().fillna(0)
+
+                                            portfolio_returns = original_returns # Use original returns like Final Performance Statistics
+                                            common_idx = portfolio_returns.index.intersection(bench_returns.index)
+                                            if len(common_idx) >= 2:
+                                                pr = portfolio_returns.reindex(common_idx).dropna()
+                                                br = bench_returns.reindex(common_idx).dropna()
+                                                common_idx2 = pr.index.intersection(br.index)
+                                                if len(common_idx2) >= 2 and br.loc[common_idx2].var() != 0:
+                                                    cov = pr.loc[common_idx2].cov(br.loc[common_idx2])
+                                                    var = br.loc[common_idx2].var()
+                                                    beta = cov / var
+                                        except Exception as e:
+                                            pass
+                                
+                                # Calculate additional instantaneous metrics
+                                total_return = (filtered_series.iloc[-1] / filtered_series.iloc[0] - 1)
+                                final_value = filtered_series.iloc[-1]
+                                final_value_no_contrib = filtered_series.iloc[-1]
+                                total_money_added = 0  # Not available in no_additions series
+                                
+                                # Calculate median drawdown
+                                median_drawdown = drawdown.median()
+                                
+                                # Calculate win/loss rates
+                                positive_returns = returns[returns > 1e-5]
+                                negative_returns = returns[returns < -1e-5]
+                                win_rate = (len(positive_returns) / len(returns)) * 100 if len(returns) > 0 else 0
+                                loss_rate = (len(negative_returns) / len(returns)) * 100 if len(returns) > 0 else 0
+                                
+                                # Calculate median win/loss
+                                median_win = positive_returns.median() * 100 if len(positive_returns) > 0 else 0
+                                median_loss = negative_returns.median() * 100 if len(negative_returns) > 0 else 0
+                                
+                                # Calculate profit factor
+                                gross_profit = positive_returns.sum() if len(positive_returns) > 0 else 0
+                                gross_loss = abs(negative_returns.sum()) if len(negative_returns) > 0 else 0
+                                profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.inf
+                                
+                                # Calculate monthly returns for monthly metrics
+                                monthly_returns = filtered_series.resample('M').last().pct_change().fillna(0) * 100
+                                best_month = monthly_returns.max() if len(monthly_returns) > 0 else 0
+                                worst_month = monthly_returns.min() if len(monthly_returns) > 0 else 0
+                                median_monthly = monthly_returns.median() if len(monthly_returns) > 0 else 0
+                                
+                                # Calculate risk-adjusted ratios
+                                calmar_ratio = (cagr * 100) / abs(max_drawdown * 100) if max_drawdown != 0 else np.nan
+                                sterling_ratio = (cagr * 100) / abs(median_drawdown * 100) if median_drawdown != 0 else np.nan
+                                recovery_factor = abs(total_return) / abs(max_drawdown) if max_drawdown != 0 else np.nan
+                                
+                                # Calculate tail ratio (95th percentile / 5th percentile)
+                                tail_ratio = returns.quantile(0.95) / abs(returns.quantile(0.05)) if returns.quantile(0.05) != 0 else np.nan
+                                
+                                if show_essential_only:
+                                    focused_stats[portfolio_name] = {
+                                        'CAGR': cagr * 100,
+                                        'Max Drawdown': max_drawdown * 100,
+                                        'Volatility': volatility * 100,
+                                        'Total Return': total_return * 100
+                                    }
+                                else:
+                                    focused_stats[portfolio_name] = {
+                                        'CAGR': cagr * 100,
+                                        'Max Drawdown': max_drawdown * 100,
+                                        'Volatility': volatility * 100,
+                                        'Sharpe': sharpe,
+                                        'Sortino': sortino,
+                                        'Ulcer Index': ulcer_index,
+                                        'UPI': upi,
+                                        'Beta': beta,
+                                        'Total Return': total_return * 100,
+                                        'Final Value (No Contributions)': final_value_no_contrib,
+                                        'Median Drawdown': median_drawdown * 100,
+                                        'Win Rate': win_rate,
+                                        'Loss Rate': loss_rate,
+                                        'Median Win': median_win,
+                                        'Median Loss': median_loss,
+                                        'Profit Factor': profit_factor,
+                                        'Best Month': best_month,
+                                        'Worst Month': worst_month,
+                                        'Median Monthly': median_monthly,
+                                        'Calmar Ratio': calmar_ratio,
+                                        'Sterling Ratio': sterling_ratio,
+                                        'Recovery Factor': recovery_factor,
+                                        'Tail Ratio': tail_ratio
+                                    }
+            
+            if focused_stats:
+                # Store results in session state
+                st.session_state.focused_analysis_results = focused_stats
+                st.session_state.focused_analysis_show_essential = show_essential_only
+                st.session_state.focused_analysis_period = f"{start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+                
+                # Create focused stats DataFrame
+                focused_df = pd.DataFrame.from_dict(focused_stats, orient='index')
+                focused_df.index.name = 'Portfolio'
+                
+                # Format the DataFrame
+                if show_essential_only:
+                    focused_df['CAGR'] = focused_df['CAGR'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Max Drawdown'] = focused_df['Max Drawdown'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Volatility'] = focused_df['Volatility'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Total Return'] = focused_df['Total Return'].apply(lambda x: f"{x:.2f}%")
+                else:
+                    # Format all columns
+                    focused_df['CAGR'] = focused_df['CAGR'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Max Drawdown'] = focused_df['Max Drawdown'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Volatility'] = focused_df['Volatility'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Sharpe'] = focused_df['Sharpe'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                    focused_df['Sortino'] = focused_df['Sortino'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                    focused_df['Ulcer Index'] = focused_df['Ulcer Index'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                    focused_df['UPI'] = focused_df['UPI'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                    focused_df['Beta'] = focused_df['Beta'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                    focused_df['Total Return'] = focused_df['Total Return'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Final Value (No Contributions)'] = focused_df['Final Value (No Contributions)'].apply(lambda x: f"${x:,.2f}")
+                    focused_df['Median Drawdown'] = focused_df['Median Drawdown'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Win Rate'] = focused_df['Win Rate'].apply(lambda x: f"{x:.1f}%")
+                    focused_df['Loss Rate'] = focused_df['Loss Rate'].apply(lambda x: f"{x:.1f}%")
+                    focused_df['Median Win'] = focused_df['Median Win'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Median Loss'] = focused_df['Median Loss'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Profit Factor'] = focused_df['Profit Factor'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) and x != np.inf else "N/A")
+                    focused_df['Best Month'] = focused_df['Best Month'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Worst Month'] = focused_df['Worst Month'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Median Monthly'] = focused_df['Median Monthly'].apply(lambda x: f"{x:.2f}%")
+                    focused_df['Calmar Ratio'] = focused_df['Calmar Ratio'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                    focused_df['Sterling Ratio'] = focused_df['Sterling Ratio'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                    focused_df['Recovery Factor'] = focused_df['Recovery Factor'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                    focused_df['Tail Ratio'] = focused_df['Tail Ratio'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                
+                # Display the focused table
+                st.dataframe(focused_df, use_container_width=True)
+                
+                # Show date range info
+                st.info(f"📅 **Analysis Period:** {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}")
+            else:
+                st.warning("⚠️ No data available for the selected date range. Please check your date selection.")
+        elif st.session_state.focused_analysis_results is not None:
+            # Display stored results even when not recalculating
+            focused_stats = st.session_state.focused_analysis_results
+            show_essential = st.session_state.focused_analysis_show_essential
+            
+            # Create focused stats DataFrame
+            focused_df = pd.DataFrame.from_dict(focused_stats, orient='index')
+            focused_df.index.name = 'Portfolio'
+            
+            # Format the DataFrame based on current essential setting
+            if show_essential_only:
+                # Filter to only show essential columns
+                essential_cols = ['CAGR', 'Max Drawdown', 'Volatility', 'Total Return']
+                if all(col in focused_df.columns for col in essential_cols):
+                    focused_df = focused_df[essential_cols]
+                focused_df['CAGR'] = focused_df['CAGR'].apply(lambda x: f"{x:.2f}%")
+                focused_df['Max Drawdown'] = focused_df['Max Drawdown'].apply(lambda x: f"{x:.2f}%")
+                focused_df['Volatility'] = focused_df['Volatility'].apply(lambda x: f"{x:.2f}%")
+                focused_df['Total Return'] = focused_df['Total Return'].apply(lambda x: f"{x:.2f}%")
+            else:
+                # Format all columns
+                focused_df['CAGR'] = focused_df['CAGR'].apply(lambda x: f"{x:.2f}%")
+                focused_df['Max Drawdown'] = focused_df['Max Drawdown'].apply(lambda x: f"{x:.2f}%")
+                focused_df['Volatility'] = focused_df['Volatility'].apply(lambda x: f"{x:.2f}%")
+                if 'Sharpe' in focused_df.columns:
+                    focused_df['Sharpe'] = focused_df['Sharpe'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                if 'Sortino' in focused_df.columns:
+                    focused_df['Sortino'] = focused_df['Sortino'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                if 'Ulcer Index' in focused_df.columns:
+                    focused_df['Ulcer Index'] = focused_df['Ulcer Index'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                if 'UPI' in focused_df.columns:
+                    focused_df['UPI'] = focused_df['UPI'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                if 'Total Return' in focused_df.columns:
+                    focused_df['Total Return'] = focused_df['Total Return'].apply(lambda x: f"{x:.2f}%")
+                if 'Final Value (No Contributions)' in focused_df.columns:
+                    focused_df['Final Value (No Contributions)'] = focused_df['Final Value (No Contributions)'].apply(lambda x: f"${x:,.2f}")
+                if 'Median Drawdown' in focused_df.columns:
+                    focused_df['Median Drawdown'] = focused_df['Median Drawdown'].apply(lambda x: f"{x:.2f}%")
+                if 'Win Rate' in focused_df.columns:
+                    focused_df['Win Rate'] = focused_df['Win Rate'].apply(lambda x: f"{x:.1f}%")
+                if 'Loss Rate' in focused_df.columns:
+                    focused_df['Loss Rate'] = focused_df['Loss Rate'].apply(lambda x: f"{x:.1f}%")
+                if 'Median Win' in focused_df.columns:
+                    focused_df['Median Win'] = focused_df['Median Win'].apply(lambda x: f"{x:.2f}%")
+                if 'Median Loss' in focused_df.columns:
+                    focused_df['Median Loss'] = focused_df['Median Loss'].apply(lambda x: f"{x:.2f}%")
+                if 'Profit Factor' in focused_df.columns:
+                    focused_df['Profit Factor'] = focused_df['Profit Factor'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) and x != np.inf else "N/A")
+                if 'Best Month' in focused_df.columns:
+                    focused_df['Best Month'] = focused_df['Best Month'].apply(lambda x: f"{x:.2f}%")
+                if 'Worst Month' in focused_df.columns:
+                    focused_df['Worst Month'] = focused_df['Worst Month'].apply(lambda x: f"{x:.2f}%")
+                if 'Median Monthly' in focused_df.columns:
+                    focused_df['Median Monthly'] = focused_df['Median Monthly'].apply(lambda x: f"{x:.2f}%")
+                if 'Calmar Ratio' in focused_df.columns:
+                    focused_df['Calmar Ratio'] = focused_df['Calmar Ratio'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                if 'Sterling Ratio' in focused_df.columns:
+                    focused_df['Sterling Ratio'] = focused_df['Sterling Ratio'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                if 'Recovery Factor' in focused_df.columns:
+                    focused_df['Recovery Factor'] = focused_df['Recovery Factor'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+                if 'Tail Ratio' in focused_df.columns:
+                    focused_df['Tail Ratio'] = focused_df['Tail Ratio'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+            
+            # Display the focused table
+            st.dataframe(focused_df, use_container_width=True)
+            
+            # Show date range info
+            if st.session_state.focused_analysis_period is not None:
+                st.info(f"📅 **Analysis Period:** {st.session_state.focused_analysis_period}")
+        elif not calculate_analysis:
+            st.info("👆 **Select your date range above and click 'Calculate Analysis' to generate the focused performance metrics.**")
+        else:
+            st.warning("⚠️ Please ensure you have portfolio data loaded and valid date range selected.")
+
         # Portfolio Configuration Comparison Table
         st.subheader("Portfolio Configuration Comparison")
         
@@ -10971,8 +11499,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 help='Choose which portfolio to inspect in detail', 
                 label_visibility='collapsed',
                 on_change=update_selected_portfolio,
-                # Add format_func to handle long names better
-                format_func=lambda x: x[:60] + "..." if len(x) > 60 else x
+                format_func=lambda x: x  # Display full names without truncation
             )
             # Add a prominent view button with a professional color
             view_clicked = st.button("View Details", key='view_details_btn')
@@ -12982,10 +13509,51 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                         if hasattr(last_rebal_date, 'tzinfo') and last_rebal_date.tzinfo is not None:
                                                             last_rebal_date = last_rebal_date.replace(tzinfo=None)
                                                         
-                                                        # Calculate next rebalance for this portfolio
-                                                        next_date_port, time_until_port, next_rebalance_datetime_port = calculate_next_rebalance_date(
-                                                            rebal_freq, last_rebal_date
-                                                        )
+                                                        # Calculate next rebalance for this portfolio using the actual last rebalance date
+                                                        # This matches the "Last Rebalance Allocation" date shown in the UI
+                                                        if last_rebal_date:
+                                                            # Calculate the next rebalance date from the last rebalance date
+                                                            if rebal_freq == 'market_day':
+                                                                next_date_port = last_rebal_date.date() + timedelta(days=1)
+                                                            elif rebal_freq == 'calendar_day':
+                                                                next_date_port = last_rebal_date.date() + timedelta(days=1)
+                                                            elif rebal_freq == 'week':
+                                                                next_date_port = last_rebal_date.date() + timedelta(weeks=1)
+                                                            elif rebal_freq == '2weeks':
+                                                                next_date_port = last_rebal_date.date() + timedelta(weeks=2)
+                                                            elif rebal_freq == 'month':
+                                                                if last_rebal_date.date().month == 12:
+                                                                    next_date_port = last_rebal_date.date().replace(year=last_rebal_date.date().year + 1, month=1)
+                                                                else:
+                                                                    next_date_port = last_rebal_date.date().replace(month=last_rebal_date.date().month + 1)
+                                                            elif rebal_freq == 'quarter':
+                                                                new_month = last_rebal_date.date().month + 3
+                                                                if new_month > 12:
+                                                                    next_date_port = last_rebal_date.date().replace(year=last_rebal_date.date().year + 1, month=new_month - 12)
+                                                                else:
+                                                                    next_date_port = last_rebal_date.date().replace(month=new_month)
+                                                            elif rebal_freq == 'semi':
+                                                                new_month = last_rebal_date.date().month + 6
+                                                                if new_month > 12:
+                                                                    next_date_port = last_rebal_date.date().replace(year=last_rebal_date.date().year + 1, month=new_month - 12)
+                                                                else:
+                                                                    next_date_port = last_rebal_date.date().replace(month=new_month)
+                                                            elif rebal_freq == 'year':
+                                                                next_date_port = last_rebal_date.date().replace(year=last_rebal_date.date().year + 1)
+                                                            else:
+                                                                next_date_port = None
+                                                            
+                                                            if next_date_port:
+                                                                time_diff = next_date_port - last_rebal_date.date()
+                                                                time_until_port = time_diff.total_seconds() / (24 * 3600)
+                                                                next_rebalance_datetime_port = datetime.combine(next_date_port, datetime.min.time())
+                                                            else:
+                                                                time_until_port = None
+                                                                next_rebalance_datetime_port = None
+                                                        else:
+                                                            next_date_port = None
+                                                            time_until_port = None
+                                                            next_rebalance_datetime_port = None
                                                         
                                                         if next_date_port and time_until_port:
                                                             # Create timer data for this portfolio
@@ -12993,6 +13561,13 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                                                 ['Time Until Next Rebalance', format_time_until(time_until_port)],
                                                                 ['Target Rebalance Date', next_date_port.strftime("%B %d, %Y")],
                                                                 ['Rebalancing Frequency', rebal_freq.replace('_', ' ').title()]
+                                                            ]
+                                                        else:
+                                                            # Fallback timer data when calculation fails
+                                                            timer_data_port = [
+                                                                ['Last Rebalance Date', last_rebal_date.strftime("%B %d, %Y") if last_rebal_date else "Unknown"],
+                                                                ['Rebalancing Frequency', rebal_freq.replace('_', ' ').title()],
+                                                                ['Status', 'Timer calculation unavailable']
                                                             ]
                                                             
                                                             # Create timer table figure for this portfolio
