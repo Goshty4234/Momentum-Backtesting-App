@@ -1185,19 +1185,52 @@ def _get_rebalancing_dates(all_dates: pd.DatetimeIndex, rebalancing_frequency: s
         mondays = all_dates[all_dates.weekday == 0]
         return mondays[::2]
     elif rebalancing_frequency == "Monthly":
-        # First available trading day of each month
-        months = all_dates.to_series().groupby([all_dates.year, all_dates.month]).first()
-        return pd.DatetimeIndex(months.values)
+        # First trading day on or after the 1st of each month
+        monthly_dates = []
+        for year in sorted(set(all_dates.year)):
+            for month in range(1, 13):
+                # Create 1st of this month
+                first_of_month = pd.Timestamp(year=year, month=month, day=1)
+                # Find the first trading day on or after the 1st
+                mask = all_dates >= first_of_month
+                if mask.any():
+                    monthly_dates.append(all_dates[mask][0])
+        return pd.DatetimeIndex(monthly_dates)
     elif rebalancing_frequency == "Quarterly":
-        # First available trading day of each quarter
-        quarters = all_dates.to_series().groupby([all_dates.year, all_dates.quarter]).first()
-        return pd.DatetimeIndex(quarters.values)
+        # First trading day on or after Jan 1, Apr 1, Jul 1, Oct 1
+        quarterly_dates = []
+        for year in sorted(set(all_dates.year)):
+            for month in [1, 4, 7, 10]:  # January, April, July, October
+                # Create 1st of this quarter month
+                quarter_start = pd.Timestamp(year=year, month=month, day=1)
+                # Find the first trading day on or after the quarter start
+                mask = all_dates >= quarter_start
+                if mask.any():
+                    quarterly_dates.append(all_dates[mask][0])
+        return pd.DatetimeIndex(quarterly_dates)
     elif rebalancing_frequency == "Semiannually":
-        # First trading day of Jan/Jul each year
-        semi = [(y, m) for y in sorted(set(all_dates.year)) for m in [1, 7]]
-        return pd.DatetimeIndex([all_dates[(all_dates.year == y) & (all_dates.month == m)][0] for y, m in semi if any((all_dates.year == y) & (all_dates.month == m))])
+        # First trading day on or after Jan 1, Jul 1
+        semiannual_dates = []
+        for year in sorted(set(all_dates.year)):
+            for month in [1, 7]:  # January and July
+                # Create 1st of this semi-annual month
+                semi_start = pd.Timestamp(year=year, month=month, day=1)
+                # Find the first trading day on or after the semi-annual start
+                mask = all_dates >= semi_start
+                if mask.any():
+                    semiannual_dates.append(all_dates[mask][0])
+        return pd.DatetimeIndex(semiannual_dates)
     elif rebalancing_frequency == "Annually":
-        return all_dates[all_dates.is_year_end]
+        # First trading day on or after January 1st each year
+        annual_dates = []
+        for year in sorted(set(all_dates.year)):
+            # Create January 1st of this year
+            jan_1st = pd.Timestamp(year=year, month=1, day=1)
+            # Find the first trading day on or after January 1st
+            mask = all_dates >= jan_1st
+            if mask.any():
+                annual_dates.append(all_dates[mask][0])
+        return pd.DatetimeIndex(annual_dates)
     elif rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"]:
         # Buy & Hold options don't have specific rebalancing dates - they rebalance immediately when cash is available
         return pd.DatetimeIndex([])
@@ -3727,6 +3760,105 @@ with st.sidebar:
             st.markdown('<div style="background-color:#004d00;color:white;padding:8px;border-radius:6px;">Total Allocation: 100%</div>', unsafe_allow_html=True)
         else:
             st.info(f"Total Allocation: {total_alloc_percentage:.2f}%")
+
+    # Bulk ticker input section
+    with st.expander("📝 Bulk Ticker Input", expanded=False):
+        st.markdown("**Enter multiple tickers separated by spaces or commas:**")
+        
+        # Initialize bulk ticker input in session state
+        if 'backtest_engine_bulk_tickers' not in st.session_state:
+            st.session_state.backtest_engine_bulk_tickers = ""
+        
+        # Auto-populate bulk ticker input with current tickers
+        current_tickers = [ticker for ticker in st.session_state.tickers if ticker]
+        if current_tickers:
+            current_ticker_string = ' '.join(current_tickers)
+            if st.session_state.backtest_engine_bulk_tickers != current_ticker_string:
+                st.session_state.backtest_engine_bulk_tickers = current_ticker_string
+        
+        # Text area for bulk ticker input
+        bulk_tickers = st.text_area(
+            "Tickers (e.g., SPY QQQ GLD TLT or SPY,QQQ,GLD,TLT)",
+            value=st.session_state.backtest_engine_bulk_tickers,
+            key="backtest_engine_bulk_ticker_input",
+            height=100,
+            help="Enter ticker symbols separated by spaces or commas. Click 'Fill Tickers' to replace tickers (keeps existing allocations)."
+        )
+        
+        if st.button("Fill Tickers", key="backtest_engine_fill_tickers_btn"):
+            if bulk_tickers.strip():
+                # Parse tickers (split by comma or space)
+                ticker_list = []
+                for ticker in bulk_tickers.replace(',', ' ').split():
+                    ticker = ticker.strip().upper()
+                    if ticker:
+                        ticker_list.append(ticker)
+                
+                if ticker_list:
+                    current_tickers = st.session_state.tickers.copy()
+                    current_allocs = st.session_state.allocs.copy()
+                    current_divs = st.session_state.divs.copy()
+                    
+                    # Replace tickers - new ones get 0% allocation
+                    new_tickers = []
+                    new_allocs = []
+                    new_divs = []
+                    
+                    for i, ticker in enumerate(ticker_list):
+                        if i < len(current_tickers):
+                            # Use existing allocation if available
+                            new_tickers.append(ticker)
+                            new_allocs.append(current_allocs[i])
+                            new_divs.append(current_divs[i])
+                        else:
+                            # New tickers get 0% allocation
+                            new_tickers.append(ticker)
+                            new_allocs.append(0.0)
+                            new_divs.append(True)
+                    
+                    # Update session state
+                    st.session_state.tickers = new_tickers
+                    st.session_state.allocs = new_allocs
+                    st.session_state.divs = new_divs
+                    
+                    # Clear any existing session state keys for individual ticker inputs to force refresh
+                    for key in list(st.session_state.keys()):
+                        if key.startswith("ticker_") or key.startswith("alloc_input_") or key.startswith("divs_checkbox_"):
+                            del st.session_state[key]
+                    
+                    st.success(f"✅ Replaced tickers with: {', '.join(ticker_list)}")
+                    st.info("💡 **Note:** Existing allocations preserved. Adjust allocations manually if needed.")
+                    
+                    # Force immediate rerun
+                    st.rerun()
+                else:
+                    st.error("❌ No valid tickers found. Please enter ticker symbols separated by spaces or commas.")
+            else:
+                st.error("❌ Please enter ticker symbols.")
+
+    # Clear all tickers button - exact same format as page 1
+    if st.button("🗑️ Clear All Tickers", key="backtest_engine_clear_all_tickers_immediate", 
+                help="Delete ALL tickers and create a blank one", use_container_width=True):
+        # Clear all tickers and create a single blank ticker
+        st.session_state.tickers = ['']
+        st.session_state.allocs = [0.0]
+        st.session_state.divs = [True]
+        
+        # Clear bulk ticker input
+        st.session_state.backtest_engine_bulk_tickers = ""
+        
+        # Clear any existing session state keys for individual ticker inputs to force refresh
+        for key in list(st.session_state.keys()):
+            if key.startswith("ticker_") or key.startswith("alloc_input_") or key.startswith("divs_checkbox_"):
+                del st.session_state[key]
+        
+        # Clear any backtest results
+        for key in list(st.session_state.keys()):
+            if key.startswith("backtest_") or key in ["results", "fig", "fig_stats", "fig_drawdown", "fig_allocations"]:
+                del st.session_state[key]
+        
+        st.success("✅ All tickers cleared! Ready for fresh start.")
+        st.rerun()
 
     if st.button("Add Ticker", help="Add another asset to the list", on_click=add_ticker_callback):
         pass
