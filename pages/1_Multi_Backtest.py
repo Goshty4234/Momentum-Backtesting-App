@@ -8,6 +8,7 @@ from plotly.subplots import make_subplots
 import json
 import io
 import re
+import time
 from numba import jit
 import concurrent.futures
 from functools import lru_cache
@@ -452,6 +453,7 @@ def generate_zero_return_data(period="max"):
         }, index=dates)
         return zero_data
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
     """Cache ticker data to improve performance across multiple tabs
     
@@ -2886,6 +2888,196 @@ def get_portfolio_value(portfolio_name):
                 if not pd.isna(latest_value) and latest_value > 0:
                     portfolio_value = float(latest_value)
     return portfolio_value
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def create_allocation_evolution_chart(portfolio_name, allocs_data):
+    """Create allocation evolution chart for a portfolio - cached for performance"""
+    try:
+        # Convert to DataFrame for easier processing
+        alloc_df = pd.DataFrame(allocs_data).T
+        alloc_df.index = pd.to_datetime(alloc_df.index)
+        alloc_df = alloc_df.sort_index()
+        
+        # Get all unique tickers (excluding None)
+        all_tickers = set()
+        for date, allocs in allocs_data.items():
+            for ticker in allocs.keys():
+                if ticker is not None:
+                    all_tickers.add(ticker)
+        all_tickers = sorted(list(all_tickers))
+        
+        # Fill missing values with 0 for unavailable assets (instead of forward fill)
+        alloc_df = alloc_df.fillna(0)
+        
+        # Convert to percentages
+        alloc_df = alloc_df * 100
+        
+        # Create the evolution chart
+        fig_evolution = go.Figure()
+        
+        # Color palette for different tickers
+        colors = [
+            '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+            '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+            '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5'
+        ]
+        
+        # Add a trace for each ticker
+        for i, ticker in enumerate(all_tickers):
+            if ticker in alloc_df.columns:
+                # Get the allocation data for this ticker
+                ticker_data = alloc_df[ticker].dropna()
+                
+                if not ticker_data.empty:  # Only add if we have data
+                    fig_evolution.add_trace(go.Scatter(
+                        x=ticker_data.index,
+                        y=ticker_data.values,
+                        mode='lines',
+                        name=ticker,
+                        line=dict(color=colors[i % len(colors)], width=2),
+                        hovertemplate=f'<b>{ticker}</b><br>' +
+                                    'Date: %{x}<br>' +
+                                    'Allocation: %{y:.1f}%<br>' +
+                                    '<extra></extra>'
+                    ))
+        
+        # Update layout
+        fig_evolution.update_layout(
+            title=f"Portfolio Allocation Evolution - {portfolio_name}",
+            xaxis_title="Date",
+            yaxis_title="Allocation (%)",
+            template='plotly_dark',
+            height=600,
+            hovermode='x unified',
+            legend=dict(
+                orientation="v",
+                yanchor="top",
+                y=1,
+                xanchor="left",
+                x=1.01
+            )
+        )
+        
+        return fig_evolution
+        
+    except Exception as e:
+        st.error(f"Error creating allocation evolution chart for {portfolio_name}: {str(e)}")
+        return None
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def process_allocation_dataframe(portfolio_name, allocation_data):
+    """Process allocation data into a clean DataFrame - cached for performance"""
+    try:
+        # Ensure all tickers (including CASH) are present in all dates for proper DataFrame creation
+        all_tickers = set()
+        for date, alloc_dict in allocation_data.items():
+            all_tickers.update(alloc_dict.keys())
+        
+        # Create a complete DataFrame with all dates and all tickers
+        all_dates = sorted(allocation_data.keys())
+        complete_data = {}
+        
+        for date in all_dates:
+            alloc_dict = allocation_data[date]
+            complete_data[date] = {ticker: alloc_dict.get(ticker, 0) for ticker in all_tickers}
+        
+        # Convert to DataFrame
+        df = pd.DataFrame(complete_data).T
+        df.index = pd.to_datetime(df.index)
+        df = df.sort_index()
+        
+        # Convert to percentages
+        df = df * 100
+        
+        return df, sorted(list(all_tickers))
+        
+    except Exception as e:
+        st.error(f"Error processing allocation data for {portfolio_name}: {str(e)}")
+        return None, []
+
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def create_pie_chart(portfolio_name, allocation_data, title_suffix="Current Allocation"):
+    """Create pie chart for portfolio allocation - cached for performance"""
+    try:
+        if not allocation_data:
+            return None
+            
+        # Filter out zero allocations and None values
+        filtered_data = {k: v for k, v in allocation_data.items() if v > 0 and k is not None}
+        
+        if not filtered_data:
+            return None
+            
+        # Convert to percentages
+        total = sum(filtered_data.values())
+        if total == 0:
+            return None
+            
+        percentages = {k: (v / total) * 100 for k, v in filtered_data.items()}
+        
+        # Create pie chart
+        fig = go.Figure(data=[go.Pie(
+            labels=list(percentages.keys()),
+            values=list(percentages.values()),
+            textinfo='percent+label',
+            textposition='auto',
+            hovertemplate='<b>%{label}</b><br>Allocation: %{percent}<br>Value: %{value:.1f}%<extra></extra>',
+            marker=dict(
+                colors=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                       '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+                       '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5']
+            )
+        )])
+        
+        fig.update_layout(
+            title=f"{portfolio_name} - {title_suffix}",
+            template='plotly_dark',
+            height=400,
+            showlegend=True
+        )
+        
+        return fig
+        
+    except Exception as e:
+        st.error(f"Error creating pie chart for {portfolio_name}: {str(e)}")
+        return None
+
+def sort_dataframe_numerically(df, column):
+    """Sort DataFrame by a specific column numerically, handling percentage strings and N/A values"""
+    if column not in df.columns:
+        return df
+    
+    # Create a copy to avoid modifying the original
+    df_sorted = df.copy()
+    
+    # Extract numeric values for sorting
+    def extract_numeric_value(value):
+        if pd.isna(value) or value == 'N/A' or value == 'N/A%':
+            return float('-inf')  # Put N/A values at the end
+        
+        # Handle percentage strings
+        if isinstance(value, str) and value.endswith('%'):
+            try:
+                return float(value.replace('%', ''))
+            except:
+                return float('-inf')
+        
+        # Handle regular numbers
+        try:
+            return float(value)
+        except:
+            return float('-inf')
+    
+    # Create sorting key
+    df_sorted['_sort_key'] = df_sorted[column].apply(extract_numeric_value)
+    
+    # Sort by the numeric key
+    df_sorted = df_sorted.sort_values('_sort_key', ascending=False)
+    
+    # Drop the sorting key
+    df_sorted = df_sorted.drop('_sort_key', axis=1)
+    
+    return df_sorted
 
 def get_dates_by_freq(freq, start, end, market_days):
     market_days = sorted(market_days)
@@ -9331,6 +9523,48 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             # Save portfolio index -> unique key mapping so UI selectors can reference results reliably
             st.session_state.multi_backtest_portfolio_key_map = portfolio_key_map
             st.session_state.multi_backtest_ran = True
+            
+            # OPTIMIZATION: Pre-compute and cache allocation evolution charts for all portfolios
+            st.info("🔄 Pre-computing charts for instant portfolio selection...")
+            progress_bar = st.progress(0)
+            
+            # Get all available portfolio names for pre-computation
+            available_portfolio_names = [cfg.get('name', 'Portfolio') for cfg in st.session_state.get('multi_backtest_portfolio_configs', [])]
+            extra_names = [n for n in st.session_state.get('multi_all_results', {}).keys() if n not in available_portfolio_names]
+            all_portfolio_names = available_portfolio_names + extra_names
+            total_portfolios = len(all_portfolio_names)
+            
+            for i, portfolio_name in enumerate(all_portfolio_names):
+                if portfolio_name in all_allocations:
+                    try:
+                        # Get allocation data for this portfolio
+                        allocs_data = all_allocations[portfolio_name]
+                        
+                        # Check if this is a fusion portfolio and filter out fusion portfolio allocation data
+                        portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                        portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == portfolio_name), None)
+                        is_fusion = portfolio_cfg and portfolio_cfg.get('fusion_portfolio', {}).get('enabled', False)
+                        
+                        if is_fusion:
+                            # Remove fusion portfolio allocation data from individual stock allocations
+                            filtered_allocs_data = {}
+                            for date, alloc_dict in allocs_data.items():
+                                filtered_alloc_dict = {k: v for k, v in alloc_dict.items() if k != '_FUSION_PORTFOLIOS_'}
+                                filtered_allocs_data[date] = filtered_alloc_dict
+                            allocs_data = filtered_allocs_data
+                        
+                        if allocs_data:
+                            # Use cached function to create chart
+                            fig_evolution = create_allocation_evolution_chart(portfolio_name, allocs_data)
+                            if fig_evolution:
+                                st.session_state[f'multi_allocation_evolution_chart_{portfolio_name}'] = fig_evolution
+                    except Exception as e:
+                        st.warning(f"Could not pre-compute chart for {portfolio_name}: {str(e)}")
+                
+                progress_bar.progress((i + 1) / total_portfolios)
+            
+            progress_bar.empty()
+            st.success("✅ Charts pre-computed! Portfolio selection is now instantaneous.")
 
 # Sidebar JSON export/import for ALL portfolios
 def paste_all_json_callback():
@@ -10573,6 +10807,21 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             with st.expander("ℹ️ Column Definitions", expanded=False):
                 st.markdown(tooltip_html, unsafe_allow_html=True)
             
+            # Add sorting controls
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                sort_column = st.selectbox(
+                    "Sort by:",
+                    options=stats_df_clean.columns.tolist(),
+                    index=0,
+                    key="final_stats_sort_column",
+                    help="Select a column to sort the table numerically"
+                )
+            with col2:
+                if st.button("🔄 Sort Table", key="final_stats_sort_button"):
+                    stats_df_clean = sort_dataframe_numerically(stats_df_clean, sort_column)
+                    st.rerun()
+            
             # Display the dataframe with multiple fallback options
             try:
                 st.dataframe(styled_df, use_container_width=True)
@@ -11004,6 +11253,55 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     focused_df['Recovery Factor'] = focused_df['Recovery Factor'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
                     focused_df['Tail Ratio'] = focused_df['Tail Ratio'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
                 
+                # Add column definitions expander
+                focused_tooltip_data = {
+                    'CAGR': 'Compound Annual Growth Rate - The annualized rate of return over the investment period',
+                    'Max Drawdown': 'Maximum Drawdown - The largest peak-to-trough decline during the period',
+                    'Volatility': 'Volatility - Standard deviation of returns, measuring price dispersion',
+                    'Sharpe Ratio': 'Sharpe Ratio - Risk-adjusted return (excess return per unit of volatility)',
+                    'Sortino Ratio': 'Sortino Ratio - Risk-adjusted return considering only downside volatility',
+                    'Calmar Ratio': 'Calmar Ratio - Annual return divided by maximum drawdown',
+                    'Sterling Ratio': 'Sterling Ratio - Average annual return divided by average drawdown',
+                    'Recovery Factor': 'Recovery Factor - Net profit divided by maximum drawdown',
+                    'Tail Ratio': 'Tail Ratio - 95th percentile return divided by 5th percentile return',
+                    'Win Rate': 'Win Rate - Percentage of positive return periods',
+                    'Loss Rate': 'Loss Rate - Percentage of negative return periods',
+                    'Median Win': 'Median Win - Median return of positive periods',
+                    'Median Loss': 'Median Loss - Median return of negative periods',
+                    'Profit Factor': 'Profit Factor - Gross profit divided by gross loss',
+                    'Best Month': 'Best Month - Highest single month return',
+                    'Worst Month': 'Worst Month - Lowest single month return',
+                    'Median Monthly': 'Median Monthly - Median monthly return',
+                    'Median Drawdown': 'Median Drawdown - Median drawdown value'
+                }
+                
+                # Create tooltip HTML
+                focused_tooltip_html = "<div style='background-color: #1e1e1e; color: white; padding: 10px; border-radius: 5px; font-size: 12px;'>"
+                focused_tooltip_html += "<b>Column Definitions:</b><br><br>"
+                for col in focused_df.columns:
+                    if col in focused_tooltip_data:
+                        focused_tooltip_html += f"<b>{col}:</b> {focused_tooltip_data[col]}<br><br>"
+                focused_tooltip_html += "</div>"
+                
+                # Display tooltip info
+                with st.expander("ℹ️ Column Definitions", expanded=False):
+                    st.markdown(focused_tooltip_html, unsafe_allow_html=True)
+                
+                # Add sorting controls for focused analysis
+                col1, col2 = st.columns([1, 3])
+                with col1:
+                    focused_sort_column = st.selectbox(
+                        "Sort by:",
+                        options=focused_df.columns.tolist(),
+                        index=0,
+                        key="focused_analysis_sort_column",
+                        help="Select a column to sort the table numerically"
+                    )
+                with col2:
+                    if st.button("🔄 Sort Table", key="focused_analysis_sort_button"):
+                        focused_df = sort_dataframe_numerically(focused_df, focused_sort_column)
+                        st.rerun()
+                
                 # Display the focused table
                 st.dataframe(focused_df, use_container_width=True)
                 
@@ -11073,6 +11371,55 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     focused_df['Recovery Factor'] = focused_df['Recovery Factor'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
                 if 'Tail Ratio' in focused_df.columns:
                     focused_df['Tail Ratio'] = focused_df['Tail Ratio'].apply(lambda x: f"{x:.2f}" if not pd.isna(x) else "N/A")
+            
+            # Add column definitions expander
+            focused_tooltip_data = {
+                'CAGR': 'Compound Annual Growth Rate - The annualized rate of return over the investment period',
+                'Max Drawdown': 'Maximum Drawdown - The largest peak-to-trough decline during the period',
+                'Volatility': 'Volatility - Standard deviation of returns, measuring price dispersion',
+                'Sharpe Ratio': 'Sharpe Ratio - Risk-adjusted return (excess return per unit of volatility)',
+                'Sortino Ratio': 'Sortino Ratio - Risk-adjusted return considering only downside volatility',
+                'Calmar Ratio': 'Calmar Ratio - Annual return divided by maximum drawdown',
+                'Sterling Ratio': 'Sterling Ratio - Average annual return divided by average drawdown',
+                'Recovery Factor': 'Recovery Factor - Net profit divided by maximum drawdown',
+                'Tail Ratio': 'Tail Ratio - 95th percentile return divided by 5th percentile return',
+                'Win Rate': 'Win Rate - Percentage of positive return periods',
+                'Loss Rate': 'Loss Rate - Percentage of negative return periods',
+                'Median Win': 'Median Win - Median return of positive periods',
+                'Median Loss': 'Median Loss - Median return of negative periods',
+                'Profit Factor': 'Profit Factor - Gross profit divided by gross loss',
+                'Best Month': 'Best Month - Highest single month return',
+                'Worst Month': 'Worst Month - Lowest single month return',
+                'Median Monthly': 'Median Monthly - Median monthly return',
+                'Median Drawdown': 'Median Drawdown - Median drawdown value'
+            }
+            
+            # Create tooltip HTML
+            focused_tooltip_html = "<div style='background-color: #1e1e1e; color: white; padding: 10px; border-radius: 5px; font-size: 12px;'>"
+            focused_tooltip_html += "<b>Column Definitions:</b><br><br>"
+            for col in focused_df.columns:
+                if col in focused_tooltip_data:
+                    focused_tooltip_html += f"<b>{col}:</b> {focused_tooltip_data[col]}<br><br>"
+            focused_tooltip_html += "</div>"
+            
+            # Display tooltip info
+            with st.expander("ℹ️ Column Definitions", expanded=False):
+                st.markdown(focused_tooltip_html, unsafe_allow_html=True)
+            
+            # Add sorting controls for focused analysis
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                focused_sort_column = st.selectbox(
+                    "Sort by:",
+                    options=focused_df.columns.tolist(),
+                    index=0,
+                    key="focused_analysis_sort_column_2",
+                    help="Select a column to sort the table numerically"
+                )
+            with col2:
+                if st.button("🔄 Sort Table", key="focused_analysis_sort_button_2"):
+                    focused_df = sort_dataframe_numerically(focused_df, focused_sort_column)
+                    st.rerun()
             
             # Display the focused table
             st.dataframe(focused_df, use_container_width=True)
@@ -11514,45 +11861,33 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             if view_clicked:
                 # No-op here; the detail panels below will render based on selected_portfolio_detail. Keep a small indicator
                 st.success(f"Loaded details for {selected_portfolio_detail}")
-            # Table 1: Historical Allocations
+            # Table 1: Historical Allocations - OPTIMIZED with session state caching
             if selected_portfolio_detail in st.session_state.multi_all_allocations:
                 st.markdown("---")
                 st.markdown(f"**Historical Allocations for {selected_portfolio_detail}**")
-                # Ensure proper DataFrame structure with explicit column names
-                # Filter out fusion portfolio allocation data for fusion portfolios
-                allocation_data = st.session_state.multi_all_allocations[selected_portfolio_detail]
                 
-                # Check if this is a fusion portfolio
-                portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
-                portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
-                is_fusion = portfolio_cfg and portfolio_cfg.get('fusion_portfolio', {}).get('enabled', False)
+                # Check if processed DataFrame is already cached in session state
+                df_cache_key = f'processed_allocations_df_{selected_portfolio_detail}'
+                tickers_cache_key = f'processed_allocations_tickers_{selected_portfolio_detail}'
                 
-                # NUCLEAR OPTION: Portfolio names are never stored, only individual stocks
-                
-                # Show all allocation data (like page 3) - no filtering to rebalancing dates only
-                
-                # Ensure all tickers (including CASH) are present in all dates for proper DataFrame creation
-                all_tickers = set()
-                for date, alloc_dict in allocation_data.items():
-                    all_tickers.update(alloc_dict.keys())
-                
-                # Create a complete allocation data structure with all tickers for all dates
-                complete_allocation_data = {}
-                for date, alloc_dict in allocation_data.items():
-                    complete_allocation_data[date] = {}
-                    for ticker in all_tickers:
-                        if ticker in alloc_dict:
-                            complete_allocation_data[date][ticker] = alloc_dict[ticker]
-                        else:
-                            # Fill missing tickers with 0
-                            complete_allocation_data[date][ticker] = 0.0
-                
-                allocations_df_raw = pd.DataFrame(complete_allocation_data).T
-                
-                allocations_df_raw.index.name = "Date"
-                
-                # Sort by date (chronological order - oldest first)
-                allocations_df_raw = allocations_df_raw.sort_index(ascending=True)
+                if df_cache_key not in st.session_state or tickers_cache_key not in st.session_state:
+                    # Process allocation data and cache it
+                    allocation_data = st.session_state.multi_all_allocations[selected_portfolio_detail]
+                    allocations_df_raw, all_tickers = process_allocation_dataframe(selected_portfolio_detail, allocation_data)
+                    
+                    if allocations_df_raw is not None:
+                        allocations_df_raw.index.name = "Date"
+                        allocations_df_raw = allocations_df_raw.sort_index(ascending=True)
+                        # Cache the processed data
+                        st.session_state[df_cache_key] = allocations_df_raw
+                        st.session_state[tickers_cache_key] = all_tickers
+                    else:
+                        st.warning("Could not process allocation data")
+                        st.stop()
+                else:
+                    # Use cached data
+                    allocations_df_raw = st.session_state[df_cache_key]
+                    all_tickers = st.session_state[tickers_cache_key]
                 
                 # Corrected styling logic for alternating row colors (no green background for Historical Allocations)
                 def highlight_rows_by_index(s):
@@ -13956,6 +14291,26 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
     
     # Console log UI removed
     
+    # Performance Debug Section
+    if st.session_state.get('multi_backtest_ran', False):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🔄 Clear Cache", help="Clear all cached charts and data"):
+                # Clear all cached data
+                keys_to_clear = [key for key in st.session_state.keys() if key.startswith(('multi_allocation_evolution_chart_', 'processed_allocations_df_', 'processed_allocations_tickers_', 'pie_chart_'))]
+                for key in keys_to_clear:
+                    del st.session_state[key]
+                st.success("Cache cleared! Charts will be recreated on next selection.")
+                st.rerun()
+        
+        with col2:
+            cached_charts = len([key for key in st.session_state.keys() if key.startswith('multi_allocation_evolution_chart_')])
+            st.metric("Cached Charts", cached_charts)
+        
+        with col3:
+            cached_dfs = len([key for key in st.session_state.keys() if key.startswith('processed_allocations_df_')])
+            st.metric("Cached DataFrames", cached_dfs)
+    
     # Allocation Evolution Chart Section
     if 'multi_all_allocations' in st.session_state and st.session_state.multi_all_allocations:
         st.markdown("---")
@@ -13966,29 +14321,43 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         extra_names = [n for n in st.session_state.get('multi_all_results', {}).keys() if n not in available_portfolio_names]
         all_portfolio_names = available_portfolio_names + extra_names
         
-        # Generate allocation evolution charts for ALL portfolios (not just selected one)
+        # OPTIMIZED: Lazy loading - only create charts when selected
         if all_portfolio_names:
-            # Generate charts for all portfolios and store in session state
-            for portfolio_name in all_portfolio_names:
-                if portfolio_name in st.session_state.multi_all_allocations:
-                    try:
-                        # Get allocation data for this portfolio
-                        allocs_data = st.session_state.multi_all_allocations[portfolio_name]
-                        
-                        # Check if this is a fusion portfolio and filter out fusion portfolio allocation data
-                        portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
-                        portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == portfolio_name), None)
-                        is_fusion = portfolio_cfg and portfolio_cfg.get('fusion_portfolio', {}).get('enabled', False)
-                        
-                        if is_fusion:
-                            # Remove fusion portfolio allocation data from individual stock allocations
-                            filtered_allocs_data = {}
-                            for date, alloc_dict in allocs_data.items():
-                                filtered_alloc_dict = {k: v for k, v in alloc_dict.items() if k != '_FUSION_PORTFOLIOS_'}
-                                filtered_allocs_data[date] = filtered_alloc_dict
-                            allocs_data = filtered_allocs_data
-                        
-                        if allocs_data:
+            # Show the selector first
+            selected_portfolio_evolution = st.selectbox(
+                "Select portfolio for allocation evolution chart",
+                all_portfolio_names,
+                key="allocation_evolution_portfolio_selector",
+                help="Choose which portfolio to show allocation evolution over time"
+            )
+            
+            # LAZY LOADING: Only create chart for selected portfolio
+            if selected_portfolio_evolution and selected_portfolio_evolution in st.session_state.multi_all_allocations:
+                chart_key = f'multi_allocation_evolution_chart_{selected_portfolio_evolution}'
+                
+                # Check if chart already exists in session state
+                if chart_key not in st.session_state:
+                    # Create chart only when needed
+                    st.info("🔄 Creating allocation evolution chart... (this will be cached for instant future access)")
+                    start_time = time.time()
+                    allocs_data = st.session_state.multi_all_allocations[selected_portfolio_evolution]
+                    
+                    # Check if this is a fusion portfolio and filter out fusion portfolio allocation data
+                    portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                    portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_evolution), None)
+                    is_fusion = portfolio_cfg and portfolio_cfg.get('fusion_portfolio', {}).get('enabled', False)
+                    
+                    if is_fusion:
+                        # Remove fusion portfolio allocation data from individual stock allocations
+                        filtered_allocs_data = {}
+                        for date, alloc_dict in allocs_data.items():
+                            filtered_alloc_dict = {k: v for k, v in alloc_dict.items() if k != '_FUSION_PORTFOLIOS_'}
+                            filtered_allocs_data[date] = filtered_alloc_dict
+                        allocs_data = filtered_allocs_data
+                    
+                    if allocs_data:
+                        # Create chart directly (no caching needed since it's stored in session state)
+                        try:
                             # Convert to DataFrame for easier processing
                             alloc_df = pd.DataFrame(allocs_data).T
                             alloc_df.index = pd.to_datetime(alloc_df.index)
@@ -14002,7 +14371,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                         all_tickers.add(ticker)
                             all_tickers = sorted(list(all_tickers))
                             
-                            # Fill missing values with 0 for unavailable assets (instead of forward fill)
+                            # Fill missing values with 0 for unavailable assets
                             alloc_df = alloc_df.fillna(0)
                             
                             # Convert to percentages
@@ -14039,7 +14408,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                             
                             # Update layout
                             fig_evolution.update_layout(
-                                title=f"Portfolio Allocation Evolution - {portfolio_name}",
+                                title=f"Portfolio Allocation Evolution - {selected_portfolio_evolution}",
                                 xaxis_title="Date",
                                 yaxis_title="Allocation (%)",
                                 template='plotly_dark',
@@ -14054,27 +14423,24 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 )
                             )
                             
-                            # Store the chart in session state for PDF export
-                            st.session_state[f'multi_allocation_evolution_chart_{portfolio_name}'] = fig_evolution
+                            # Store the chart in session state
+                            st.session_state[chart_key] = fig_evolution
                             
-                    except Exception as e:
-                        st.error(f"Error creating allocation evolution chart for {portfolio_name}: {str(e)}")
-            
-            # Now show the selector and display the selected portfolio's chart
-            selected_portfolio_evolution = st.selectbox(
-                "Select portfolio for allocation evolution chart",
-                all_portfolio_names,
-                key="allocation_evolution_portfolio_selector",
-                help="Choose which portfolio to show allocation evolution over time"
-            )
-            
-            # Display the selected portfolio's chart
-            chart_key = f'multi_allocation_evolution_chart_{selected_portfolio_evolution}'
-            if chart_key in st.session_state:
-                st.plotly_chart(st.session_state[chart_key], use_container_width=True)
+                            # Show timing info
+                            end_time = time.time()
+                            st.success(f"✅ Chart created in {end_time - start_time:.2f} seconds and cached for instant future access!")
+                            
+                        except Exception as e:
+                            st.error(f"Error creating allocation evolution chart for {selected_portfolio_evolution}: {str(e)}")
+                else:
+                    # Chart exists in cache - show instant loading message
+                    st.success("⚡ Chart loaded instantly from cache!")
                 
-                # Show proper visual legend with colors and dotted lines
-                if selected_portfolio_evolution in st.session_state.multi_all_allocations:
+                # Display the chart if it exists
+                if chart_key in st.session_state:
+                    st.plotly_chart(st.session_state[chart_key], use_container_width=True)
+                    
+                    # Show proper visual legend with colors and dotted lines
                     allocs_data = st.session_state.multi_all_allocations[selected_portfolio_evolution]
                     if allocs_data:
                         # Get all unique tickers (excluding None)
@@ -14100,8 +14466,10 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 with cols[i % 4]:
                                     color = colors[i % len(colors)]
                                     st.markdown(f"<span style='color: {color}; font-weight: bold;'>━━━</span> {ticker}", unsafe_allow_html=True)
+                else:
+                    st.warning(f"Could not create allocation evolution chart for {selected_portfolio_evolution}")
             else:
-                st.info("No allocation evolution data available for the selected portfolio.")
+                st.warning(f"No allocation data available for {selected_portfolio_evolution}")
         else:
             st.info("No portfolios available for allocation evolution chart.")
     
