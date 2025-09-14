@@ -3030,7 +3030,16 @@ def process_allocation_dataframe(portfolio_name, allocation_data):
         # Convert to percentages
         df = df * 100
         
-        return df, sorted(list(all_tickers))
+        # Sort tickers with CASH always last
+        ticker_list = sorted(list(all_tickers))
+        if 'CASH' in ticker_list:
+            ticker_list.remove('CASH')
+            ticker_list.append('CASH')
+        
+        # Reorder DataFrame columns to match the desired order
+        df = df[ticker_list]
+        
+        return df, ticker_list
         
     except Exception as e:
         st.error(f"Error processing allocation data for {portfolio_name}: {str(e)}")
