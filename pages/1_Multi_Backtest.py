@@ -12,9 +12,50 @@ import time
 from numba import jit
 import concurrent.futures
 from functools import lru_cache
+import os
+import signal
+import sys
+import threading
 
 # Set pandas options for handling large dataframes
 pd.set_option("styler.render.max_elements", 1000000)  # Allow up to 1M cells for styling
+
+# =============================================================================
+# HARD KILL FUNCTIONS
+# =============================================================================
+def hard_kill_process():
+    """Completely kill the current process and all background threads"""
+    try:
+        # Kill all background threads
+        for thread in threading.enumerate():
+            if thread != threading.current_thread():
+                thread.join(timeout=0.1)
+
+        # Force garbage collection
+        import gc
+        gc.collect()
+
+        # On Windows, use os._exit for immediate termination
+        if os.name == 'nt':
+            os._exit(1)
+        else:
+            # On Unix-like systems, use os.kill
+            os.kill(os.getpid(), signal.SIGTERM)
+    except Exception:
+        # Last resort - force exit
+        os._exit(1)
+
+def check_kill_request():
+    """Check if user has requested a hard kill"""
+    if st.session_state.get('hard_kill_requested', False):
+        st.error("🛑 **HARD KILL REQUESTED** - Terminating all processes...")
+        st.stop()
+
+def emergency_kill():
+    """Emergency kill function that can be called from anywhere"""
+    st.error("🛑 **EMERGENCY KILL** - Forcing immediate termination...")
+    st.session_state.hard_kill_requested = True
+    hard_kill_process()
 
 # =============================================================================
 # TICKER ALIASES FUNCTIONS
@@ -8469,8 +8510,21 @@ if st.sidebar.button("🗑️ Clear All Outputs", type="secondary", use_containe
     clear_all_outputs()
     st.rerun()
 
+# Cancel Run Button
+if st.sidebar.button("🛑 Cancel Run", type="secondary", use_container_width=True, help="Stop current backtest execution gracefully"):
+    st.session_state.hard_kill_requested = True
+    st.toast("🛑 **CANCELLING** - Stopping backtest execution...", icon="⏹️")
+    st.rerun()
+
+# Emergency Kill Button
+if st.sidebar.button("🚨 EMERGENCY KILL", type="secondary", use_container_width=True, help="Force terminate all processes immediately - Use for crashes, freezes, or unresponsive states"):
+    st.toast("🚨 **EMERGENCY KILL** - Force terminating all processes...", icon="💥")
+    emergency_kill()
+
 # Move Run Backtest to the left sidebar to make it conspicuous and separate from config
 if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=True):
+    # Reset kill request when starting new backtest
+    st.session_state.hard_kill_requested = False
     
     # Pre-backtest validation check for all portfolios
     configs_to_run = st.session_state.multi_backtest_portfolio_configs
@@ -8528,6 +8582,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         progress_bar = st.empty()
         progress_bar.progress(0, text="Initializing multi-portfolio backtest...")
         
+        # Check for kill request
+        check_kill_request()
+        
         # Get all tickers first
         all_tickers = sorted(list(set(s['ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs for s in cfg['stocks'] if s['ticker']) | set(cfg['benchmark_ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs if 'benchmark_ticker' in cfg)))
         all_tickers = [t for t in all_tickers if t]
@@ -8558,6 +8615,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             data = {}
             invalid_tickers = []
             for i, t in enumerate(all_tickers):
+                # Check for kill request during data download
+                check_kill_request()
+                
                 try:
                     progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
                     progress_bar.progress((i + 1) / (len(all_tickers) + 1), text=progress_text)
@@ -8911,6 +8971,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 
                 # PHASE 1: Process regular portfolios first
                 if regular_portfolios:
+                    # Check for kill request before Phase 1
+                    check_kill_request()
+                    
                     processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and len(regular_portfolios) > 1 else "sequential"
                     worker_info = f" using {max_workers} workers" if processing_mode == "parallel" else ""
                     st.info(f"🚀 **Phase 1: Processing {len(regular_portfolios)} regular portfolios in {processing_mode} mode{worker_info}...**")
@@ -8958,6 +9021,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     else:
                         # Process regular portfolios sequentially
                         for i, args in enumerate(regular_portfolios, start=1):
+                            # Check for kill request during sequential processing
+                            check_kill_request()
+                            
                             progress_percent = i / len(regular_portfolios)
                             progress_bar.progress(progress_percent, text=f"Phase 1: Processing regular portfolio {i}/{len(regular_portfolios)}: {args[1].get('name', f'Portfolio {i}')}")
                             
@@ -8991,6 +9057,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 
                 # PHASE 2: Process fusion portfolios after regular portfolios are complete
                 if fusion_portfolios:
+                    # Check for kill request before Phase 2
+                    check_kill_request()
+                    
                     processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and len(fusion_portfolios) > 1 else "sequential"
                     worker_info = f" using {max_workers} workers" if processing_mode == "parallel" else ""
                     st.info(f"🚀 **Phase 2: Processing {len(fusion_portfolios)} fusion portfolios in {processing_mode} mode{worker_info} (depends on regular portfolios)...**")
@@ -9041,6 +9110,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     else:
                         # Process fusion portfolios sequentially
                         for i, args in enumerate(fusion_portfolios, start=1):
+                            # Check for kill request during sequential processing
+                            check_kill_request()
+                            
                             progress_percent = i / len(fusion_portfolios)
                             progress_bar.progress(progress_percent, text=f"Phase 2: Processing fusion portfolio {i}/{len(fusion_portfolios)}: {args[1].get('name', f'Portfolio {i}')}")
                             
@@ -9099,6 +9171,10 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 # Memory cleanup
                 import gc
                 gc.collect()
+                
+                # Final kill check before completion
+                check_kill_request()
+                
             progress_bar.empty()
             
             # --- CALCULATE MWRR FOR ALL PORTFOLIOS AFTER LOOP COMPLETES ---
