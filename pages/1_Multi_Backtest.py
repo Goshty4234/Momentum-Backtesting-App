@@ -12017,12 +12017,12 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         st.warning(f"Allocations table is very large ({total_cells:,} cells). Showing simplified view.")
                         # Show only recent data (last 100 rows)
                         recent_data = allocations_df_raw.tail(100)
-                        st.dataframe(recent_data.mul(100).round(1), use_container_width=True)
+                        st.dataframe(recent_data.round(0), use_container_width=True)
                         st.caption("Showing last 100 rows. Use filters to narrow down the data.")
                     else:
                         # Increase pandas styler limit for smaller datasets
                         pd.set_option("styler.render.max_elements", max(total_cells * 2, 500000))
-                        styler = allocations_df_raw.mul(100).style.apply(highlight_rows_by_index, axis=1)
+                        styler = allocations_df_raw.style.apply(highlight_rows_by_index, axis=1)
                         styler.format('{:,.0f}%', na_rep='N/A')
                         st.dataframe(styler, use_container_width=True)
                 except Exception as e:
