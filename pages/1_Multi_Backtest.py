@@ -5277,9 +5277,9 @@ def remove_stock_callback(ticker):
         for i, stock in enumerate(stocks):
             if stock['ticker'] == ticker:
                 stocks.pop(i)
-            # If this was the last stock, add an empty one
-            if len(stocks) == 0:
-                stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                # If this was the last stock, add an empty one
+                if len(stocks) == 0:
+                    stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
                 
                 # Clear session state keys for all remaining stocks to force re-initialization
                 portfolio_index = st.session_state.multi_backtest_active_portfolio_index
