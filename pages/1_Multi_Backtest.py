@@ -57,6 +57,9 @@ def emergency_kill():
     st.session_state.hard_kill_requested = True
     st.rerun()
 
+# Note: Signal handler removed to prevent Streamlit errors
+# Interrupt handling is now done through the existing hard_kill_requested mechanism
+
 # =============================================================================
 # TICKER ALIASES FUNCTIONS
 # =============================================================================
@@ -299,9 +302,82 @@ def get_risk_free_rate_robust(dates):
     except Exception:
         return _get_default_risk_free_rate(dates)
 
+def parse_ticker_parameters(ticker_symbol: str) -> tuple[str, float, float]:
+    """
+    Parse ticker symbol to extract base ticker, leverage multiplier, and expense ratio.
+    
+    Args:
+        ticker_symbol: Ticker symbol with optional parameters (e.g., "SPY?L=3?E=0.84")
+        
+    Returns:
+        tuple: (base_ticker, leverage_multiplier, expense_ratio)
+        
+    Examples:
+        "SPY" -> ("SPY", 1.0, 0.0)
+        "SPY?L=3" -> ("SPY", 3.0, 0.0)
+        "QQQ?E=1" -> ("QQQ", 1.0, 1.0)  # 1% expense ratio
+        "QQQ?L=3?E=0.84" -> ("QQQ", 3.0, 0.84)
+        "QQQ?E=1?L=2" -> ("QQQ", 2.0, 1.0)  # Order doesn't matter
+    """
+    # Convert commas to dots for decimal separators
+    ticker_symbol = ticker_symbol.replace(",", ".")
+    
+    base_ticker = ticker_symbol
+    leverage = 1.0
+    expense_ratio = 0.0
+    
+    # Parse leverage parameter
+    if "?L=" in base_ticker:
+        try:
+            parts = base_ticker.split("?L=", 1)
+            base_ticker = parts[0]
+            leverage_part = parts[1]
+            
+            # Check if there are more parameters after leverage
+            if "?" in leverage_part:
+                leverage_str, remaining = leverage_part.split("?", 1)
+                leverage = float(leverage_str)
+                base_ticker += "?" + remaining  # Add back remaining parameters
+            else:
+                leverage = float(leverage_part)
+            
+            # Validate leverage range (reasonable bounds for leveraged ETFs)
+            if leverage < 0.1 or leverage > 10.0:
+                raise ValueError(f"Leverage {leverage} is outside reasonable range (0.1-10.0)")
+                
+        except (ValueError, IndexError) as e:
+            # If parsing fails, treat as regular ticker with no leverage
+            leverage = 1.0
+    
+    # Parse expense ratio parameter
+    if "?E=" in base_ticker:
+        try:
+            parts = base_ticker.split("?E=", 1)
+            base_ticker = parts[0]
+            expense_part = parts[1]
+            
+            # Check if there are more parameters after expense ratio
+            if "?" in expense_part:
+                expense_str, remaining = expense_part.split("?", 1)
+                expense_ratio = float(expense_str)
+                base_ticker += "?" + remaining  # Add back remaining parameters
+            else:
+                expense_ratio = float(expense_part)
+            
+            # Validate expense ratio range (reasonable bounds for ETFs)
+            if expense_ratio < 0.0 or expense_ratio > 10.0:
+                raise ValueError(f"Expense ratio {expense_ratio} is outside reasonable range (0.0-10.0)")
+                
+        except (ValueError, IndexError) as e:
+            # If parsing fails, treat as regular ticker with no expense ratio
+            expense_ratio = 0.0
+    
+    return base_ticker.strip(), leverage, expense_ratio
+
 def parse_leverage_ticker(ticker_symbol: str) -> tuple[str, float]:
     """
     Parse ticker symbol to extract base ticker and leverage multiplier.
+    This is a backward compatibility wrapper for the new parameter parsing function.
     
     Args:
         ticker_symbol: Ticker symbol, potentially with leverage (e.g., "SPY?L=3")
@@ -312,38 +388,26 @@ def parse_leverage_ticker(ticker_symbol: str) -> tuple[str, float]:
     Examples:
         "SPY" -> ("SPY", 1.0)
         "SPY?L=3" -> ("SPY", 3.0)
-        "QQQ?L=2" -> ("QQQ", 2.0)
+        "QQQ?E=1" -> ("QQQ", 1.0)  # E=1 is expense ratio, not leverage
     """
-    if "?L=" in ticker_symbol:
-        try:
-            base_ticker, leverage_part = ticker_symbol.split("?L=", 1)
-            leverage = float(leverage_part)
-            
-            # Validate leverage range (reasonable bounds for leveraged ETFs)
-            if leverage < 0.1 or leverage > 10.0:
-                raise ValueError(f"Leverage {leverage} is outside reasonable range (0.1-10.0)")
-                
-            return base_ticker.strip(), leverage
-        except (ValueError, IndexError) as e:
-            # If parsing fails, treat as regular ticker with no leverage
-            return ticker_symbol.strip(), 1.0
-    else:
-        return ticker_symbol.strip(), 1.0
+    base_ticker, leverage, _ = parse_ticker_parameters(ticker_symbol)
+    return base_ticker, leverage
 
-def apply_daily_leverage(price_data: pd.DataFrame, leverage: float) -> pd.DataFrame:
+def apply_daily_leverage(price_data: pd.DataFrame, leverage: float, expense_ratio: float = 0.0) -> pd.DataFrame:
     """
-    Apply daily leverage multiplier to price data, simulating leveraged ETF behavior.
+    Apply daily leverage multiplier and expense ratio to price data, simulating leveraged ETF behavior.
     
     Leveraged ETFs reset daily, so we apply the leverage to daily returns and then
     compound the results to get the leveraged price series. Includes daily cost drag
-    equivalent to (leverage - 1) × risk_free_rate.
+    equivalent to (leverage - 1) × risk_free_rate plus daily expense ratio drag.
     
     Args:
         price_data: DataFrame with 'Close' column containing price data
         leverage: Leverage multiplier (e.g., 3.0 for 3x leverage)
+        expense_ratio: Annual expense ratio in percentage (e.g., 1.0 for 1% annual expense)
         
     Returns:
-        DataFrame with leveraged price data including cost drag
+        DataFrame with leveraged price data including cost drag and expense ratio drag
     """
     if leverage == 1.0:
         return price_data.copy()
@@ -366,6 +430,9 @@ def apply_daily_leverage(price_data: pd.DataFrame, leverage: float) -> pd.DataFr
         daily_cost_drag = (leverage - 1) * risk_free_rates
     except Exception as e:
         raise
+    
+    # Calculate daily expense ratio drag: expense_ratio / 100 / 365.25 (annual to daily)
+    daily_expense_drag = expense_ratio / 100.0 / 365.25
     
     # Calculate leveraged prices by applying leverage to each day's price change
     # Start with the first price
@@ -391,8 +458,8 @@ def apply_daily_leverage(price_data: pd.DataFrame, leverage: float) -> pd.DataFr
             # Calculate the actual price change
             price_change = current_price / previous_price - 1
             
-            # Apply leverage to the price change and subtract cost drag
-            leveraged_price_change = (price_change * leverage) - daily_cost_drag.iloc[i]
+            # Apply leverage to the price change and subtract cost drag and expense ratio drag
+            leveraged_price_change = (price_change * leverage) - daily_cost_drag.iloc[i] - daily_expense_drag
             
             # Apply the leveraged price change to the previous leveraged price
             leveraged_prices.iloc[i] = leveraged_prices.iloc[i-1] * (1 + leveraged_price_change)
@@ -504,8 +571,8 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
         auto_adjust: Auto-adjust setting (used in cache key to prevent conflicts)
     """
     try:
-        # Parse leverage from ticker symbol
-        base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
+        # Parse parameters from ticker symbol
+        base_ticker, leverage, expense_ratio = parse_ticker_parameters(ticker_symbol)
         
         # Resolve ticker alias if it exists
         resolved_ticker = resolve_ticker_alias(base_ticker)
@@ -520,9 +587,9 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
         if hist.empty:
             return hist
             
-        # Apply leverage if specified
-        if leverage != 1.0:
-            hist = apply_daily_leverage(hist, leverage)
+        # Apply leverage and/or expense ratio if specified
+        if leverage != 1.0 or expense_ratio != 0.0:
+            hist = apply_daily_leverage(hist, leverage, expense_ratio)
             
         return hist
     except Exception:
@@ -4084,6 +4151,13 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     historical_allocations[sim_index[0]]['CASH'] = unallocated_cash[0] / initial_value if initial_value > 0 else 0
     
     for i in range(len(sim_index)):
+        # Check for interrupt every 100 iterations
+        if i % 100 == 0:
+            # Check if interrupt was requested
+            if hasattr(st.session_state, 'hard_kill_requested') and st.session_state.hard_kill_requested:
+                print("🛑 Hard kill requested - stopping backtest")
+                break
+        
         date = sim_index[i]
         if i == 0: continue
         
@@ -4101,9 +4175,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 # --- Dividend fix: find the correct trading day for dividend ---
                 div = 0.0
                 # CRITICAL FIX: For leveraged tickers, get dividends from the base ticker, not the leveraged ticker
-                if "?L=" in t:
+                if "?L=" in t or "?E=" in t:
                     # For leveraged tickers, get dividend data from the base ticker
-                    base_ticker, leverage = parse_leverage_ticker(t)
+                    base_ticker, leverage, expense_ratio = parse_ticker_parameters(t)
                     if base_ticker in reindexed_data:
                         base_df = reindexed_data[base_ticker]
                         if "Dividends" in base_df.columns:
@@ -4125,6 +4199,15 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             if len(future_dates) > 0:
                                 div = df.loc[future_dates[0], "Dividends"]
                 var = df.loc[date, "Price_change"] if date in df.index else 0.0
+                
+                # Apply expense ratio drag if ticker has expense ratio parameter
+                if "?E=" in t:
+                    base_ticker, leverage, expense_ratio = parse_ticker_parameters(t)
+                    if expense_ratio > 0.0:
+                        # Apply daily expense drag: subtract daily expense ratio
+                        daily_expense_drag = expense_ratio / 100.0 / 365.25
+                        var = var - daily_expense_drag
+                
                 if include_dividends.get(t, False):
                     # Check if dividends should be collected as cash instead of reinvested
                     collect_as_cash = config.get('collect_dividends_as_cash', False)
@@ -4140,9 +4223,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                         # Reinvest dividends (original behavior)
                         # CRITICAL FIX: For leveraged tickers, dividends should be handled differently
                         # When simulating leveraged ETFs, the dividend RATE should be the same as the base asset
-                        if "?L=" in t:
+                        if "?L=" in t or "?E=" in t:
                             # For leveraged tickers, get the base ticker's dividend rate (not amount)
-                            base_ticker, leverage = parse_leverage_ticker(t)
+                            base_ticker, leverage, expense_ratio = parse_ticker_parameters(t)
                             if base_ticker in reindexed_data:
                                 base_df = reindexed_data[base_ticker]
                                 base_price_prev = base_df.loc[date_prev, "Close"]
@@ -4171,9 +4254,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             # --- Dividend fix: find the correct trading day for dividend ---
             div = 0.0
             # CRITICAL FIX: For leveraged tickers, get dividends from the base ticker, not the leveraged ticker
-            if "?L=" in t:
+            if "?L=" in t or "?E=" in t:
                 # For leveraged tickers, get dividend data from the base ticker
-                base_ticker, leverage = parse_leverage_ticker(t)
+                base_ticker, leverage, expense_ratio = parse_ticker_parameters(t)
                 if base_ticker in reindexed_data:
                     base_df = reindexed_data[base_ticker]
                     if "Dividends" in base_df.columns:
@@ -4195,6 +4278,15 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                         if len(future_dates) > 0:
                             div = df.loc[future_dates[0], "Dividends"]
             var = df.loc[date, "Price_change"] if date in df.index else 0.0
+            
+            # Apply expense ratio drag if ticker has expense ratio parameter
+            if "?E=" in t:
+                base_ticker, leverage, expense_ratio = parse_ticker_parameters(t)
+                if expense_ratio > 0.0:
+                    # Apply daily expense drag: subtract daily expense ratio
+                    daily_expense_drag = expense_ratio / 100.0 / 365.25
+                    var = var - daily_expense_drag
+            
             if include_dividends.get(t, False):
                 # Check if dividends should be collected as cash instead of reinvested
                 collect_as_cash = config.get('collect_dividends_as_cash', False)
@@ -4210,9 +4302,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     # Reinvest dividends (original behavior)
                     # CRITICAL FIX: For leveraged tickers, dividends should be handled differently
                     # When simulating leveraged ETFs, the dividend RATE should be the same as the base asset
-                    if "?L=" in t:
+                    if "?L=" in t or "?E=" in t:
                         # For leveraged tickers, get the base ticker's dividend rate (not amount)
-                        base_ticker, leverage = parse_leverage_ticker(t)
+                        base_ticker, leverage, expense_ratio = parse_ticker_parameters(t)
                         if base_ticker in reindexed_data:
                             base_df = reindexed_data[base_ticker]
                             base_price_prev = base_df.loc[date_prev, "Close"]
@@ -4858,6 +4950,12 @@ def fusion_portfolio_backtest(fusion_portfolio_config, all_portfolio_configs, si
     
     # Calculate fusion portfolio value for each date
     for date_idx, current_date in enumerate(sim_index):
+        # Check for interrupt every 100 iterations
+        if date_idx % 100 == 0:
+            # Check if interrupt was requested
+            if hasattr(st.session_state, 'hard_kill_requested') and st.session_state.hard_kill_requested:
+                print("🛑 Hard kill requested - stopping fusion calculation")
+                break
         # Check if this is a fusion rebalancing date
         is_fusion_rebalance = current_date in fusion_rebalancing_dates
         
@@ -4937,6 +5035,12 @@ def fusion_portfolio_backtest(fusion_portfolio_config, all_portfolio_configs, si
     print(f"📊 BUILDING FUSION HISTORICAL DATA:")
     
     for date_idx, current_date in enumerate(sim_index):
+        # Check for interrupt every 100 iterations
+        if date_idx % 100 == 0:
+            # Check if interrupt was requested
+            if hasattr(st.session_state, 'hard_kill_requested') and st.session_state.hard_kill_requested:
+                print("🛑 Hard kill requested - stopping historical data building")
+                break
         # Store fusion portfolio allocations (between portfolios)
         fusion_historical_allocations[current_date] = {}
         fusion_historical_metrics[current_date] = {}
@@ -7850,9 +7954,9 @@ with st.expander("⚡ Leverage Guide", expanded=False):
 # Leverage Summary Section
 leveraged_tickers = []
 for stock in active_portfolio['stocks']:
-    if "?L=" in stock['ticker']:
+    if "?L=" in stock['ticker'] or "?E=" in stock['ticker']:
         try:
-            base_ticker, leverage = parse_leverage_ticker(stock['ticker'])
+            base_ticker, leverage, expense_ratio = parse_ticker_parameters(stock['ticker'])
             leveraged_tickers.append((base_ticker, leverage))
         except:
             pass
@@ -8525,7 +8629,13 @@ if st.sidebar.button("🛑 Cancel Run", type="secondary", use_container_width=Tr
     st.toast("🛑 **CANCELLING** - Stopping backtest execution...", icon="⏹️")
     st.rerun()
 
-# Emergency Kill Button
+# Emergency Stop Button (Second Option)
+if st.sidebar.button("🛑 EMERGENCY STOP", type="secondary", use_container_width=True, help="Stop backtest gracefully - Use when backtest is running normally"):
+    st.toast("🛑 **EMERGENCY STOP** - Stopping backtest gracefully...", icon="⏹️")
+    st.session_state.hard_kill_requested = True
+    st.rerun()
+
+# Emergency Kill Button (Last Resort)
 if st.sidebar.button("🚨 EMERGENCY KILL", type="secondary", use_container_width=True, help="Force terminate all processes immediately - Use for crashes, freezes, or unresponsive states"):
     st.toast("🚨 **EMERGENCY KILL** - Force terminating all processes...", icon="💥")
     emergency_kill()
@@ -8591,6 +8701,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         progress_bar = st.empty()
         progress_bar.progress(0, text="Initializing multi-portfolio backtest...")
         
+        # Emergency stop button will be added during actual backtest execution
+        
         # Check for kill request
         check_kill_request()
         
@@ -8601,8 +8713,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         # CRITICAL FIX: Add base tickers for leveraged tickers to ensure dividend data is available
         base_tickers_to_add = set()
         for ticker in all_tickers:
-            if "?L=" in ticker:
-                base_ticker, leverage = parse_leverage_ticker(ticker)
+            if "?L=" in ticker or "?E=" in ticker:
+                base_ticker, leverage, expense_ratio = parse_ticker_parameters(ticker)
                 base_tickers_to_add.add(base_ticker)
 
         # Add base tickers to the list if they're not already there
@@ -8747,8 +8859,10 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 
                 progress_bar.progress(1.0, text="Executing multi-portfolio backtest analysis...")
                 
+                # Emergency stop is now handled by the existing emergency_kill function
+                
                 # =============================================================================
-                # SIMPLE, FAST, AND RELIABLE PORTFOLIO PROCESSING (NO CACHE VERSION)
+                # SIMPLE, FAST, AND RELIABLE PORTFOLIO PROCESSING (CACHED VERSION)
                 # =============================================================================
                 
                 # Initialize results storage
@@ -8761,7 +8875,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 successful_portfolios = 0
                 failed_portfolios = []
                 
-                st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability (NO CACHE)...**")
+                st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability (CACHED)...**")
                 
                 # Start timing for performance measurement
                 import time as time_module
