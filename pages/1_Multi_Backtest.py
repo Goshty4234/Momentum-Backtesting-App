@@ -16,6 +16,14 @@ import os
 import signal
 import sys
 import threading
+import logging
+import warnings
+
+# Suppress specific Streamlit threading warnings
+warnings.filterwarnings('ignore')
+warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
+logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
+logging.getLogger("streamlit.runtime.scriptrunner.script_runner").propagate = False
 
 # Set pandas options for handling large dataframes
 pd.set_option("styler.render.max_elements", 1000000)  # Allow up to 1M cells for styling
@@ -5381,9 +5389,9 @@ def remove_stock_callback(ticker):
         for i, stock in enumerate(stocks):
             if stock['ticker'] == ticker:
                 stocks.pop(i)
-                # If this was the last stock, add an empty one
-                if len(stocks) == 0:
-                    stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+            # If this was the last stock, add an empty one
+            if len(stocks) == 0:
+                stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
                 
                 # Clear session state keys for all remaining stocks to force re-initialization
                 portfolio_index = st.session_state.multi_backtest_active_portfolio_index
@@ -6392,9 +6400,21 @@ if len(st.session_state.multi_backtest_portfolio_configs) > 1:
     if "multi_backtest_portfolio_checkboxes" not in st.session_state:
         st.session_state.multi_backtest_portfolio_checkboxes = {}
     
+    # Clean up orphaned checkbox states (remove checkboxes for portfolios that no longer exist)
+    existing_portfolio_names = set(portfolio_names)
+    checkbox_keys_to_remove = []
+    for checkbox_name in st.session_state.multi_backtest_portfolio_checkboxes.keys():
+        if checkbox_name not in existing_portfolio_names:
+            checkbox_keys_to_remove.append(checkbox_name)
+    
+    for key in checkbox_keys_to_remove:
+        del st.session_state.multi_backtest_portfolio_checkboxes[key]
+    
     # Enhanced dropdown with built-in selection controls
     with st.sidebar.expander("📋 Manage Multiple Portfolios", expanded=False):
-        st.caption(f"Total portfolios: {len(portfolio_names)}")
+        # Calculate actual portfolio count (filter out empty names)
+        actual_portfolio_count = len([name for name in portfolio_names if name and name.strip()])
+        st.caption(f"Total portfolios: {actual_portfolio_count}")
         
         # Create checkboxes for each portfolio
         st.markdown("**Select portfolios to delete:**")
@@ -6443,23 +6463,23 @@ if len(st.session_state.multi_backtest_portfolio_configs) > 1:
                 if portfolio_name not in st.session_state.multi_backtest_portfolio_checkboxes:
                     st.session_state.multi_backtest_portfolio_checkboxes[portfolio_name] = False
                 
-                # Create a unique callback function for each portfolio
-                def create_portfolio_callback(portfolio_name):
-                    def callback():
-                        # Toggle the current state
-                        current_state = st.session_state.multi_backtest_portfolio_checkboxes.get(portfolio_name, False)
-                        st.session_state.multi_backtest_portfolio_checkboxes[portfolio_name] = not current_state
-                    return callback
-                
-                # Create checkbox for each portfolio with callback
+                # Create checkbox for each portfolio - use on_change with lambda to capture portfolio_name
                 checkbox_key = f"multi_backtest_portfolio_checkbox_{hash(portfolio_name)}"
+                
+                def create_callback(name):
+                    return lambda: None  # We'll handle the state in the checkbox value directly
+                
+                # Create checkbox with direct value binding (no callback needed)
                 is_checked = st.checkbox(
                     f"🗑️ {portfolio_name}",
                     value=st.session_state.multi_backtest_portfolio_checkboxes[portfolio_name],
                     key=checkbox_key,
-                    help=f"Select {portfolio_name} for deletion",
-                    on_change=create_portfolio_callback(portfolio_name)
+                    help=f"Select {portfolio_name} for deletion"
                 )
+                
+                # Update session state directly based on checkbox value
+                if is_checked != st.session_state.multi_backtest_portfolio_checkboxes[portfolio_name]:
+                    st.session_state.multi_backtest_portfolio_checkboxes[portfolio_name] = is_checked
         
         # Get selected portfolios from checkboxes
         selected_portfolios_for_deletion = [
@@ -6475,8 +6495,11 @@ if len(st.session_state.multi_backtest_portfolio_configs) > 1:
         
         # Show selection summary
         if selected_portfolios_for_deletion:
-            st.info(f"📊 Selected: {len(selected_portfolios_for_deletion)} portfolio(s)")
-            st.caption(f"Selected: {', '.join(selected_portfolios_for_deletion[:3])}{'...' if len(selected_portfolios_for_deletion) > 3 else ''}")
+            st.info(f"📊 Selected: {len(selected_portfolios_for_deletion)} of {actual_portfolio_count} portfolio(s)")
+            if len(selected_portfolios_for_deletion) <= 3:
+                st.caption(f"Selected: {', '.join(selected_portfolios_for_deletion)}")
+            else:
+                st.caption(f"Selected: {', '.join(selected_portfolios_for_deletion[:3])} and {len(selected_portfolios_for_deletion) - 3} more...")
             
             # Bulk delete button with confirmation
             confirm_deletion = st.checkbox(
@@ -6623,7 +6646,13 @@ if len(st.session_state.multi_backtest_portfolio_configs) >= 2:
                             name_parts = []
                             for portfolio_name, percentage in sorted_allocs:
                                 if percentage > 0:  # Only include non-zero allocations
-                                    name_parts.append(f"{portfolio_name} {percentage:.0f}%")
+                                    # Handle both decimal (0.0-1.0) and percentage (0-100) formats
+                                    if percentage <= 1.0:
+                                        # Already in decimal format
+                                        name_parts.append(f"{portfolio_name} {percentage*100:.0f}%")
+                                    else:
+                                        # Already in percentage format
+                                        name_parts.append(f"{portfolio_name} {percentage:.0f}%")
                             
                             if name_parts:
                                 return f"Fusion Portfolio {' '.join(name_parts)} ({rebalancing_freq})"
@@ -10373,7 +10402,152 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         # Store in session state for PDF export
         st.session_state.fig2 = fig2
 
-        # Third plot: Daily Risk-Free Rate (13-Week Treasury)
+        # Third plot: Multi-Portfolio PE Ratio Comparison
+        if 'multi_all_allocations' in st.session_state and st.session_state.multi_all_allocations:
+            st.markdown("---")
+            st.markdown("**📊 Multi-Portfolio PE Ratio Comparison**")
+            st.warning("⚠️ **Work in Progress:** PE ratio calculations are currently using current PE ratios only. Historical PE evolution is not yet implemented and may not be fully accurate.")
+            
+            try:
+                # Create multi-portfolio PE ratio chart
+                fig_pe_multi = go.Figure()
+                
+                # Get all available portfolio names
+                available_portfolio_names = [cfg.get('name', 'Portfolio') for cfg in st.session_state.get('multi_backtest_portfolio_configs', [])]
+                extra_names = [n for n in st.session_state.get('multi_all_results', {}).keys() if n not in available_portfolio_names]
+                all_portfolio_names = available_portfolio_names + extra_names
+                
+                # Color palette for different portfolios
+                colors = [
+                    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                    '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+                    '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5'
+                ]
+                
+                # Collect PE data for all portfolios
+                all_pe_data = {}
+                portfolio_pe_series = {}
+                
+                for i, portfolio_name in enumerate(all_portfolio_names):
+                    allocs_data = st.session_state.multi_all_allocations.get(portfolio_name, {})
+                    
+                    if allocs_data:
+                        # Get all unique tickers for this portfolio (exclude CASH)
+                        all_tickers = set()
+                        for date, allocs in allocs_data.items():
+                            for ticker in allocs.keys():
+                                if ticker is not None and ticker != 'CASH':
+                                    all_tickers.add(ticker)
+                        all_tickers = sorted(list(all_tickers))
+                        
+                        if all_tickers:
+                            # Fetch PE data for all tickers (cached per portfolio)
+                            pe_data = {}
+                            for ticker in all_tickers:
+                                try:
+                                    stock = yf.Ticker(ticker)
+                                    info = stock.info
+                                    pe_ratio = info.get('trailingPE', None)
+                                    if pe_ratio is not None and pe_ratio > 0:
+                                        pe_data[ticker] = pe_ratio
+                                except:
+                                    continue
+                            
+                            if pe_data:
+                                # Calculate weighted PE ratio over time for this portfolio
+                                dates = sorted(allocs_data.keys())
+                                portfolio_pe_ratios = []
+                                
+                                for date in dates:
+                                    allocs = allocs_data[date]
+                                    weighted_pe = 0
+                                    total_weight = 0
+                                    
+                                    # Check if portfolio is in cash
+                                    stock_allocation = sum(weight for ticker, weight in allocs.items() if ticker != 'CASH' and weight > 0)
+                                    
+                                    if stock_allocation == 0:
+                                        portfolio_pe_ratios.append(None)
+                                    else:
+                                        # Calculate weighted PE only for stock allocations
+                                        for ticker, weight in allocs.items():
+                                            if ticker != 'CASH' and ticker in pe_data and weight > 0:
+                                                weighted_pe += pe_data[ticker] * weight
+                                                total_weight += weight
+                                        
+                                        if total_weight > 0:
+                                            portfolio_pe_ratios.append(weighted_pe / total_weight)
+                                        else:
+                                            portfolio_pe_ratios.append(None)
+                                
+                                # Filter out None values and create clean data
+                                clean_dates = []
+                                clean_pe_ratios = []
+                                for j, pe in enumerate(portfolio_pe_ratios):
+                                    if pe is not None:
+                                        clean_dates.append(dates[j])
+                                        clean_pe_ratios.append(pe)
+                                
+                                if clean_pe_ratios:
+                                    portfolio_pe_series[portfolio_name] = {
+                                        'dates': clean_dates,
+                                        'pe_ratios': clean_pe_ratios,
+                                        'color': colors[i % len(colors)]
+                                    }
+                
+                # Add traces for each portfolio
+                for portfolio_name, data in portfolio_pe_series.items():
+                    fig_pe_multi.add_trace(go.Scatter(
+                        x=data['dates'],
+                        y=data['pe_ratios'],
+                        mode='lines',
+                        name=portfolio_name,
+                        line=dict(color=data['color'], width=2),
+                        hovertemplate=(
+                            f'<b>{portfolio_name}</b><br>' +
+                            'Date: %{x|%Y-%m-%d}<br>' +
+                            'PE Ratio: %{y:.2f}<br>' +
+                            '<extra></extra>'
+                        ),
+                        connectgaps=False
+                    ))
+                
+                if portfolio_pe_series:
+                    # Update layout
+                    fig_pe_multi.update_layout(
+                        title="Multi-Portfolio PE Ratio Comparison",
+                        xaxis_title="Date",
+                        yaxis_title="PE Ratio",
+                        template='plotly_dark',
+                        height=500,
+                        hovermode='x unified',
+                        showlegend=True,
+                        xaxis=dict(
+                            type='date',
+                            automargin=True
+                        ),
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        )
+                    )
+                    
+                    # Store in session state
+                    st.session_state.fig_pe_multi = fig_pe_multi
+                    
+                    # Display chart
+                    st.plotly_chart(st.session_state.fig_pe_multi, use_container_width=True)
+                    
+                else:
+                    st.warning("No PE ratio data available for any portfolios.")
+                    
+            except Exception as e:
+                st.error(f"Error creating multi-portfolio PE ratio chart: {str(e)}")
+
+        # Fourth plot: Daily Risk-Free Rate (13-Week Treasury)
         fig3 = go.Figure()
         try:
             # Get risk-free rate data for the same date range
@@ -11669,6 +11843,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             st.info("👆 **Select your date range above and click 'Calculate Analysis' to generate the focused performance metrics.**")
         else:
             st.warning("⚠️ Please ensure you have portfolio data loaded and valid date range selected.")
+
 
         # Portfolio Configuration Comparison Table
         st.subheader("Portfolio Configuration Comparison")
@@ -14710,6 +14885,250 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 st.warning(f"No allocation data available for {selected_portfolio_evolution}")
         else:
             st.info("No portfolios available for allocation evolution chart.")
+    
+    # PE Ratio Evolution Chart Section
+    if 'multi_all_allocations' in st.session_state and st.session_state.multi_all_allocations:
+        st.markdown("---")
+        st.markdown("**📊 Portfolio PE Ratio Evolution**")
+        
+        # Get all available portfolio names
+        available_portfolio_names = [cfg.get('name', 'Portfolio') for cfg in st.session_state.get('multi_backtest_portfolio_configs', [])]
+        extra_names = [n for n in st.session_state.get('multi_all_results', {}).keys() if n not in available_portfolio_names]
+        all_portfolio_names = available_portfolio_names + extra_names
+        
+        if all_portfolio_names:
+            selected_portfolio_pe = st.selectbox(
+                "Select Portfolio for PE Ratio Analysis:",
+                all_portfolio_names,
+                key="multi_backtest_pe_portfolio_selector"
+            )
+            
+            if selected_portfolio_pe:
+                # Get allocation data for the selected portfolio
+                allocs_data = st.session_state.multi_all_allocations.get(selected_portfolio_pe, {})
+                
+                if allocs_data:
+                    try:
+                        # Create PE ratio evolution chart
+                        fig_pe = go.Figure()
+                        
+                        # Get all unique tickers and their allocations over time (exclude CASH)
+                        all_tickers = set()
+                        for date, allocs in allocs_data.items():
+                            for ticker in allocs.keys():
+                                if ticker is not None and ticker != 'CASH':
+                                    all_tickers.add(ticker)
+                        all_tickers = sorted(list(all_tickers))
+                        
+                        if all_tickers:
+                            # Fetch PE data for all tickers sequentially to avoid threading issues
+                            pe_data = {}
+                            historical_pe_data = {}
+                            with st.spinner("Fetching PE ratio data..."):
+                                for ticker in all_tickers:
+                                    try:
+                                        # Get stock info for current PE ratio
+                                        stock = yf.Ticker(ticker)
+                                        info = stock.info
+                                        pe_ratio = info.get('trailingPE', None)
+                                        if pe_ratio is not None and pe_ratio > 0:
+                                            pe_data[ticker] = pe_ratio
+                                        
+                                        # Try to get historical earnings data (placeholder for future implementation)
+                                        try:
+                                            # For now, we'll use current PE ratios only
+                                            # Historical PE calculation can be added later with better data sources
+                                            pass
+                                        except:
+                                            pass
+                                    except:
+                                        continue
+                            
+                            if pe_data:
+                                # Calculate daily weighted PE ratio using the same approach as portfolio allocation evolution
+                                dates = sorted(allocs_data.keys())
+                                
+                                # Show data range info
+                                if dates:
+                                    st.info(f"📅 **PE Data Range:** {dates[0].strftime('%Y-%m-%d')} to {dates[-1].strftime('%Y-%m-%d')}")
+                                    
+                                    # Check if data is recent
+                                    last_date = dates[-1]
+                                    current_date = pd.Timestamp.now()
+                                    days_behind = (current_date - last_date).days
+                                    
+                                    if days_behind > 7:  # More than a week behind
+                                        st.warning(f"⚠️ **Data is {days_behind} days behind current date.** To get the latest PE ratios, re-run your backtest to refresh the allocation data.")
+                                
+                                portfolio_pe_ratios = []
+                                
+                                for date in dates:
+                                    allocs = allocs_data[date]
+                                    weighted_pe = 0
+                                    total_weight = 0
+                                    
+                                    # Check if portfolio is in cash (100% cash or no stock allocations)
+                                    stock_allocation = sum(weight for ticker, weight in allocs.items() if ticker != 'CASH' and weight > 0)
+                                    
+                                    if stock_allocation == 0:
+                                        # Portfolio is in cash - no PE ratio applicable
+                                        portfolio_pe_ratios.append(None)
+                                    else:
+                                        # Calculate weighted PE only for stock allocations (daily precision)
+                                        for ticker, weight in allocs.items():
+                                            if ticker != 'CASH' and weight > 0:
+                                                # Try to use historical PE data first, fallback to current PE
+                                                ticker_pe = None
+                                                if ticker in historical_pe_data:
+                                                    # Find the closest historical PE date to current date
+                                                    hist_dates = list(historical_pe_data[ticker].keys())
+                                                    if hist_dates:
+                                                        # Find the closest date before or on the current date
+                                                        valid_dates = [d for d in hist_dates if d <= date]
+                                                        if valid_dates:
+                                                            closest_date = max(valid_dates)
+                                                            ticker_pe = historical_pe_data[ticker][closest_date]
+                                                
+                                                # Fallback to current PE if no historical data
+                                                if ticker_pe is None and ticker in pe_data:
+                                                    ticker_pe = pe_data[ticker]
+                                                
+                                                if ticker_pe is not None and ticker_pe > 0:
+                                                    weighted_pe += ticker_pe * weight
+                                                    total_weight += weight
+                                        
+                                        if total_weight > 0:
+                                            portfolio_pe_ratios.append(weighted_pe / total_weight)
+                                        else:
+                                            portfolio_pe_ratios.append(None)
+                                
+                                # Use all data including None values to show proper gaps for cash periods
+                                if portfolio_pe_ratios:
+                                    # Add PE ratio line with gaps for cash periods (smooth line, no markers)
+                                    fig_pe.add_trace(go.Scatter(
+                                        x=dates,
+                                        y=portfolio_pe_ratios,  # Include None values to show gaps
+                                        mode='lines',  # Smooth line only, no markers
+                                        name=f'Portfolio PE Ratio',
+                                        line=dict(color='#00ff88', width=3),  # Changed to bright green
+                                        hovertemplate=(
+                                            '<b>%{fullData.name}</b><br>' +
+                                            'Date: %{x|%Y-%m-%d}<br>' +
+                                            'PE Ratio: %{y:.2f}<br>' +
+                                            '<extra></extra>'
+                                        ),
+                                        connectgaps=False  # Show gaps when in cash
+                                    ))
+                                    
+                                    
+                                    # Calculate statistical metrics (filter out None values for calculations)
+                                    clean_pe_ratios = [pe for pe in portfolio_pe_ratios if pe is not None]
+                                    if clean_pe_ratios:
+                                        median_pe = np.median(clean_pe_ratios)
+                                        std_pe = np.std(clean_pe_ratios)
+                                        mean_pe = np.mean(clean_pe_ratios)
+                                    else:
+                                        median_pe = std_pe = mean_pe = 0
+                                    
+                                    # Add statistical reference lines
+                                    fig_pe.add_hline(y=median_pe, line_dash="dash", line_color="blue", 
+                                                   annotation_text=f"Median PE: {median_pe:.2f}", annotation_position="top right")
+                                    fig_pe.add_hline(y=mean_pe, line_dash="dot", line_color="purple", 
+                                                   annotation_text=f"Mean PE: {mean_pe:.2f}", annotation_position="top right")
+                                    
+                                    # Add multiple standard deviation lines
+                                    fig_pe.add_hline(y=mean_pe + std_pe, line_dash="dash", line_color="cyan", 
+                                                   annotation_text=f"+1σ: {mean_pe + std_pe:.2f}", annotation_position="top right")
+                                    fig_pe.add_hline(y=mean_pe - std_pe, line_dash="dash", line_color="green", 
+                                                   annotation_text=f"-1σ: {mean_pe - std_pe:.2f}", annotation_position="top right")
+                                    
+                                    # Add 2 standard deviation lines
+                                    fig_pe.add_hline(y=mean_pe + 2*std_pe, line_dash="dot", line_color="red", 
+                                                   annotation_text=f"+2σ: {mean_pe + 2*std_pe:.2f}", annotation_position="top right")
+                                    fig_pe.add_hline(y=mean_pe - 2*std_pe, line_dash="dot", line_color="lightgreen", 
+                                                   annotation_text=f"-2σ: {mean_pe - 2*std_pe:.2f}", annotation_position="top right")
+                                    
+                                    # Add 3 standard deviation lines
+                                    fig_pe.add_hline(y=mean_pe + 3*std_pe, line_dash="dashdot", line_color="darkred", 
+                                                   annotation_text=f"+3σ: {mean_pe + 3*std_pe:.2f}", annotation_position="top right")
+                                    fig_pe.add_hline(y=mean_pe - 3*std_pe, line_dash="dashdot", line_color="darkgreen", 
+                                                   annotation_text=f"-3σ: {mean_pe - 3*std_pe:.2f}", annotation_position="top right")
+                                    
+                                    # Update layout with proper date range
+                                    fig_pe.update_layout(
+                                        title=f"Portfolio PE Ratio Evolution - {selected_portfolio_pe}",
+                                        xaxis_title="Date",
+                                        yaxis_title="PE Ratio",
+                                        template='plotly_dark',
+                                        height=500,
+                                        hovermode='x unified',
+                                        showlegend=True,
+                                        # Let Plotly handle margins automatically to prevent clipping
+                                        xaxis=dict(
+                                            type='date',
+                                            automargin=True
+                                        ),
+                                        # Move legend to top
+                                        legend=dict(
+                                            orientation="h",
+                                            yanchor="bottom",
+                                            y=1.02,
+                                            xanchor="right",
+                                            x=1
+                                        )
+                                    )
+                                    
+                                    # Store in session state
+                                    pe_chart_key = f"multi_backtest_pe_chart_{selected_portfolio_pe}"
+                                    st.session_state[pe_chart_key] = fig_pe
+                                    
+                                    # Display chart
+                                    st.plotly_chart(st.session_state[pe_chart_key], use_container_width=True)
+                                    
+                                    # Show PE data info
+                                    st.warning("⚠️ **Work in Progress:** PE ratio calculations are currently using current PE ratios only. Historical PE evolution is not yet implemented and may not be fully accurate.")
+                                    
+                                    # Show cash periods warning outside the chart
+                                    if len(clean_pe_ratios) < len(dates):
+                                        st.info("💡 **Note:** Gaps in the chart indicate periods when the portfolio was in cash (no PE ratio applicable)")
+                                    
+                                    # Show PE data summary with statistical metrics
+                                    if clean_pe_ratios:
+                                        last_pe = clean_pe_ratios[-1]  # Today's PE (most recent)
+                                        median_pe = np.median(clean_pe_ratios)
+                                        std_pe = np.std(clean_pe_ratios)
+                                        mean_pe = np.mean(clean_pe_ratios)
+                                    else:
+                                        last_pe = median_pe = std_pe = mean_pe = 0
+                                    
+                                    col1, col2, col3, col4 = st.columns(4)
+                                    with col1:
+                                        st.metric("Last PE (Today)", f"{last_pe:.2f}")
+                                    with col2:
+                                        st.metric("Median PE", f"{median_pe:.2f}")
+                                    with col3:
+                                        st.metric("Mean PE", f"{mean_pe:.2f}")
+                                    with col4:
+                                        st.metric("Std Deviation", f"{std_pe:.2f}")
+                                    
+                                    # Show individual ticker PE ratios
+                                    st.info(f"📊 **Individual PE Ratios**: {len(pe_data)} tickers with PE data")
+                                    pe_cols = st.columns(4)
+                                    for i, (ticker, pe) in enumerate(pe_data.items()):
+                                        with pe_cols[i % 4]:
+                                            st.markdown(f"**{ticker}**: {pe:.2f}")
+                                else:
+                                    st.warning("No valid PE ratio data available for the selected period.")
+                            else:
+                                st.warning("No PE ratio data available for any tickers in this portfolio.")
+                        else:
+                            st.warning("No tickers found in allocation data.")
+                    except Exception as e:
+                        st.error(f"Error creating PE ratio chart: {str(e)}")
+                else:
+                    st.warning(f"No allocation data available for {selected_portfolio_pe}")
+        else:
+            st.info("No portfolios available for PE ratio analysis.")
     
     # PDF Export Section
     st.markdown("---")
