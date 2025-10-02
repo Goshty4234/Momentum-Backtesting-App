@@ -110,6 +110,9 @@ def get_ticker_aliases():
         'GLD': 'GLD',            # SPDR Gold Trust ETF (2004+) - With dividends
         'IAU': 'IAU',            # iShares Gold Trust ETF (2005+) - With dividends
         'GOLDF': 'GC=F',         # Gold Futures (2000+) - No dividends
+        'GOLD50': 'GOLD_COMPLETE',  # Complete Gold Dataset (1975+) - Historical + GLD
+        'ZROZ50': 'ZROZ_COMPLETE',  # Complete ZROZ Dataset (1962+) - Historical + ZROZ
+        'TLT50': 'TLT_COMPLETE',  # Complete TLT Dataset (1962+) - Historical + TLT
         'SILVER': 'SI=F',        # Silver Futures (2000+) - No dividends
         'OIL': 'CL=F',           # Crude Oil Futures (2000+) - No dividends
         'NATGAS': 'NG=F',        # Natural Gas Futures (2000+) - No dividends
@@ -524,6 +527,9 @@ def get_ticker_aliases():
         'GLD': 'GLD',            # SPDR Gold Trust ETF (2004+) - With dividends
         'IAU': 'IAU',            # iShares Gold Trust ETF (2005+) - With dividends
         'GOLDF': 'GC=F',         # Gold Futures (2000+) - No dividends
+        'GOLD50': 'GOLD_COMPLETE',  # Complete Gold Dataset (1975+) - Historical + GLD
+        'ZROZ50': 'ZROZ_COMPLETE',  # Complete ZROZ Dataset (1962+) - Historical + ZROZ
+        'TLT50': 'TLT_COMPLETE',  # Complete TLT Dataset (1962+) - Historical + TLT
         'SILVER': 'SI=F',        # Silver Futures (2000+) - No dividends
         'OIL': 'CL=F',           # Crude Oil Futures (2000+) - No dividends
         'NATGAS': 'NG=F',        # Natural Gas Futures (2000+) - No dividends
@@ -569,8 +575,132 @@ def generate_zero_return_data(period="max"):
         }, index=dates)
         return zero_data
 
+# @st.cache_data(ttl=300)  # Cache for 5 minutes - DISABLED for parallel processing
+def get_gold_complete_data(period="max"):
+    """Get complete gold data from historical CSV and GLD"""
+    try:
+        # Load historical data directly
+        import pandas as pd
+        df = pd.read_csv('Complete_Tickers/Historical CSV/Gold_Futures_Complete.csv')
+        
+        # Parse dates
+        df['Date'] = pd.to_datetime(df['Date'], format='%m/%d/%Y')
+        df.set_index('Date', inplace=True)
+        
+        # Rename columns
+        df.columns = ['Close', 'Open', 'High', 'Low', 'Volume', 'Change_Percent']
+        
+        # Get GLD data for recent updates
+        gld_ticker = yf.Ticker("GLD")
+        gld_data = gld_ticker.history(period="max", auto_adjust=True)
+        
+        if not gld_data.empty:
+            # Make timezone-naive for comparison
+            gld_data.index = gld_data.index.tz_localize(None)
+            
+            # Scale GLD to match historical data at 2004
+            historical_2004_price = df.loc['2004-11-18', 'Close'] if '2004-11-18' in df.index else df.loc[df.index[df.index.year == 2004].max(), 'Close']
+            gld_2004_price = gld_data.loc[gld_data.index[gld_data.index.year == 2004].min(), 'Close']
+            scaling_factor = historical_2004_price / gld_2004_price
+            
+            # Scale GLD data
+            gld_scaled = gld_data.copy()
+            gld_scaled['Close'] = gld_scaled['Close'] * scaling_factor
+            gld_scaled['Open'] = gld_scaled['Open'] * scaling_factor
+            gld_scaled['High'] = gld_scaled['High'] * scaling_factor
+            gld_scaled['Low'] = gld_scaled['Low'] * scaling_factor
+            
+            # Combine data
+            combined_data = pd.concat([df, gld_scaled])
+            combined_data = combined_data[~combined_data.index.duplicated(keep='last')]
+            combined_data = combined_data.sort_index()
+        else:
+            combined_data = df
+        
+        # Convert to expected format
+        result = pd.DataFrame({
+            'Close': combined_data['Close'],
+            'Dividends': [0.0] * len(combined_data)
+        }, index=combined_data.index)
+        
+        return result
+        
+    except Exception as e:
+        # Fallback to GLD
+        try:
+            ticker = yf.Ticker("GLD")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
+def get_zroz_complete_data(period="max"):
+    """Get complete ZROZ data from our custom ZROZ ticker"""
+    try:
+        # Import our ZROZ ticker
+        import sys
+        import os
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+        
+        from Complete_Tickers.ZROZ_COMPLETE_TICKER import create_safe_zroz_ticker
+        
+        # Get the complete ZROZ data
+        zroz_data = create_safe_zroz_ticker()
+        
+        if zroz_data is None:
+            # Fallback to ZROZ if our custom ticker fails
+            ticker = yf.Ticker("ZROZ")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        
+        # Convert to the expected format
+        result = pd.DataFrame({
+            'Close': zroz_data['Close'],
+            'Dividends': [0.0] * len(zroz_data)  # ZROZ doesn't pay dividends
+        }, index=zroz_data.index)
+        
+        return result
+    except Exception as e:
+        # Fallback to ZROZ if anything fails
+        try:
+            ticker = yf.Ticker("ZROZ")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
+def get_tlt_complete_data(period="max"):
+    """Get complete TLT data from our custom TLT ticker"""
+    try:
+        # Import our TLT ticker
+        import sys
+        import os
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+        
+        from Complete_Tickers.TLT_COMPLETE_TICKER import create_safe_tlt_ticker
+        
+        # Get the complete TLT data
+        tlt_data = create_safe_tlt_ticker()
+        
+        if tlt_data is None:
+            # Fallback to TLT if our custom ticker fails
+            ticker = yf.Ticker("TLT")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        
+        # Convert to the expected format
+        result = pd.DataFrame({
+            'Close': tlt_data['Close'],
+            'Dividends': [0.0] * len(tlt_data)  # TLT doesn't pay dividends
+        }, index=tlt_data.index)
+        
+        return result
+    except Exception as e:
+        # Fallback to TLT if anything fails
+        try:
+            ticker = yf.Ticker("TLT")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
 @st.cache_data(ttl=300)  # Cache for 5 minutes
-def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
+def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=None):
     """Cache ticker data to improve performance across multiple tabs
     
     Args:
@@ -588,6 +718,18 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
         # Special handling for ZEROX - generate zero return data
         if resolved_ticker == "ZEROX":
             return generate_zero_return_data(period)
+        
+        # Special handling for GOLD_COMPLETE - use our custom gold ticker
+        if resolved_ticker == "GOLD_COMPLETE":
+            return get_gold_complete_data(period)
+        
+        # Special handling for ZROZ_COMPLETE - use our custom ZROZ ticker
+        if resolved_ticker == "ZROZ_COMPLETE":
+            return get_zroz_complete_data(period)
+        
+        # Special handling for TLT_COMPLETE - use our custom TLT ticker
+        if resolved_ticker == "TLT_COMPLETE":
+            return get_tlt_complete_data(period)
         
         ticker = yf.Ticker(resolved_ticker)
         hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
@@ -5389,9 +5531,9 @@ def remove_stock_callback(ticker):
         for i, stock in enumerate(stocks):
             if stock['ticker'] == ticker:
                 stocks.pop(i)
-            # If this was the last stock, add an empty one
-            if len(stocks) == 0:
-                stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                # If this was the last stock, add an empty one
+                if len(stocks) == 0:
+                    stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
                 
                 # Clear session state keys for all remaining stocks to force re-initialization
                 portfolio_index = st.session_state.multi_backtest_active_portfolio_index
@@ -5409,7 +5551,7 @@ def remove_stock_callback(ticker):
                     if div_key in st.session_state:
                         del st.session_state[div_key]
                 
-            # Removed rerun flag - no need to refresh entire page for removing a stock
+                # Removed rerun flag - no need to refresh entire page for removing a stock
                 break
     except (IndexError, KeyError):
         pass
@@ -7871,7 +8013,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
     # Get the actual ticker aliases from the function
     aliases = get_ticker_aliases()
     
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.markdown("**📈 Stock Indices**")
@@ -7940,6 +8082,24 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
                 })
                 st.rerun()
     
+    with col4:
+        st.markdown("**🔬 Synthetic Tickers**")
+        synthetic_tickers = {
+            'Complete Gold Dataset (1975+)': 'GOLD_COMPLETE',
+            'Complete ZROZ Dataset (1962+)': 'ZROZ_COMPLETE',
+            'Complete TLT Dataset (1962+)': 'TLT_COMPLETE'
+        }
+        
+        for name, ticker in synthetic_tickers.items():
+            if st.button(f"➕ {name}", key=f"add_synthetic_{ticker}", help=f"Add {ticker}"):
+                portfolio_index = st.session_state.multi_backtest_active_portfolio_index
+                st.session_state.multi_backtest_portfolio_configs[portfolio_index]['stocks'].append({
+                    'ticker': ticker, 
+                    'allocation': 0.0, 
+                    'include_dividends': True
+                })
+                st.rerun()
+    
     st.markdown("---")
     
     # Ticker Aliases Section INSIDE the expander
@@ -7950,7 +8110,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
     st.markdown("- `ZROZX` → `ZROZ` (25+ Year Zero Coupon Treasury, 2009+), `GOVZTR` → `GOVZ` (25+ Year Treasury STRIPS, 2020+)")
     st.markdown("- `TNX` → `^TNX` (10Y Treasury Yield, 1962+), `TYX` → `^TYX` (30Y Treasury Yield, 1977+)")
     st.markdown("- `TBILL` → `^IRX` (3M Treasury Yield, 1960+), `SHY` → `SHY` (1-3 Year Treasury ETF, 2002+)")
-    st.markdown("- `ZEROX` → `ZERO` (Cash doing nothing), `GOLDX` → `GC=F` (Gold Futures, 2000+), `XAU` → `^XAU` (Gold & Silver Index, 1983+)")
+    st.markdown("- `ZEROX` → `ZERO` (Cash doing nothing), `GOLD50` → `GOLD_COMPLETE` (Complete Gold Dataset, 1975+), `ZROZ50` → `ZROZ_COMPLETE` (Complete ZROZ Dataset, 1962+), `TLT50` → `TLT_COMPLETE` (Complete TLT Dataset, 1962+), `GOLDX` → `GC=F` (Gold Futures, 2000+), `XAU` → `^XAU` (Gold & Silver Index, 1983+)")
 
 with st.expander("⚡ Leverage Guide", expanded=False):
     st.markdown("""
@@ -14023,7 +14183,6 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 
 
                                 # Add timer for next rebalance date (EXACT copy from page 1)
-                                st.write("🔍 DEBUG: Timer section reached - checking conditions...")
                                 
                                 # FALLBACK TIMER - Always show this to test display
                                 st.markdown("---")
@@ -14046,7 +14205,6 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     else:
                                         last_rebal_date_for_timer = alloc_dates[-1] if alloc_dates else None
                                     
-                                    st.write(f"🔍 DEBUG: last_rebal_date_for_timer = {last_rebal_date_for_timer}")
                                     
                                     # Get rebalancing frequency from portfolio config
                                     portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
@@ -14072,11 +14230,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     }
                                     rebalancing_frequency = frequency_mapping.get(rebalancing_frequency, rebalancing_frequency)
                                     
-                                    st.write(f"🔍 DEBUG: rebalancing_frequency = {rebalancing_frequency}")
-                                    st.write(f"🔍 DEBUG: portfolio_cfg found = {portfolio_cfg is not None}")
                                     
                                     if last_rebal_date_for_timer and rebalancing_frequency != 'none':
-                                        st.write("🔍 DEBUG: Timer conditions met - proceeding with timer creation")
                                         # Ensure last_rebal_date_for_timer is a naive datetime object
                                         if isinstance(last_rebal_date_for_timer, str):
                                             last_rebal_date_for_timer = pd.to_datetime(last_rebal_date_for_timer)
@@ -14351,13 +14506,11 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                             except Exception as e:
                                                 pass  # Silently ignore timer table creation errors
                                     else:
-                                        st.write("🔍 DEBUG: Timer conditions NOT met:")
                                         st.write(f"  - last_rebal_date_for_timer: {last_rebal_date_for_timer}")
                                         st.write(f"  - rebalancing_frequency: {rebalancing_frequency}")
                                         st.write("  - Timer will not show")
                                         
                                 except Exception as e:
-                                    st.write(f"🔍 DEBUG: Timer calculation error: {e}")
                                     pass  # Silently ignore timer calculation errors
 
                                 
