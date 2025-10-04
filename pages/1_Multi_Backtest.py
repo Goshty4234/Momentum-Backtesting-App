@@ -18,6 +18,7 @@ import sys
 import threading
 import logging
 import warnings
+import multiprocessing as mp
 
 # Suppress specific Streamlit threading warnings
 warnings.filterwarnings('ignore')
@@ -3252,8 +3253,8 @@ col1, col2 = st.columns([3, 1])
 with col1:
     st.markdown("### 🚀 Performance Settings")
 with col2:
-    use_parallel = st.checkbox("Parallel Processing", value=True,
-                              help="Process multiple portfolios simultaneously for faster execution")
+    use_parallel = st.checkbox("Parallel Processing", value=False,
+                              help="⚠️ Process multiple portfolios simultaneously using threading. May help with 3+ portfolios but can be slower due to Streamlit overhead. Try both modes to see what's faster for your setup.")
     st.session_state.use_parallel_processing = use_parallel
 
 # Portfolio name is handled in the main UI below
@@ -9363,6 +9364,12 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     """Process a single regular portfolio - designed for parallel execution"""
                     i, cfg = args
                     try:
+                        # Suppress Streamlit warnings in threads
+                        import warnings
+                        import logging
+                        warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
+                        logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
+                        
                         name = cfg.get('name', f'Portfolio {i}')
                         
                         # Run single backtest for this portfolio
@@ -9548,16 +9555,19 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             'error': str(e)
                         }
                 
-                # Determine number of workers (use CPU count but cap at 8 for stability)
+                # Determine number of workers (optimized for threading)
                 import os
-                max_workers = min(8, os.cpu_count() or 4)
+                # Use fewer workers to minimize Streamlit threading overhead
+                max_workers = min(2, os.cpu_count() or 2)  # Max 2 workers for stability
                 
-                # For very large datasets, reduce workers to avoid memory issues
+                # Enable parallel processing for 3+ portfolios (threading can help with I/O bound tasks)
                 total_portfolios = len(regular_portfolios) + len(fusion_portfolios)
-                if total_portfolios > 20:
-                    max_workers = min(4, max_workers)
-                elif total_portfolios > 50:
-                    max_workers = min(2, max_workers)
+                if total_portfolios < 3:
+                    # Sequential for small datasets - threading overhead not worth it
+                    st.session_state.use_parallel_processing = False
+                elif total_portfolios > 15:
+                    # Limit workers for very large datasets
+                    max_workers = 1
                 
                 # PHASE 1: Process regular portfolios first
                 if regular_portfolios:
@@ -9569,7 +9579,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     st.info(f"🚀 **Phase 1: Processing {len(regular_portfolios)} regular portfolios in {processing_mode} mode{worker_info}...**")
                     
                     if st.session_state.get('use_parallel_processing', True) and len(regular_portfolios) > 1:
-                        # Process regular portfolios in parallel
+                        # Process regular portfolios in parallel using optimized threading
                         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                             # Submit all regular portfolio tasks
                             future_to_index = {executor.submit(process_single_regular_portfolio, args): args[0] for args in regular_portfolios}
@@ -9655,7 +9665,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     st.info(f"🚀 **Phase 2: Processing {len(fusion_portfolios)} fusion portfolios in {processing_mode} mode{worker_info} (depends on regular portfolios)...**")
                     
                     if st.session_state.get('use_parallel_processing', True) and len(fusion_portfolios) > 1:
-                        # Process fusion portfolios in parallel
+                        # Process fusion portfolios in parallel using optimized threading
                         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                             # Submit all fusion portfolio tasks - pass all configs for fusion dependencies
                             fusion_args = [(i, cfg, st.session_state.multi_backtest_portfolio_configs) for i, cfg in fusion_portfolios]
@@ -10854,7 +10864,28 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 # Fallback to regular Close column
                 vix_close = vix_data['Close'].dropna()
             
+            # Add flat line before VIX data starts (like interest rates do)
+            if len(vix_close) > 0:
+                first_vix_date = vix_close.index[0]
+                first_vix_value = vix_close.iloc[0]
+                
+                # If VIX data starts after our backtest period, add flat line
+                if first_vix_date > pd.Timestamp(first_date):
+                    # Create flat line from start to first VIX date
+                    flat_dates = pd.date_range(start=first_date, end=first_vix_date, freq='D')
+                    fig_vix.add_trace(go.Scatter(
+                        x=flat_dates, 
+                        y=[first_vix_value] * len(flat_dates), 
+                        mode='lines', 
+                        name='VIX Index (Pre-Data)', 
+                        line=dict(color='red', dash='dash'),
+                        hovertemplate='<b>VIX Index (Pre-Data)</b><br>' +
+                                     'Date: %{x}<br>' +
+                                     'VIX: %{y:.2f}<br>' +
+                                     '<extra></extra>'
+                    ))
             
+            # Add actual VIX data
             fig_vix.add_trace(go.Scatter(
                 x=vix_close.index, 
                 y=vix_close.values, 
