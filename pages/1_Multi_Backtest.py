@@ -5804,21 +5804,22 @@ def add_stock_callback():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'].append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
     # Removed rerun flag - no need to refresh entire page for adding a stock
 
-def remove_stock_callback(ticker):
-    """Immediate stock removal callback"""
+def remove_stock_callback(index):
+    """Immediate stock removal callback using index"""
     try:
         active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
         stocks = active_portfolio['stocks']
         
-        # Find and remove the stock with matching ticker
-        for i, stock in enumerate(stocks):
-            if stock['ticker'] == ticker:
-                stocks.pop(i)
+        # Remove the stock at the specified index
+        if 0 <= index < len(stocks):
+            stocks.pop(index)
+            
             # If this was the last stock, add an empty one
             if len(stocks) == 0:
                 stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
-                st.session_state.multi_backtest_rerun_flag = True
-                break
+            
+            # Always trigger rerun to update the visual display
+            st.session_state.multi_backtest_rerun_flag = True
     except (IndexError, KeyError):
         pass
 
@@ -8238,7 +8239,7 @@ for i in range(len(active_portfolio['stocks'])):
         
     with col_b:
         st.write("")
-        if st.button("Remove", key=f"multi_backtest_rem_stock_{st.session_state.multi_backtest_active_portfolio_index}_{i}_{stock['ticker']}_{id(stock)}", on_click=remove_stock_callback, args=(stock['ticker'],)):
+        if st.button("Remove", key=f"multi_backtest_rem_stock_{st.session_state.multi_backtest_active_portfolio_index}_{i}", on_click=remove_stock_callback, args=(i,)):
             pass
 
 if st.button("Add Ticker", on_click=add_stock_callback):
