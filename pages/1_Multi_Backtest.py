@@ -93,8 +93,8 @@ def get_ticker_aliases():
         'IRX': '^IRX',           # 3-Month Treasury Yield (1960+) - Price only, no coupons
         
         # Treasury Bond ETFs (MODERN - WITH COUPONS/DIVIDENDS)
-        'TLTTR': 'TLT',          # 20+ Year Treasury Bond ETF (2002+) - With coupons
-        'IEFTR': 'IEF',          # 7-10 Year Treasury Bond ETF (2002+) - With coupons
+        'TLTETF': 'TLT',         # 20+ Year Treasury Bond ETF (2002+) - With coupons
+        'IEFETF': 'IEF',         # 7-10 Year Treasury Bond ETF (2002+) - With coupons
         'SHY': 'SHY',            # 1-3 Year Treasury Bond ETF (2002+) - With coupons
         'BIL': 'BIL',            # 1-3 Month T-Bill ETF (2007+) - With coupons
         'GOVT': 'GOVT',          # US Treasury Bond ETF (2012+) - With coupons
@@ -113,6 +113,22 @@ def get_ticker_aliases():
         'GOLD50': 'GOLD_COMPLETE',  # Complete Gold Dataset (1975+) - Historical + GLD
         'ZROZ50': 'ZROZ_COMPLETE',  # Complete ZROZ Dataset (1962+) - Historical + ZROZ
         'TLT50': 'TLT_COMPLETE',  # Complete TLT Dataset (1962+) - Historical + TLT
+        'BTC50': 'BTC_COMPLETE',  # Complete Bitcoin Dataset (2010+) - Historical + BTC-USD
+        'IEF50': 'IEF_COMPLETE',  # Complete IEF Dataset (1962+) - Historical + IEF
+        'KMLM50': 'KMLM_COMPLETE',  # Complete KMLM Dataset (1992+) - Historical + KMLM
+        'DBMF50': 'DBMF_COMPLETE',  # Complete DBMF Dataset (2000+) - Historical + DBMF
+        'TBILL50': 'TBILL_COMPLETE',  # Complete TBILL Dataset (1948+) - Historical + SGOV
+        # New short aliases for complete tickers (ordered by asset class)
+        'TBILL': 'TBILL_COMPLETE',  # Complete TBILL Dataset (1948+) - Historical + SGOV
+        'IEFTR': 'IEF_COMPLETE',  # Complete IEF Dataset (1962+) - Historical + IEF
+        'TLTTR': 'TLT_COMPLETE',  # Complete TLT Dataset (1962+) - Historical + TLT
+        'ZROZX': 'ZROZ_COMPLETE',  # Complete ZROZ Dataset (1962+) - Historical + ZROZ
+        'GOLDX': 'GOLD_COMPLETE',  # Complete Gold Dataset (1975+) - Historical + GLD
+        'KMLMX': 'KMLM_COMPLETE',  # Complete KMLM Dataset (1992+) - Historical + KMLM
+        'DBMFX': 'DBMF_COMPLETE',  # Complete DBMF Dataset (2000+) - Historical + DBMF
+        'BITCOINX': 'BTC_COMPLETE',  # Complete Bitcoin Dataset (2010+) - Historical + BTC-USD
+        'SPYSIM': 'SPYSIM_COMPLETE',  # Complete S&P 500 Simulation (1885+) - Historical + SPYTR
+        'GOLDSIM': 'GOLDSIM_COMPLETE',  # Complete Gold Simulation (1968+) - New Historical + GOLDX
         'SILVER': 'SI=F',        # Silver Futures (2000+) - No dividends
         'OIL': 'CL=F',           # Crude Oil Futures (2000+) - No dividends
         'NATGAS': 'NG=F',        # Natural Gas Futures (2000+) - No dividends
@@ -510,8 +526,8 @@ def get_ticker_aliases():
         'IRX': '^IRX',           # 3-Month Treasury Yield (1960+) - Price only, no coupons
         
         # Treasury Bond ETFs (MODERN - WITH COUPONS/DIVIDENDS)
-        'TLTTR': 'TLT',          # 20+ Year Treasury Bond ETF (2002+) - With coupons
-        'IEFTR': 'IEF',          # 7-10 Year Treasury Bond ETF (2002+) - With coupons
+        'TLTETF': 'TLT',         # 20+ Year Treasury Bond ETF (2002+) - With coupons
+        'IEFETF': 'IEF',         # 7-10 Year Treasury Bond ETF (2002+) - With coupons
         'SHY': 'SHY',            # 1-3 Year Treasury Bond ETF (2002+) - With coupons
         'BIL': 'BIL',            # 1-3 Month T-Bill ETF (2007+) - With coupons
         'GOVT': 'GOVT',          # US Treasury Bond ETF (2012+) - With coupons
@@ -530,6 +546,22 @@ def get_ticker_aliases():
         'GOLD50': 'GOLD_COMPLETE',  # Complete Gold Dataset (1975+) - Historical + GLD
         'ZROZ50': 'ZROZ_COMPLETE',  # Complete ZROZ Dataset (1962+) - Historical + ZROZ
         'TLT50': 'TLT_COMPLETE',  # Complete TLT Dataset (1962+) - Historical + TLT
+        'BTC50': 'BTC_COMPLETE',  # Complete Bitcoin Dataset (2010+) - Historical + BTC-USD
+        'IEF50': 'IEF_COMPLETE',  # Complete IEF Dataset (1962+) - Historical + IEF
+        'KMLM50': 'KMLM_COMPLETE',  # Complete KMLM Dataset (1992+) - Historical + KMLM
+        'DBMF50': 'DBMF_COMPLETE',  # Complete DBMF Dataset (2000+) - Historical + DBMF
+        'TBILL50': 'TBILL_COMPLETE',  # Complete TBILL Dataset (1948+) - Historical + SGOV
+        # New short aliases for complete tickers (ordered by asset class)
+        'TBILL': 'TBILL_COMPLETE',  # Complete TBILL Dataset (1948+) - Historical + SGOV
+        'IEFTR': 'IEF_COMPLETE',  # Complete IEF Dataset (1962+) - Historical + IEF
+        'TLTTR': 'TLT_COMPLETE',  # Complete TLT Dataset (1962+) - Historical + TLT
+        'ZROZX': 'ZROZ_COMPLETE',  # Complete ZROZ Dataset (1962+) - Historical + ZROZ
+        'GOLDX': 'GOLD_COMPLETE',  # Complete Gold Dataset (1975+) - Historical + GLD
+        'KMLMX': 'KMLM_COMPLETE',  # Complete KMLM Dataset (1992+) - Historical + KMLM
+        'DBMFX': 'DBMF_COMPLETE',  # Complete DBMF Dataset (2000+) - Historical + DBMF
+        'BITCOINX': 'BTC_COMPLETE',  # Complete Bitcoin Dataset (2010+) - Historical + BTC-USD
+        'SPYSIM': 'SPYSIM_COMPLETE',  # Complete S&P 500 Simulation (1885+) - Historical + SPYTR
+        'GOLDSIM': 'GOLDSIM_COMPLETE',  # Complete Gold Simulation (1968+) - New Historical + GOLDX
         'SILVER': 'SI=F',        # Silver Futures (2000+) - No dividends
         'OIL': 'CL=F',           # Crude Oil Futures (2000+) - No dividends
         'NATGAS': 'NG=F',        # Natural Gas Futures (2000+) - No dividends
@@ -699,6 +731,172 @@ def get_tlt_complete_data(period="max"):
         except:
             return pd.DataFrame()
 
+def get_bitcoin_complete_data(period="max"):
+    """Get complete Bitcoin data from our custom Bitcoin ticker"""
+    try:
+        # Import our Bitcoin ticker
+        import sys
+        import os
+        sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+        
+        from Complete_Tickers.BITCOIN_COMPLETE_TICKER import create_bitcoin_complete_ticker
+        
+        # Get the complete Bitcoin data
+        bitcoin_data = create_bitcoin_complete_ticker()
+        
+        if bitcoin_data is None:
+            # Fallback to BTC-USD if our custom ticker fails
+            ticker = yf.Ticker("BTC-USD")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        
+        # Convert to the expected format
+        result = pd.DataFrame({
+            'Close': bitcoin_data,
+            'Dividends': [0.0] * len(bitcoin_data)  # Bitcoin doesn't pay dividends
+        }, index=bitcoin_data.index)
+        
+        return result
+    except Exception as e:
+        # Fallback to BTC-USD if anything fails
+        try:
+            ticker = yf.Ticker("BTC-USD")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
+def get_ief_complete_data(period="max"):
+    """Get complete IEF data from our custom IEF ticker"""
+    try:
+        from Complete_Tickers.IEF_COMPLETE_TICKER import create_ief_complete_ticker
+        ief_data = create_ief_complete_ticker()
+        if ief_data is not None and not ief_data.empty:
+            result = pd.DataFrame({
+                'Close': ief_data,
+                'Dividends': [0.0] * len(ief_data)
+            }, index=ief_data.index)
+            return result
+        else:
+            return None
+    except Exception as e:
+        try:
+            ticker = yf.Ticker("IEF")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
+def get_kmlm_complete_data(period="max"):
+    """Get complete KMLM data from our custom KMLM ticker"""
+    try:
+        from Complete_Tickers.KMLM_COMPLETE_TICKER import create_kmlm_complete_ticker
+        kmlm_data = create_kmlm_complete_ticker()
+        if kmlm_data is not None and not kmlm_data.empty:
+            result = pd.DataFrame({
+                'Close': kmlm_data,
+                'Dividends': [0.0] * len(kmlm_data)
+            }, index=kmlm_data.index)
+            return result
+        else:
+            return None
+    except Exception as e:
+        try:
+            ticker = yf.Ticker("KMLM")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
+def get_dbmf_complete_data(period="max"):
+    """Get complete DBMF data from our custom DBMF ticker"""
+    try:
+        from Complete_Tickers.DBMF_COMPLETE_TICKER import create_dbmf_complete_ticker
+        dbmf_data = create_dbmf_complete_ticker()
+        if dbmf_data is not None and not dbmf_data.empty:
+            result = pd.DataFrame({
+                'Close': dbmf_data,
+                'Dividends': [0.0] * len(dbmf_data)
+            }, index=dbmf_data.index)
+            return result
+        else:
+            return None
+    except Exception as e:
+        try:
+            ticker = yf.Ticker("DBMF")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
+def get_tbill_complete_data(period="max"):
+    """Get complete TBILL data from our custom TBILL ticker"""
+    try:
+        from Complete_Tickers.TBILL_COMPLETE_TICKER import create_tbill_complete_ticker
+        tbill_data = create_tbill_complete_ticker()
+        if tbill_data is not None and not tbill_data.empty:
+            result = pd.DataFrame({
+                'Close': tbill_data,
+                'Dividends': [0.0] * len(tbill_data)
+            }, index=tbill_data.index)
+            return result
+        else:
+            return None
+    except Exception as e:
+        try:
+            ticker = yf.Ticker("SGOV")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
+def get_spysim_complete_data(period="max"):
+    """Get complete SPYSIM data from our custom SPYSIM ticker"""
+    try:
+        from Complete_Tickers.SPYSIM_COMPLETE_TICKER import create_spysim_complete_ticker
+        spysim_data = create_spysim_complete_ticker()
+        if spysim_data is not None and not spysim_data.empty:
+            result = pd.DataFrame({
+                'Close': spysim_data,
+                'Dividends': [0.0] * len(spysim_data)
+            }, index=spysim_data.index)
+            return result
+        else:
+            return None
+    except Exception as e:
+        try:
+            ticker = yf.Ticker("^SP500TR")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
+def get_goldsim_complete_data(period="max"):
+    """Get complete GOLDSIM data from our custom GOLDSIM ticker"""
+    try:
+        # Try importing the GOLDSIM ticker
+        from Complete_Tickers.GOLDSIM_COMPLETE_TICKER import create_goldsim_complete_ticker
+        goldsim_data = create_goldsim_complete_ticker()
+        
+        if goldsim_data is not None and not goldsim_data.empty:
+            result = pd.DataFrame({
+                'Close': goldsim_data,
+                'Dividends': [0.0] * len(goldsim_data)
+            }, index=goldsim_data.index)
+            return result
+        else:
+            print("⚠️ WARNING: GOLDSIM ticker returned empty data, falling back to GLD")
+            # Fallback to GLD if GOLDSIM fails
+            ticker = yf.Ticker("GLD")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+            
+    except ImportError as e:
+        print(f"⚠️ WARNING: GOLDSIM import error: {e}, falling back to GLD")
+        # Fallback to GLD if import fails
+        ticker = yf.Ticker("GLD")
+        return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+    except Exception as e:
+        print(f"⚠️ WARNING: GOLDSIM function error: {e}, falling back to GLD")
+        # Fallback to GLD if everything fails
+        try:
+            ticker = yf.Ticker("GLD")
+            return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
+        except:
+            return pd.DataFrame()
+
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=None):
     """Cache ticker data to improve performance across multiple tabs
@@ -730,6 +928,34 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=
         # Special handling for TLT_COMPLETE - use our custom TLT ticker
         if resolved_ticker == "TLT_COMPLETE":
             return get_tlt_complete_data(period)
+        
+        # Special handling for BTC_COMPLETE - use our custom Bitcoin ticker
+        if resolved_ticker == "BTC_COMPLETE":
+            return get_bitcoin_complete_data(period)
+        
+        # Special handling for IEF_COMPLETE - use our custom IEF ticker
+        if resolved_ticker == "IEF_COMPLETE":
+            return get_ief_complete_data(period)
+        
+        # Special handling for KMLM_COMPLETE - use our custom KMLM ticker
+        if resolved_ticker == "KMLM_COMPLETE":
+            return get_kmlm_complete_data(period)
+        
+        # Special handling for DBMF_COMPLETE - use our custom DBMF ticker
+        if resolved_ticker == "DBMF_COMPLETE":
+            return get_dbmf_complete_data(period)
+        
+        # Special handling for TBILL_COMPLETE - use our custom TBILL ticker
+        if resolved_ticker == "TBILL_COMPLETE":
+            return get_tbill_complete_data(period)
+        
+        # Special handling for SPYSIM_COMPLETE - use our custom SPYSIM ticker
+        if resolved_ticker == "SPYSIM_COMPLETE":
+            return get_spysim_complete_data(period)
+        
+        # Special handling for GOLDSIM_COMPLETE - use our custom GOLDSIM ticker
+        if resolved_ticker == "GOLDSIM_COMPLETE":
+            return get_goldsim_complete_data(period)
         
         ticker = yf.Ticker(resolved_ticker)
         hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
@@ -3018,6 +3244,7 @@ st.markdown("""
 st.set_page_config(layout="wide", page_title="Multi-Portfolio Analysis")
 
 st.title("Multi-Portfolio Backtest")
+
 st.markdown("Use the forms below to configure and run backtests for multiple portfolios.")
 
 # Performance Settings
@@ -3836,6 +4063,7 @@ def cached_momentum_calculation(ticker_data_hash, window):
 # Single-backtest core (adapted from your code, robust)
 # -----------------------
 def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_allocations"):
+    
     stocks_list = config['stocks']
     tickers = [s['ticker'] for s in stocks_list if s['ticker']]
     # Filter tickers to those present in reindexed_data to avoid KeyErrors for invalid tickers
@@ -3883,6 +4111,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     
     # Get regular rebalancing dates
     dates_rebal = sorted(get_dates_by_freq(rebalancing_frequency, sim_index[0], sim_index[-1], sim_index))
+    
     
     # Handle first rebalance strategy - replace first rebalance date if needed
     first_rebalance_strategy = st.session_state.get('multi_backtest_first_rebalance_strategy', 'rebalancing_date')
@@ -4483,13 +4712,66 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         
         # Check if we should rebalance
         should_rebalance = False
-        if date in dates_rebal and set(tickers):
-            should_rebalance = True
+        
+        # First check if it's a regular rebalancing date
+        # Normalize dates for comparison (remove timezone and time components)
+        date_normalized = pd.Timestamp(date).normalize()
+        dates_rebal_normalized = {pd.Timestamp(d).normalize() for d in dates_rebal}
+        
+        if date_normalized in dates_rebal_normalized and set(tickers):
+            # If targeted rebalancing is enabled, check thresholds first
+            if config.get('use_targeted_rebalancing', False):
+                # Calculate current allocations as percentages
+                current_total = sum(values[t][-1] for t in tickers) + unallocated_cash[-1] + unreinvested_cash[-1]
+                if current_total > 0:
+                    current_allocations = {t: values[t][-1] / current_total for t in tickers}
+                    
+                    # Check if any ticker exceeds its targeted rebalancing thresholds
+                    targeted_settings = config.get('targeted_rebalancing_settings', {})
+                    threshold_exceeded = False
+                    
+                    for ticker in tickers:
+                        if ticker in targeted_settings and targeted_settings[ticker].get('enabled', False):
+                            current_allocation_pct = current_allocations.get(ticker, 0) * 100
+                            max_threshold = targeted_settings[ticker].get('max_allocation', 100.0)
+                            min_threshold = targeted_settings[ticker].get('min_allocation', 0.0)
+                            
+                            # Check if allocation exceeds max or falls below min threshold
+                            if current_allocation_pct > max_threshold or current_allocation_pct < min_threshold:
+                                threshold_exceeded = True
+                                break
+                    
+                    # Only rebalance if thresholds are exceeded
+                    should_rebalance = threshold_exceeded
+                else:
+                    # If no current value, don't rebalance
+                    should_rebalance = False
+            else:
+                # Regular rebalancing - always rebalance on scheduled dates
+                should_rebalance = True
         elif rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"] and set(tickers):
             # Buy & Hold: rebalance whenever there's cash available
             total_cash = unallocated_cash[-1] + unreinvested_cash[-1]
             if total_cash > 0:
                 should_rebalance = True
+        
+        # Handle cash distribution when no rebalancing occurs but cash is available
+        if not should_rebalance:
+            total_cash = unallocated_cash[-1] + unreinvested_cash[-1]
+            if total_cash > 0:
+                # Distribute cash proportionally to current holdings
+                current_total_value = sum(values[t][-1] for t in tickers)
+                if current_total_value > 0:
+                    # Calculate current proportions
+                    current_proportions = {t: values[t][-1] / current_total_value for t in tickers}
+                    
+                    # Distribute cash proportionally
+                    for t in tickers:
+                        values[t][-1] += total_cash * current_proportions.get(t, 0)
+                    
+                    # Clear cash
+                    unallocated_cash[-1] = 0
+                    unreinvested_cash[-1] = 0
         
         if should_rebalance:
             if use_momentum:
@@ -5522,7 +5804,7 @@ def add_stock_callback():
     # Removed rerun flag - no need to refresh entire page for adding a stock
 
 def remove_stock_callback(ticker):
-    """Immediate stock removal callback - OPTIMIZED NO REFRESH"""
+    """Immediate stock removal callback"""
     try:
         active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
         stocks = active_portfolio['stocks']
@@ -5531,27 +5813,10 @@ def remove_stock_callback(ticker):
         for i, stock in enumerate(stocks):
             if stock['ticker'] == ticker:
                 stocks.pop(i)
-                # If this was the last stock, add an empty one
-                if len(stocks) == 0:
-                    stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
-                
-                # Clear session state keys for all remaining stocks to force re-initialization
-                portfolio_index = st.session_state.multi_backtest_active_portfolio_index
-                for j in range(len(stocks)):
-                    # Clear ticker keys
-                    ticker_key = f"multi_backtest_ticker_{portfolio_index}_{j}"
-                    if ticker_key in st.session_state:
-                        del st.session_state[ticker_key]
-                    # Clear allocation keys
-                    alloc_key = f"multi_backtest_alloc_input_{portfolio_index}_{j}"
-                    if alloc_key in st.session_state:
-                        del st.session_state[alloc_key]
-                    # Clear dividend keys
-                    div_key = f"multi_backtest_div_{portfolio_index}_{j}"
-                    if div_key in st.session_state:
-                        del st.session_state[div_key]
-                
-                # Removed rerun flag - no need to refresh entire page for removing a stock
+            # If this was the last stock, add an empty one
+            if len(stocks) == 0:
+                stocks.append({'ticker': '', 'allocation': 0.0, 'include_dividends': True})
+                st.session_state.multi_backtest_rerun_flag = True
                 break
     except (IndexError, KeyError):
         pass
@@ -6140,9 +6405,13 @@ def update_benchmark():
     
     # Convert benchmark ticker to uppercase
     upper_benchmark = converted_benchmark.upper()
-    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['benchmark_ticker'] = upper_benchmark
-    # Update the widget to show uppercase value
-    st.session_state.multi_backtest_active_benchmark = upper_benchmark
+    
+    # Resolve benchmark ticker alias
+    resolved_benchmark = resolve_ticker_alias(upper_benchmark)
+    
+    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['benchmark_ticker'] = resolved_benchmark
+    # Update the widget to show resolved value
+    st.session_state.multi_backtest_active_benchmark = resolved_benchmark
 
 def update_use_momentum():
     current_val = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['use_momentum']
@@ -7342,7 +7611,7 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
             # Add new threshold button
             if st.button("➕ Add Threshold Value", key=f"add_threshold_{portfolio_index}"):
                 st.session_state[f"threshold_filters_{portfolio_index}"].append(2.0)
-                st.rerun()
+                st.session_state.multi_backtest_rerun_flag = True
             
             # Display existing threshold inputs
             for i, threshold in enumerate(st.session_state[f"threshold_filters_{portfolio_index}"]):
@@ -7364,12 +7633,12 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                 with col_remove:
                     if st.button("🗑️", key=f"remove_threshold_{portfolio_index}_{i}", help="Remove this threshold"):
                         st.session_state[f"threshold_filters_{portfolio_index}"].pop(i)
-                        st.rerun()
+                        st.session_state.multi_backtest_rerun_flag = True
             
             # If no thresholds exist, add a default one
             if not st.session_state[f"threshold_filters_{portfolio_index}"]:
                 st.session_state[f"threshold_filters_{portfolio_index}"].append(2.0)
-                st.rerun()
+                st.session_state.multi_backtest_rerun_flag = True
         
         # Store threshold options in variant params if any are selected
         if threshold_options:
@@ -7423,7 +7692,7 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
             # Add new max allocation button
             if st.button("➕ Add Max Allocation Value", key=f"add_max_allocation_{portfolio_index}"):
                 st.session_state[f"max_allocation_filters_{portfolio_index}"].append(10.0)
-                st.rerun()
+                st.session_state.multi_backtest_rerun_flag = True
             
             # Display existing max allocation inputs
             for i, max_allocation in enumerate(st.session_state[f"max_allocation_filters_{portfolio_index}"]):
@@ -7445,12 +7714,12 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                 with col_remove:
                     if st.button("🗑️", key=f"remove_max_allocation_{portfolio_index}_{i}", help="Remove this max allocation"):
                         st.session_state[f"max_allocation_filters_{portfolio_index}"].pop(i)
-                        st.rerun()
+                        st.session_state.multi_backtest_rerun_flag = True
             
             # If no max allocations exist, add a default one
             if not st.session_state[f"max_allocation_filters_{portfolio_index}"]:
                 st.session_state[f"max_allocation_filters_{portfolio_index}"].append(10.0)
-                st.rerun()
+                st.session_state.multi_backtest_rerun_flag = True
         
         # Store max allocation options in variant params if any are selected
         if max_allocation_options:
@@ -7860,7 +8129,7 @@ if len(st.session_state.multi_backtest_portfolio_configs) > 1 and st.session_sta
 
 if "multi_backtest_active_benchmark" not in st.session_state:
     st.session_state["multi_backtest_active_benchmark"] = active_portfolio['benchmark_ticker']
-st.text_input("Benchmark Ticker (default: ^GSPC, used for beta calculation)", key="multi_backtest_active_benchmark", on_change=update_benchmark)
+st.text_input("Benchmark Ticker (default: ^GSPC, starts 1927-12-30, used for beta calculation. Use SPYSIM for earlier dates, starts 1885-03-01)", key="multi_backtest_active_benchmark", on_change=update_benchmark)
 
 st.subheader("Stocks")
 col_stock_buttons = st.columns([0.3, 0.3, 0.3, 0.1])
@@ -8033,7 +8302,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
                     'allocation': 0.0, 
                     'include_dividends': True
                 })
-                st.rerun()
+                st.session_state.multi_backtest_rerun_flag = True
     
     with col2:
         st.markdown("**🏛️ Treasury Bonds & T-Bills**")
@@ -8061,7 +8330,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
                     'allocation': 0.0, 
                     'include_dividends': True
                 })
-                st.rerun()
+                st.session_state.multi_backtest_rerun_flag = True
     
     with col3:
         st.markdown("**🥇 Gold & Commodities**")
@@ -8080,14 +8349,22 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
                     'allocation': 0.0, 
                     'include_dividends': True
                 })
-                st.rerun()
+                st.session_state.multi_backtest_rerun_flag = True
     
     with col4:
         st.markdown("**🔬 Synthetic Tickers**")
         synthetic_tickers = {
-            'Complete Gold Dataset (1975+)': 'GOLD_COMPLETE',
+            # Ordered by asset class: Stocks → Bonds → Gold → Managed Futures → Bitcoin
+            'Complete S&P 500 Simulation (1885+)': 'SPYSIM_COMPLETE',
+            'Complete TBILL Dataset (1948+)': 'TBILL_COMPLETE',
+            'Complete IEF Dataset (1962+)': 'IEF_COMPLETE',
+            'Complete TLT Dataset (1962+)': 'TLT_COMPLETE',
             'Complete ZROZ Dataset (1962+)': 'ZROZ_COMPLETE',
-            'Complete TLT Dataset (1962+)': 'TLT_COMPLETE'
+            'Complete Gold Simulation (1968+)': 'GOLDSIM_COMPLETE',
+            'Complete Gold Dataset (1975+)': 'GOLD_COMPLETE',
+            'Complete KMLM Dataset (1992+)': 'KMLM_COMPLETE',
+            'Complete DBMF Dataset (2000+)': 'DBMF_COMPLETE',
+            'Complete Bitcoin Dataset (2010+)': 'BTC_COMPLETE'
         }
         
         for name, ticker in synthetic_tickers.items():
@@ -8098,7 +8375,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
                     'allocation': 0.0, 
                     'include_dividends': True
                 })
-                st.rerun()
+                st.session_state.multi_backtest_rerun_flag = True
     
     st.markdown("---")
     
@@ -8106,11 +8383,12 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
     st.markdown("**💡 Ticker Aliases:** You can also use these shortcuts in the text input below:")
     st.markdown("- `SPX` → `^GSPC` (S&P 500 Price, 1927+), `SPXTR` → `^SP500TR` (S&P 500 Total Return, 1988+)")
     st.markdown("- `SPYTR` → `^SP500TR` (S&P 500 Total Return, 1988+), `QQQTR` → `^NDX` (NASDAQ 100, 1985+)")
-    st.markdown("- `TLTTR` → `TLT` (20+ Year Treasury ETF, 2002+), `IEFTR` → `IEF` (7-10 Year Treasury ETF, 2002+)")
-    st.markdown("- `ZROZX` → `ZROZ` (25+ Year Zero Coupon Treasury, 2009+), `GOVZTR` → `GOVZ` (25+ Year Treasury STRIPS, 2020+)")
+    st.markdown("- `TLTETF` → `TLT` (20+ Year Treasury ETF, 2002+), `IEFETF` → `IEF` (7-10 Year Treasury ETF, 2002+)")
+    st.markdown("- `TLTTR` → `TLT_COMPLETE` (Complete TLT Dataset, 1962+), `IEFTR` → `IEF_COMPLETE` (Complete IEF Dataset, 1962+)")
+    st.markdown("- `ZROZX` → `ZROZ_COMPLETE` (Complete ZROZ Dataset, 1962+), `GOVZTR` → `GOVZ` (25+ Year Treasury STRIPS, 2020+)")
     st.markdown("- `TNX` → `^TNX` (10Y Treasury Yield, 1962+), `TYX` → `^TYX` (30Y Treasury Yield, 1977+)")
-    st.markdown("- `TBILL` → `^IRX` (3M Treasury Yield, 1960+), `SHY` → `SHY` (1-3 Year Treasury ETF, 2002+)")
-    st.markdown("- `ZEROX` → `ZERO` (Cash doing nothing), `GOLD50` → `GOLD_COMPLETE` (Complete Gold Dataset, 1975+), `ZROZ50` → `ZROZ_COMPLETE` (Complete ZROZ Dataset, 1962+), `TLT50` → `TLT_COMPLETE` (Complete TLT Dataset, 1962+), `GOLDX` → `GC=F` (Gold Futures, 2000+), `XAU` → `^XAU` (Gold & Silver Index, 1983+)")
+    st.markdown("- `TBILL3M` → `^IRX` (3M Treasury Yield, 1960+), `SHY` → `SHY` (1-3 Year Treasury ETF, 2002+)")
+    st.markdown("- `ZEROX` → `ZERO` (Cash doing nothing), `SPYSIM` → `SPYSIM_COMPLETE` (Complete S&P 500 Simulation, 1885+), `TBILL` → `TBILL_COMPLETE` (Complete TBILL Dataset, 1948+), `IEFTR` → `IEF_COMPLETE` (Complete IEF Dataset, 1962+), `TLTTR` → `TLT_COMPLETE` (Complete TLT Dataset, 1962+), `ZROZX` → `ZROZ_COMPLETE` (Complete ZROZ Dataset, 1962+), `GOLDSIM` → `GOLDSIM_COMPLETE` (Complete Gold Simulation, 1968+), `GOLDX` → `GOLD_COMPLETE` (Complete Gold Dataset, 1975+), `KMLMX` → `KMLM_COMPLETE` (Complete KMLM Dataset, 1992+), `DBMFX` → `DBMF_COMPLETE` (Complete DBMF Dataset, 2000+), `BITCOINX` → `BTC_COMPLETE` (Complete Bitcoin Dataset, 2010+)")
 
 with st.expander("⚡ Leverage Guide", expanded=False):
     st.markdown("""
@@ -10561,6 +10839,81 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         st.plotly_chart(fig2, use_container_width=True, key="multi_drawdown_chart")
         # Store in session state for PDF export
         st.session_state.fig2 = fig2
+
+        # VIX Index Plot (for correlation with drawdowns)
+        fig_vix = go.Figure()
+        try:
+            # Get VIX data for the same date range
+            vix_data = yf.download('^VIX', start=first_date, end=last_date, progress=False)
+            
+            # VIX data has multi-level columns, need to access it properly
+            # The structure is ('Close', '^VIX') instead of just 'Close'
+            if ('Close', '^VIX') in vix_data.columns:
+                vix_close = vix_data[('Close', '^VIX')].dropna()
+            else:
+                # Fallback to regular Close column
+                vix_close = vix_data['Close'].dropna()
+            
+            
+            fig_vix.add_trace(go.Scatter(
+                x=vix_close.index, 
+                y=vix_close.values, 
+                mode='lines', 
+                name='VIX Index', 
+                line=dict(color='red'),
+                hovertemplate='<b>VIX Index</b><br>' +
+                             'Date: %{x}<br>' +
+                             'VIX: %{y:.2f}<br>' +
+                             '<extra></extra>'
+            ))
+            
+        except Exception as e:
+            # Fallback: create a simple line at default VIX if fetching fails
+            x_dates = pd.date_range(start=first_date, end=last_date, freq='D')
+            fig_vix.add_trace(go.Scatter(
+                x=x_dates, 
+                y=[20.0] * len(x_dates), 
+                mode='lines', 
+                name='VIX Index (Default)', 
+                line=dict(color='red')
+            ))
+        
+        fig_vix.update_layout(
+            title="VIX Index (Fear Gauge)",
+            xaxis_title="Date",
+            legend_title="Index",
+            hovermode="x unified",
+            template="plotly_dark",
+            # EXACT same formatting as the other plots
+            xaxis=dict(
+                type='date',  # Explicitly set as date type
+                tickformat="%Y-%m-%d",  # Proper date format
+                tickmode="auto",
+                nticks=10,  # Reasonable number of ticks
+                tickangle=45,  # Angle labels for better readability
+                automargin=True,  # Ensure labels fit
+                range=None  # Let Plotly auto-range to ensure perfect alignment
+            ),
+            legend=dict(
+                orientation="h",  # Horizontal legend
+                yanchor="top",
+                y=1.15,
+                xanchor="center",
+                x=0.5
+            ),
+            margin=dict(l=80, r=80, t=120, b=80),  # EXACT same margins as the other plots
+            height=600,  # Same height as the other plots
+            yaxis=dict(
+                title="VIX Level", 
+                title_standoff=20,
+                side="left",
+                position=0.0,  # Force left alignment for perfect positioning
+                range=[0, 80] if 'vix_close' in locals() and len(vix_close) > 0 else [0, 80]
+            )
+        )
+        st.plotly_chart(fig_vix, use_container_width=True, key="vix_chart")
+        # Store in session state for PDF export
+        st.session_state.fig_vix = fig_vix
 
         # Third plot: Multi-Portfolio PE Ratio Comparison
         if 'multi_all_allocations' in st.session_state and st.session_state.multi_all_allocations:
