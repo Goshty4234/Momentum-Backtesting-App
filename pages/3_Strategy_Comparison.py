@@ -7270,163 +7270,186 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
             else:
                 st.error("⚠️ **At least one Volatility option must be selected!**")
         
-        # Minimal Threshold Filter Section
+        # Minimal Threshold Filter Section - COMPLETELY NEW APPROACH
         st.markdown("---")
         st.markdown("**Minimal Threshold Filter:**")
         
-        col_thresh_left, col_thresh_right = st.columns(2)
+        # NEW APPROACH: Use a single persistent state object
+        if f"threshold_state_{portfolio_index}" not in st.session_state:
+            st.session_state[f"threshold_state_{portfolio_index}"] = {
+                "disabled": True,
+                "enabled": False,
+                "values": [2.0]
+            }
         
-        with col_thresh_left:
-            disable_threshold = st.checkbox(
-                "Disable Minimal Threshold Filter", 
-                value=True, 
-                key=f"disable_threshold_{portfolio_index}",
-                help="Keeps the minimal threshold filter disabled"
+        state = st.session_state[f"threshold_state_{portfolio_index}"]
+        
+        # Checkboxes for both options (can be both selected)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            disabled = st.checkbox(
+                "Disable Threshold",
+                value=state["disabled"],
+                key=f"thresh_disabled_{portfolio_index}"
             )
         
-        with col_thresh_right:
-            enable_threshold = st.checkbox(
-                "Enable Minimal Threshold Filter", 
-                value=False, 
-                key=f"enable_threshold_{portfolio_index}",
-                help="Enables the minimal threshold filter with customizable values"
+        with col2:
+            enabled = st.checkbox(
+                "Enable Threshold",
+                value=state["enabled"],
+                key=f"thresh_enabled_{portfolio_index}"
             )
         
-        # Build threshold options list
+        # Update state
+        state["disabled"] = disabled
+        state["enabled"] = enabled
+        
+        # Build threshold options
         threshold_options = []
         
-        # If disable is selected, add None to options
-        if disable_threshold:
+        if disabled:
             threshold_options.append(None)
         
-        # If enable is selected, show threshold input options
-        if enable_threshold:
+        if enabled:
             st.markdown("**Threshold Values:**")
             
-            # Initialize threshold dict if not exists (using IDs instead of list)
-            if f"threshold_dict_{portfolio_index}" not in st.session_state:
-                st.session_state[f"threshold_dict_{portfolio_index}"] = {0: 2.0}
-            
-            # Add new threshold button
-            if st.button("➕ Add Threshold Value", key=f"add_threshold_{portfolio_index}"):
-                # Find next available ID
-                max_id = max(st.session_state[f"threshold_dict_{portfolio_index}"].keys()) if st.session_state[f"threshold_dict_{portfolio_index}"] else -1
-                st.session_state[f"threshold_dict_{portfolio_index}"][max_id + 1] = 2.0
+            # Add button
+            if st.button("➕ Add", key=f"add_thresh_{portfolio_index}"):
+                state["values"].append(2.0)
                 st.rerun()
             
-            # Display existing threshold inputs
-            for threshold_id, threshold_value in st.session_state[f"threshold_dict_{portfolio_index}"].items():
-                col_input, col_remove = st.columns([4, 1])
+            # Display values with truly unique keys for each value
+            for i in range(len(state["values"])):
+                col1, col2 = st.columns([4, 1])
                 
-                with col_input:
-                    # Use stable key based on ID that never changes
-                    stable_key = f"threshold_input_{portfolio_index}_{threshold_id}"
-                    threshold_value = st.number_input(
-                        f"Threshold {threshold_id + 1} (%)",
-                        min_value=0.1,
-                        max_value=50.0,
-                        value=threshold_value,
+                # Create truly unique key using timestamp and index
+                unique_id = f"{portfolio_index}_{i}_{id(state['values'])}"
+                
+                with col1:
+                    val = st.number_input(
+                        f"Value {i+1}",
+                        min_value=0.0,
+                        max_value=100.0,
+                        value=state["values"][i],
                         step=0.1,
-                        format="%.2f",
-                        key=stable_key,
-                        help="Minimum threshold percentage for portfolio allocation"
+                        key=f"thresh_input_{unique_id}"
                     )
-                    st.session_state[f"threshold_dict_{portfolio_index}"][threshold_id] = threshold_value
+                    # Update the value in state
+                    state["values"][i] = val
+                    threshold_options.append(val)
                 
-                with col_remove:
-                    # Only show remove button if there's more than one threshold
-                    if len(st.session_state[f"threshold_dict_{portfolio_index}"]) > 1:
-                        if st.button("🗑️", key=f"remove_threshold_{portfolio_index}_{threshold_id}", help="Remove this threshold"):
-                            del st.session_state[f"threshold_dict_{portfolio_index}"][threshold_id]
-                            st.rerun()
-                    else:
-                        st.write("")  # Empty space to maintain layout
-            
-            # Add all threshold values to options
-            threshold_options.extend(st.session_state[f"threshold_dict_{portfolio_index}"].values())
+                with col2:
+                    if st.button("🗑️", key=f"del_thresh_{unique_id}"):
+                        # Create a copy of the list and remove the specific index
+                        new_values = state["values"][:i] + state["values"][i+1:]
+                        state["values"] = new_values
+                        st.rerun()
         
-        # Store threshold options in variant params
+        # Add to variant params
         if threshold_options:
             variant_params["minimal_threshold"] = threshold_options
+    else:
+        variant_params["minimal_threshold"] = [None]
         
-        # Maximum Allocation Filter Section
+        # CLEAN SESSION STATE: When momentum is disabled, clean up threshold session state
+        if f"threshold_filters_{portfolio_index}" in st.session_state:
+            del st.session_state[f"threshold_filters_{portfolio_index}"]
+        if f"disable_threshold_{portfolio_index}" in st.session_state:
+            del st.session_state[f"disable_threshold_{portfolio_index}"]
+        if f"enable_threshold_{portfolio_index}" in st.session_state:
+            del st.session_state[f"enable_threshold_{portfolio_index}"]
+    
+    # Maximum Allocation Filter Section - COMPLETELY NEW APPROACH
+    if use_momentum_vary:
         st.markdown("---")
         st.markdown("**Maximum Allocation Filter:**")
         
-        col_max_left, col_max_right = st.columns(2)
+        # NEW APPROACH: Use a single persistent state object
+        if f"max_allocation_state_{portfolio_index}" not in st.session_state:
+            st.session_state[f"max_allocation_state_{portfolio_index}"] = {
+                "disabled": True,
+                "enabled": False,
+                "values": [10.0]
+            }
         
-        with col_max_left:
-            disable_max_allocation = st.checkbox(
-                "Disable Maximum Allocation Filter", 
-                value=True, 
-                key=f"disable_max_allocation_{portfolio_index}",
-                help="Keeps the maximum allocation filter disabled"
+        state = st.session_state[f"max_allocation_state_{portfolio_index}"]
+        
+        # Checkboxes for both options (can be both selected)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            disabled = st.checkbox(
+                "Disable Max Allocation",
+                value=state["disabled"],
+                key=f"max_disabled_{portfolio_index}"
             )
         
-        with col_max_right:
-            enable_max_allocation = st.checkbox(
-                "Enable Maximum Allocation Filter", 
-                value=False, 
-                key=f"enable_max_allocation_{portfolio_index}",
-                help="Enables the maximum allocation filter with customizable values"
+        with col2:
+            enabled = st.checkbox(
+                "Enable Max Allocation",
+                value=state["enabled"],
+                key=f"max_enabled_{portfolio_index}"
             )
         
-        # Build max allocation options list
+        # Update state
+        state["disabled"] = disabled
+        state["enabled"] = enabled
+        
+        # Build max allocation options
         max_allocation_options = []
         
-        # If disable is selected, add None to options
-        if disable_max_allocation:
+        if disabled:
             max_allocation_options.append(None)
         
-        # If enable is selected, show max allocation input options
-        if enable_max_allocation:
-            st.markdown("**Maximum Allocation Values:**")
+        if enabled:
+            st.markdown("**Max Allocation Values:**")
             
-            # Initialize max allocation dict if not exists (using IDs instead of list)
-            if f"max_allocation_dict_{portfolio_index}" not in st.session_state:
-                st.session_state[f"max_allocation_dict_{portfolio_index}"] = {0: 10.0}
-            
-            # Add new max allocation button
-            if st.button("➕ Add Max Allocation Value", key=f"add_max_allocation_{portfolio_index}"):
-                # Find next available ID
-                max_id = max(st.session_state[f"max_allocation_dict_{portfolio_index}"].keys()) if st.session_state[f"max_allocation_dict_{portfolio_index}"] else -1
-                st.session_state[f"max_allocation_dict_{portfolio_index}"][max_id + 1] = 10.0
+            # Add button
+            if st.button("➕ Add", key=f"add_max_{portfolio_index}"):
+                state["values"].append(10.0)
                 st.rerun()
             
-            # Display existing max allocation inputs
-            for max_allocation_id, max_allocation_value in st.session_state[f"max_allocation_dict_{portfolio_index}"].items():
-                col_input, col_remove = st.columns([4, 1])
+            # Display values with truly unique keys for each value
+            for i in range(len(state["values"])):
+                col1, col2 = st.columns([4, 1])
                 
-                with col_input:
-                    # Use stable key based on ID that never changes
-                    stable_key = f"max_allocation_input_{portfolio_index}_{max_allocation_id}"
-                    max_allocation_value = st.number_input(
-                        f"Max Allocation {max_allocation_id + 1} (%)",
-                        min_value=1.0,
+                # Create truly unique key using timestamp and index
+                unique_id = f"{portfolio_index}_{i}_{id(state['values'])}"
+                
+                with col1:
+                    val = st.number_input(
+                        f"Value {i+1}",
+                        min_value=0.1,
                         max_value=100.0,
-                        value=max_allocation_value,
+                        value=state["values"][i],
                         step=0.1,
-                        format="%.2f",
-                        key=stable_key,
-                        help="Maximum allocation percentage per stock"
+                        key=f"max_input_{unique_id}"
                     )
-                    st.session_state[f"max_allocation_dict_{portfolio_index}"][max_allocation_id] = max_allocation_value
+                    # Update the value in state
+                    state["values"][i] = val
+                    max_allocation_options.append(val)
                 
-                with col_remove:
-                    # Only show remove button if there's more than one max allocation
-                    if len(st.session_state[f"max_allocation_dict_{portfolio_index}"]) > 1:
-                        if st.button("🗑️", key=f"remove_max_allocation_{portfolio_index}_{max_allocation_id}", help="Remove this max allocation"):
-                            del st.session_state[f"max_allocation_dict_{portfolio_index}"][max_allocation_id]
-                            st.rerun()
-                    else:
-                        st.write("")  # Empty space to maintain layout
-            
-            # Add all max allocation values to options
-            max_allocation_options.extend(st.session_state[f"max_allocation_dict_{portfolio_index}"].values())
+                with col2:
+                    if st.button("🗑️", key=f"del_max_{unique_id}"):
+                        # Create a copy of the list and remove the specific index
+                        new_values = state["values"][:i] + state["values"][i+1:]
+                        state["values"] = new_values
+                        st.rerun()
         
-        # Store max allocation options in variant params
+        # Add to variant params
         if max_allocation_options:
             variant_params["max_allocation"] = max_allocation_options
+    else:
+        variant_params["max_allocation"] = [None]
+        
+        # CLEAN SESSION STATE: When momentum is disabled, clean up max allocation session state
+        if f"max_allocation_filters_{portfolio_index}" in st.session_state:
+            del st.session_state[f"max_allocation_filters_{portfolio_index}"]
+        if f"disable_max_allocation_{portfolio_index}" in st.session_state:
+            del st.session_state[f"disable_max_allocation_{portfolio_index}"]
+        if f"enable_max_allocation_{portfolio_index}" in st.session_state:
+            del st.session_state[f"enable_max_allocation_{portfolio_index}"]
     
     # Calculate total combinations
     total_variants = 1
