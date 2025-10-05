@@ -141,12 +141,182 @@ def get_ticker_aliases():
         'COPPER': 'HG=F',        # Copper Futures (2000+) - No dividends
         'PLATINUM': 'PL=F',      # Platinum Futures (1997+) - No dividends
         'PALLADIUM': 'PA=F',     # Palladium Futures (1998+) - No dividends
+        
+        # Special Dynamic Portfolio Tickers
+        'SP500TOP20': 'SP500TOP20',  # Dynamic S&P 500 Top 20 (rebalances yearly based on historical data)
     }
 
 def resolve_ticker_alias(ticker):
     """Resolve ticker alias to actual ticker symbol"""
     aliases = get_ticker_aliases()
     return aliases.get(ticker.upper(), ticker)
+
+def parse_raw_sp500_csv():
+    """Parse the raw S&P 500 CSV data into a structured DataFrame"""
+    try:
+        import pandas as pd
+        
+        st.write("🔍 DEBUG: Starting to parse raw S&P 500 CSV")
+        
+        # Read the raw CSV file
+        df = pd.read_csv('TOP 20 S&P 500 compagnies over time.csv', header=None)
+        
+        st.write(f"🔍 DEBUG: Raw CSV has {len(df)} rows")
+        st.write(f"🔍 DEBUG: First 10 rows: {df.head(10).values.tolist()}")
+        
+        # The data is structured as: value, company, value, company, etc.
+        # We need to parse it into Year, Rank, Company, Ticker, Market_Cap_Billions format
+        
+        parsed_data = []
+        current_year = 1989  # Starting year
+        rank = 1
+        
+        i = 0
+        while i < len(df):
+            row = df.iloc[i, 0]
+            
+            # Check if this is a year (numeric value)
+            if pd.isna(row) or row == '':
+                i += 1
+                continue
+                
+            try:
+                # Try to convert to float to see if it's a market cap value
+                market_cap = float(row)
+                
+                # If we have a market cap, the next row should be the company name
+                if i + 1 < len(df):
+                    company = str(df.iloc[i + 1, 0])
+                    
+                    # Skip if company name is empty or NaN
+                    if company and company != '' and company != 'nan':
+                        # Extract ticker from company name
+                        ticker = extract_ticker_from_company(company)
+                        
+                        parsed_data.append({
+                            'Year': current_year,
+                            'Rank': rank,
+                            'Company': company,
+                            'Ticker': ticker,
+                            'Market_Cap_Billions': market_cap
+                        })
+                        
+                        # Debug output for first few entries
+                        if len(parsed_data) <= 25:  # First year + some of second year
+                            st.write(f"🔍 DEBUG: Parsed {company} -> {ticker} (Rank {rank}, Year {current_year})")
+                        
+                        rank += 1
+                        if rank > 20:  # Reset for next year
+                            st.write(f"🔍 DEBUG: Completed year {current_year}, moving to {current_year + 1}")
+                            rank = 1
+                            current_year += 1
+                
+                i += 2  # Skip both market cap and company name
+                
+            except (ValueError, TypeError):
+                # If conversion fails, it might be a year or other data
+                i += 1
+                continue
+        
+        if parsed_data:
+            return pd.DataFrame(parsed_data)
+        else:
+            return None
+            
+    except Exception as e:
+        print(f"Error parsing S&P 500 CSV: {e}")
+        return None
+
+def extract_ticker_from_company(company_name):
+    """Extract ticker symbol from company name - simplified mapping"""
+    # This is a simplified mapping - you may need to expand this
+    ticker_mapping = {
+        'Apple': 'AAPL',
+        'Microsoft': 'MSFT',
+        'Amazon': 'AMZN',
+        'Alphabet': 'GOOGL',
+        'Tesla': 'TSLA',
+        'Meta/Facebook': 'META',
+        'Meta Platforms': 'META',
+        'NVIDIA': 'NVDA',
+        'Berkshire Hathaway': 'BRK-B',
+        'Exxon Mobil': 'XOM',
+        'Johnson & Johnson': 'JNJ',
+        'JPMorgan Chase': 'JPM',
+        'Visa': 'V',
+        'Procter & Gamble': 'PG',
+        'UnitedHealth': 'UNH',
+        'Mastercard': 'MA',
+        'Walmart': 'WMT',
+        'Chevron': 'CVX',
+        'Home Depot': 'HD',
+        'Pfizer': 'PFE',
+        'Bank of America': 'BAC',
+        'Coca-Cola': 'KO',
+        'Merck': 'MRK',
+        'PepsiCo': 'PEP',
+        'Wells Fargo': 'WFC',
+        'Intel': 'INTC',
+        'Cisco Systems': 'CSCO',
+        'Verizon': 'VZ',
+        'AT&T': 'T',
+        'General Electric': 'GE',
+        'IBM': 'IBM',
+        'Oracle': 'ORCL',
+        'Boeing': 'BA',
+        '3M': 'MMM',
+        'McDonald\'s': 'MCD',
+        'Walt Disney': 'DIS',
+        'AIG': 'AIG',
+        'Bristol-Myers Squibb': 'BMY',
+        'Eli Lilly': 'LLY',
+        'Schlumberger': 'SLB',
+        'Altria Group': 'MO',
+        'Fannie Mae': 'FNMA',
+        'Kellogg\'s': 'K',
+        'Citigroup': 'C',
+        'Qualcomm': 'QCOM',
+        'UPS': 'UPS',
+        'Netflix': 'NFLX',
+        'AbbVie': 'ABBV',
+        'Palantir Technologies': 'PLTR'
+    }
+    
+    return ticker_mapping.get(company_name, company_name.replace(' ', '').upper()[:4])
+
+def is_special_dynamic_ticker(ticker):
+    """Check if ticker is a special dynamic portfolio ticker"""
+    special_tickers = ['SP500TOP20']
+    return ticker.upper() in special_tickers
+
+def get_dynamic_portfolio_data(ticker):
+    """Get dynamic portfolio data for special tickers"""
+    if ticker.upper() == 'SP500TOP20':
+        try:
+            import pandas as pd
+            # Try to read the template CSV first
+            try:
+                df = pd.read_csv('TOP_20_SP500_COMPLETE_TEMPLATE.csv')
+            except:
+                # If template doesn't exist, parse the raw CSV
+                df = parse_raw_sp500_csv()
+            
+            if df is not None:
+                # Get all unique tickers that need to be downloaded
+                all_tickers = df['Ticker'].unique()
+                start_year = df['Year'].min()
+                end_year = df['Year'].max()
+                
+                return {
+                    'type': 'dynamic_portfolio',
+                    'name': f'Dynamic S&P 500 Top 20 ({start_year}-{end_year})',
+                    'tickers': all_tickers.tolist(),
+                    'historical_data': df.to_dict('records')
+                }
+        except Exception as e:
+            print(f"Error getting dynamic portfolio data: {e}")
+            return None
+    return None
 
 # =============================================================================
 # RISK-FREE RATE FUNCTIONS
@@ -574,6 +744,9 @@ def get_ticker_aliases():
         'COPPER': 'HG=F',        # Copper Futures (2000+) - No dividends
         'PLATINUM': 'PL=F',      # Platinum Futures (1997+) - No dividends
         'PALLADIUM': 'PA=F',     # Palladium Futures (1998+) - No dividends
+        
+        # Special Dynamic Portfolio Tickers
+        'SP500TOP20': 'SP500TOP20',  # Dynamic S&P 500 Top 20 (rebalances yearly based on historical data)
     }
 
 def resolve_ticker_alias(ticker):
@@ -3434,7 +3607,9 @@ def create_allocation_evolution_chart(portfolio_name, allocs_data):
             yaxis_title="Allocation (%)",
             template='plotly_dark',
             height=600,
-            hovermode='x unified',
+            hovermode='closest',
+            hoverdistance=100,
+            spikedistance=1000,
             legend=dict(
                 orientation="v",
                 yanchor="top",
@@ -4148,7 +4323,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             normalized_weights = [0 for _ in filtered_windows]
         else:
             normalized_weights = [w["weight"] / total_weight for w in filtered_windows]
-        start_dates_config = {t: reindexed_data[t].first_valid_index() for t in tickers if t in reindexed_data}
+        start_dates_config = {t: reindexed_data[t].first_valid_index() for t in tickers if t in reindexed_data and not isinstance(reindexed_data[t], str)}
         for t in current_assets:
             is_valid, asset_returns = True, 0.0
             for idx, window in enumerate(filtered_windows):
@@ -4192,7 +4367,16 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         # compute beta and volatility metrics when requested
         beta_vals = {}
         vol_vals = {}
-        df_bench = current_data.get(benchmark_ticker)
+        # Get config parameters (same as in single_backtest)
+        calc_beta = config.get('calc_beta', False)
+        calc_volatility = config.get('calc_volatility', False)
+        benchmark_ticker = config.get('benchmark_ticker', '^GSPC')
+        beta_window_days = config.get('beta_window_days', 365)
+        exclude_days_beta = config.get('exclude_days_beta', 30)
+        vol_window_days = config.get('vol_window_days', 365)
+        exclude_days_vol = config.get('exclude_days_vol', 30)
+        
+        df_bench = reindexed_data.get(benchmark_ticker)
         if calc_beta:
             start_beta = date - pd.Timedelta(days=beta_window_days)
             end_beta = date - pd.Timedelta(days=exclude_days_beta)
@@ -4201,7 +4385,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             end_vol = date - pd.Timedelta(days=exclude_days_vol)
 
         for t in list(rets.keys()):
-            df_t = current_data.get(t)
+            df_t = reindexed_data.get(t)
             if calc_beta and df_bench is not None and isinstance(df_t, pd.DataFrame):
                 mask_beta = (df_t.index >= start_beta) & (df_t.index <= end_beta)
                 returns_t_beta = df_t.loc[mask_beta, 'Price_change']
@@ -5029,6 +5213,534 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     results['Portfolio_Value_No_Additions'] = portfolio_no_additions
 
     return results["Total_with_dividends_plus_cash"], results['Portfolio_Value_No_Additions'], historical_allocations, historical_metrics
+
+def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version="v2_year_aware"):
+    """
+    Year-aware backtest that treats dynamic tickers EXACTLY like regular tickers
+    but with year-specific ticker selection based on CSV data
+    """
+    import pandas as pd
+    
+    def calculate_momentum(date, current_assets, momentum_windows):
+        """Momentum calculation function (same as in single_backtest)"""
+        cumulative_returns, valid_assets = {}, []
+        filtered_windows = [w for w in momentum_windows if w["weight"] > 0]
+        # Normalize weights so they sum to 1 (same as app.py)
+        total_weight = sum(w["weight"] for w in filtered_windows)
+        if total_weight == 0:
+            normalized_weights = [0 for _ in filtered_windows]
+        else:
+            normalized_weights = [w["weight"] / total_weight for w in filtered_windows]
+        start_dates_config = {t: reindexed_data[t].first_valid_index() for t in current_assets if t in reindexed_data and not isinstance(reindexed_data[t], str)}
+        for t in current_assets:
+            is_valid, asset_returns = True, 0.0
+            for idx, window in enumerate(filtered_windows):
+                lookback, exclude = window["lookback"], window["exclude"]
+                weight = normalized_weights[idx]
+                start_mom = date - pd.Timedelta(days=lookback)
+                end_mom = date - pd.Timedelta(days=exclude)
+                if start_dates_config.get(t, pd.Timestamp.max) > start_mom:
+                    is_valid = False; break
+                df_t = reindexed_data[t]
+                price_start_index = df_t.index.asof(start_mom)
+                price_end_index = df_t.index.asof(end_mom)
+                if pd.isna(price_start_index) or pd.isna(price_end_index):
+                    is_valid = False; break
+                price_start = df_t.loc[price_start_index, "Close"]
+                price_end = df_t.loc[price_end_index, "Close"]
+                if pd.isna(price_start) or pd.isna(price_end) or price_start == 0:
+                    is_valid = False; break
+                ret = (price_end - price_start) / price_start
+                asset_returns += ret * weight
+            if is_valid:
+                cumulative_returns[t] = asset_returns
+                valid_assets.append(t)
+        return cumulative_returns, valid_assets
+
+    def calculate_momentum_weights(returns, valid_assets, date, momentum_strategy='Classic', negative_momentum_strategy='Cash'):
+        """Momentum weights calculation function (EXACT same as in single_backtest)"""
+        # Mirror approach used in allocations/app.py: compute weights from raw momentum
+        # (Classic or Relative) and then optionally post-filter by inverse volatility
+        # and inverse absolute beta (multiplicative), then renormalize. This avoids
+        # dividing by beta directly which flips signs when beta is negative.
+        if not valid_assets:
+            return {}, {}
+        # Keep only non-nan momentum values
+        rets = {t: returns.get(t, np.nan) for t in valid_assets}
+        rets = {t: rets[t] for t in rets if not pd.isna(rets[t])}
+        if not rets:
+            return {}, {}
+
+        metrics = {t: {} for t in rets.keys()}
+
+        # compute beta and volatility metrics when requested
+        beta_vals = {}
+        vol_vals = {}
+        # Get config parameters (same as in single_backtest)
+        calc_beta = config.get('calc_beta', False)
+        calc_volatility = config.get('calc_volatility', False)
+        benchmark_ticker = config.get('benchmark_ticker', '^GSPC')
+        beta_window_days = config.get('beta_window_days', 365)
+        exclude_days_beta = config.get('exclude_days_beta', 30)
+        vol_window_days = config.get('vol_window_days', 365)
+        exclude_days_vol = config.get('exclude_days_vol', 30)
+        
+        df_bench = reindexed_data.get(benchmark_ticker)
+        if calc_beta:
+            start_beta = date - pd.Timedelta(days=beta_window_days)
+            end_beta = date - pd.Timedelta(days=exclude_days_beta)
+        if calc_volatility:
+            start_vol = date - pd.Timedelta(days=vol_window_days)
+            end_vol = date - pd.Timedelta(days=exclude_days_vol)
+
+        for t in list(rets.keys()):
+            df_t = reindexed_data.get(t)
+            if calc_beta and df_bench is not None and isinstance(df_t, pd.DataFrame):
+                mask_beta = (df_t.index >= start_beta) & (df_t.index <= end_beta)
+                returns_t_beta = df_t.loc[mask_beta, 'Price_change']
+                mask_bench_beta = (df_bench.index >= start_beta) & (df_bench.index <= end_beta)
+                returns_bench_beta = df_bench.loc[mask_bench_beta, 'Price_change']
+                if len(returns_t_beta) < 2 or len(returns_bench_beta) < 2:
+                    beta_vals[t] = np.nan
+                else:
+                    variance = np.var(returns_bench_beta)
+                    beta_vals[t] = (np.cov(returns_t_beta, returns_bench_beta)[0,1] / variance) if variance > 0 else np.nan
+                metrics[t]['Beta'] = beta_vals[t]
+            if calc_volatility and isinstance(df_t, pd.DataFrame):
+                mask_vol = (df_t.index >= start_vol) & (df_t.index <= end_vol)
+                returns_t_vol = df_t.loc[mask_vol, 'Price_change']
+                if len(returns_t_vol) < 2:
+                    vol_vals[t] = np.nan
+                else:
+                    vol_vals[t] = returns_t_vol.std() * np.sqrt(365)
+                metrics[t]['Volatility'] = vol_vals[t]
+
+        # attach raw momentum
+        for t in rets:
+            metrics[t]['Momentum'] = rets[t]
+
+        # Build initial weights from raw momentum (Classic or Relative)
+        weights = {}
+        rets_keys = list(rets.keys())
+        all_negative = all(rets[t] <= 0 for t in rets_keys)
+        relative_mode = isinstance(momentum_strategy, str) and momentum_strategy.lower().startswith('relat')
+
+        if all_negative:
+            if negative_momentum_strategy == 'Cash':
+                weights = {t: 0.0 for t in rets_keys}
+            elif negative_momentum_strategy == 'Equal weight':
+                weights = {t: 1.0 / len(rets_keys) for t in rets_keys}
+            else:  # Relative momentum
+                min_score = min(rets[t] for t in rets_keys)
+                offset = -min_score + 0.01
+                shifted = {t: max(0.01, rets[t] + offset) for t in rets_keys}
+                ssum = sum(shifted.values())
+                weights = {t: shifted[t] / ssum for t in shifted}
+        else:
+            if relative_mode:
+                min_score = min(rets[t] for t in rets_keys)
+                offset = -min_score + 0.01 if min_score < 0 else 0.01
+                shifted = {t: max(0.01, rets[t] + offset) for t in rets_keys}
+                ssum = sum(shifted.values())
+                weights = {t: shifted[t] / ssum for t in shifted}
+            else:
+                positive_scores = {t: rets[t] for t in rets_keys if rets[t] > 0}
+                if positive_scores:
+                    ssum = sum(positive_scores.values())
+                    weights = {t: (positive_scores.get(t, 0.0) / ssum) for t in rets_keys}
+                else:
+                    weights = {t: 0.0 for t in rets_keys}
+
+        # Post-filtering: multiply weights by inverse vol and inverse |beta| when requested
+        if (calc_volatility or calc_beta) and weights:
+            filter_scores = {}
+            for t in weights:
+                score = 1.0
+                if calc_volatility:
+                    v = metrics.get(t, {}).get('Volatility', np.nan)
+                    if not pd.isna(v) and v > 0:
+                        score *= 1.0 / v
+                if calc_beta:
+                    b = metrics.get(t, {}).get('Beta', np.nan)
+                    if not pd.isna(b) and b != 0:
+                        score *= 1.0 / abs(b)
+                filter_scores[t] = score
+
+            filtered = {t: weights.get(t, 0.0) * filter_scores.get(t, 1.0) for t in weights}
+            total_filtered = sum(filtered.values())
+            if total_filtered > 0:
+                weights = {t: filtered[t] / total_filtered for t in filtered}
+
+        return weights, metrics
+    import numpy as np
+    
+    # Get dynamic portfolio data for year-aware ticker selection
+    dynamic_portfolio_data = None
+    special_ticker = None
+    for stock in config['stocks']:
+        if is_special_dynamic_ticker(stock['ticker']):
+            special_ticker = stock['ticker']
+            dynamic_portfolio_data = get_dynamic_portfolio_data(stock['ticker'])
+            break
+    
+    if not dynamic_portfolio_data:
+        # Fallback to regular backtest if no dynamic data
+        return single_backtest(config, sim_index, reindexed_data)
+    
+    # READ CSV AND GET ALL TICKERS TO DOWNLOAD
+    try:
+        df = pd.read_csv('TOP_20_SP500_COMPLETE_TEMPLATE.csv')
+        all_tickers = df['Ticker'].unique().tolist()
+    except:
+        all_tickers = ['XOM', 'IBM', 'GE', 'BMY', 'MRK', 'KO', 'WMT', 'PG', 'VZ', 'JNJ', 'LLY', 'PEP', 'DIS', 'T', 'MMM', 'AIG', 'BA', 'MCD', 'PFE', 'SLB']
+    
+    # CREATE YEAR-TO-TICKERS MAPPING
+    year_tickers_map = {}
+    for year in df['Year'].unique():
+        year_stocks = df[df['Year'] == year].sort_values('Rank').head(20)
+        year_tickers_map[year] = year_stocks['Ticker'].tolist()
+    
+    # CREATE CONFIG WITH ALL TICKERS (so they get downloaded)
+    modified_config = config.copy()
+    modified_config['stocks'] = []
+    
+    # Add all tickers with 0% allocation (they'll be used dynamically during rebalancing)
+    for ticker in all_tickers:
+        modified_config['stocks'].append({
+            'ticker': ticker,
+            'allocation': 0.0  # 0% initially, will be set to 5% during rebalancing
+        })
+    
+    # Add the special ticker with 100% (this triggers the dynamic logic)
+    modified_config['stocks'].append({
+        'ticker': 'SP500TOP20',
+        'allocation': 100.0
+    })
+    
+    # MODIFY THE SINGLE_BACKTEST TO USE YEAR-AWARE REBALANCING
+    # We need to override the rebalancing logic to use year-specific tickers
+    
+    # Get original parameters
+    rebalancing_frequency = config.get('rebalancing_frequency', 'Monthly')
+    use_momentum = config.get('use_momentum', False)
+    momentum_windows = config.get('momentum_windows', [])
+    initial_value = config.get('initial_value', 10000)
+    added_amount = config.get('added_amount', 0)
+    added_frequency = config.get('added_frequency', 'None')
+    
+    # Initialize portfolio values
+    values = {t: [initial_value if t == 'SP500TOP20' else 0] for t in all_tickers + ['SP500TOP20']}
+    unallocated_cash = [0]
+    unreinvested_cash = [0]
+    
+    # Historical tracking
+    historical_allocations = {}
+    historical_metrics = {}
+    
+    # Process each date
+    for i, date in enumerate(sim_index):
+        if i == 0:
+            continue
+            
+        # GET CURRENT YEAR'S TICKERS
+        current_year = date.year
+        if current_year in year_tickers_map:
+            current_year_tickers = year_tickers_map[current_year]
+        else:
+            current_year_tickers = year_tickers_map.get(1989, all_tickers[:20])
+        
+        # FILTER TO ONLY AVAILABLE TICKERS
+        available_tickers = [t for t in current_year_tickers if t in reindexed_data and not isinstance(reindexed_data[t], str)]
+        
+        # CHECK IF WE SHOULD REBALANCE
+        should_rebalance = False
+        if rebalancing_frequency == "Daily":
+            should_rebalance = True
+        elif rebalancing_frequency == "Weekly":
+            should_rebalance = date.weekday() == 0
+        elif rebalancing_frequency == "Monthly":
+            should_rebalance = date.day == 1
+        elif rebalancing_frequency == "Quarterly":
+            should_rebalance = date.month in [1, 4, 7, 10] and date.day == 1
+        elif rebalancing_frequency == "Annually":
+            should_rebalance = date.month == 1 and date.day == 1
+        
+        if should_rebalance and available_tickers:
+            # CALCULATE CURRENT TOTAL VALUE
+            current_total = sum(values[t][-1] for t in all_tickers + ['SP500TOP20'])
+            
+            # ADD PERIODIC CONTRIBUTIONS
+            if added_frequency != "None" and added_amount > 0:
+                if rebalancing_frequency == "Daily" or \
+                   (rebalancing_frequency == "Weekly" and date.weekday() == 0) or \
+                   (rebalancing_frequency == "Monthly" and date.day == 1) or \
+                   (rebalancing_frequency == "Quarterly" and date.month in [1, 4, 7, 10] and date.day == 1) or \
+                   (rebalancing_frequency == "Annually" and date.month == 1 and date.day == 1):
+                    current_total += added_amount
+            
+            if use_momentum:
+                # MOMENTUM-BASED REBALANCING - Use the SAME momentum logic as regular backtests
+                # Just pass the dynamic tickers instead of user-entered tickers
+                returns, valid_assets = calculate_momentum(date, set(available_tickers), momentum_windows)
+                if valid_assets:
+                    weights, metrics_on_rebal = calculate_momentum_weights(
+                        returns, valid_assets, date, config.get('momentum_strategy', 'Classic'), 
+                        config.get('negative_momentum_strategy', 'Cash')
+                    )
+                    
+                    # Reset all values
+                    for t in all_tickers + ['SP500TOP20']:
+                        values[t].append(0)
+                    
+                    # Set values based on momentum weights
+                    for t in available_tickers:
+                        if t in weights:
+                            values[t][-1] = current_total * weights[t]
+                        else:
+                            values[t][-1] = 0
+                    
+                    # Update cash
+                    unallocated_cash.append(current_total * weights.get('CASH', 0))
+                    unreinvested_cash.append(0)
+                    
+                    # Store metrics
+                    historical_metrics[date] = metrics_on_rebal
+                else:
+                    # No valid momentum data, use equal weights
+                    equal_weight = current_total / len(available_tickers)
+                    for t in all_tickers + ['SP500TOP20']:
+                        values[t].append(0)
+                    for t in available_tickers:
+                        values[t][-1] = equal_weight
+                    unallocated_cash.append(0)
+                    unreinvested_cash.append(0)
+            else:
+                # EQUAL WEIGHT REBALANCING
+                equal_weight = current_total / len(available_tickers)
+                
+                # Reset all values
+                for t in all_tickers + ['SP500TOP20']:
+                    values[t].append(0)
+                
+                # Set values for current year's tickers
+                for t in available_tickers:
+                    values[t][-1] = equal_weight
+                
+                unallocated_cash.append(0)
+                unreinvested_cash.append(0)
+            
+            # Store allocation snapshot AS PERCENTAGES (like normal backtest)
+            allocation_snapshot = {t: values[t][-1] / current_total for t in available_tickers if values[t][-1] > 0}
+            allocation_snapshot['CASH'] = unallocated_cash[-1] / current_total if current_total > 0 else 0
+            historical_allocations[date] = allocation_snapshot
+        else:
+            # NO REBALANCING - just update values based on price changes
+            for t in all_tickers + ['SP500TOP20']:
+                if t in reindexed_data and not isinstance(reindexed_data[t], str) and t != 'SP500TOP20':
+                    try:
+                        if i < len(reindexed_data[t]):
+                            price_change = reindexed_data[t].iloc[i]['Price_change']
+                            values[t].append(values[t][-1] * (1 + price_change))
+                        else:
+                            values[t].append(values[t][-1])
+                    except:
+                        values[t].append(values[t][-1])
+                else:
+                    values[t].append(values[t][-1])
+            
+            unallocated_cash.append(unallocated_cash[-1])
+            unreinvested_cash.append(unreinvested_cash[-1])
+            
+            # Store current allocation snapshot (even when not rebalancing)
+            current_total = sum(values[t][-1] for t in all_tickers + ['SP500TOP20']) + unallocated_cash[-1] + unreinvested_cash[-1]
+            if current_total > 0:
+                allocation_snapshot = {t: values[t][-1] / current_total for t in all_tickers + ['SP500TOP20'] if values[t][-1] > 0}
+                allocation_snapshot['CASH'] = (unallocated_cash[-1] + unreinvested_cash[-1]) / current_total
+                historical_allocations[date] = allocation_snapshot
+    
+    # CALCULATE TOTAL PORTFOLIO VALUE
+    total_series = pd.Series(0, index=sim_index)
+    total_series_no_additions = pd.Series(0, index=sim_index)
+    
+    for i, date in enumerate(sim_index):
+        total_value = sum(values[t][i] for t in all_tickers + ['SP500TOP20']) + unallocated_cash[i] + unreinvested_cash[i]
+        total_series.iloc[i] = total_value
+        
+        # Calculate without additions
+        no_additions_value = total_value
+        if added_frequency != "None" and added_amount > 0:
+            contributions_made = 0
+            for j in range(i + 1):
+                check_date = sim_index[j]
+                if rebalancing_frequency == "Daily" or \
+                   (rebalancing_frequency == "Weekly" and check_date.weekday() == 0) or \
+                   (rebalancing_frequency == "Monthly" and check_date.day == 1) or \
+                   (rebalancing_frequency == "Quarterly" and check_date.month in [1, 4, 7, 10] and check_date.day == 1) or \
+                   (rebalancing_frequency == "Annually" and check_date.month == 1 and check_date.day == 1):
+                    contributions_made += 1
+            
+            no_additions_value = total_value - (contributions_made * added_amount)
+        
+        total_series_no_additions.iloc[i] = max(no_additions_value, initial_value)
+    
+    # CALCULATE TODAY_WEIGHTS_MAP (like normal backtest)
+    today_weights_map = {}
+    
+    if use_momentum:
+        # MOMENTUM: Calculate what allocation would be TODAY using momentum
+        try:
+            # Get today's date (last date in simulation)
+            today_date = sim_index[-1]
+            
+            # Get current year tickers for today
+            current_year = today_date.year
+            if current_year in year_tickers_map:
+                current_year_tickers = year_tickers_map[current_year]
+                available_tickers = [t for t in current_year_tickers if t in reindexed_data and not isinstance(reindexed_data[t], str)]
+                
+                if available_tickers:
+                    # Calculate momentum for today
+                    returns, valid_assets = calculate_momentum(today_date, set(available_tickers), momentum_windows)
+                    if valid_assets:
+                        weights, _ = calculate_momentum_weights(
+                            returns, valid_assets, today_date, 
+                            config.get('momentum_strategy', 'Classic'), 
+                            config.get('negative_momentum_strategy', 'Cash')
+                        )
+                        
+                        # Apply weights to available tickers
+                        total_weight = sum(weights.values())
+                        if total_weight > 0:
+                            for ticker, weight in weights.items():
+                                today_weights_map[ticker] = weight
+                        
+                        # Add CASH if total < 1.0
+                        current_total = sum(today_weights_map.values())
+                        if current_total < 1.0:
+                            today_weights_map['CASH'] = 1.0 - current_total
+                        else:
+                            today_weights_map['CASH'] = 0.0
+                    else:
+                        # All momentum negative - go to cash
+                        today_weights_map['CASH'] = 1.0
+                else:
+                    # No available tickers - go to cash
+                    today_weights_map['CASH'] = 1.0
+            else:
+                # No data for current year - go to cash
+                today_weights_map['CASH'] = 1.0
+        except Exception as e:
+            # Fallback to equal weight if momentum calculation fails
+            if current_year in year_tickers_map:
+                current_year_tickers = year_tickers_map[current_year]
+                available_tickers = [t for t in current_year_tickers if t in reindexed_data and not isinstance(reindexed_data[t], str)]
+                if available_tickers:
+                    equal_weight = 1.0 / len(available_tickers)
+                    for ticker in available_tickers:
+                        today_weights_map[ticker] = equal_weight
+                    today_weights_map['CASH'] = 0.0
+                else:
+                    today_weights_map['CASH'] = 1.0
+            else:
+                today_weights_map['CASH'] = 1.0
+    else:
+        # EQUAL WEIGHT: Calculate what allocation would be TODAY (5% each)
+        try:
+            # Get current year tickers for today
+            today_date = sim_index[-1]
+            current_year = today_date.year
+            
+            if current_year in year_tickers_map:
+                current_year_tickers = year_tickers_map[current_year]
+                available_tickers = [t for t in current_year_tickers if t in reindexed_data and not isinstance(reindexed_data[t], str)]
+                
+                if available_tickers:
+                    # Equal weight (5% each for 20 stocks = 100%)
+                    equal_weight = 1.0 / len(available_tickers)
+                    for ticker in available_tickers:
+                        today_weights_map[ticker] = equal_weight
+                    today_weights_map['CASH'] = 0.0
+                else:
+                    # No available tickers - go to cash
+                    today_weights_map['CASH'] = 1.0
+            else:
+                # No data for current year - go to cash
+                today_weights_map['CASH'] = 1.0
+        except Exception as e:
+            # Fallback to cash if calculation fails
+            today_weights_map['CASH'] = 1.0
+    
+    return total_series, total_series_no_additions, historical_allocations, historical_metrics, today_weights_map
+
+def calculate_momentum_allocations_dynamic(tickers, reindexed_data, momentum_windows, current_year):
+    """
+    Calculate momentum-based allocations for the given tickers in dynamic portfolio
+    """
+    import pandas as pd
+    import numpy as np
+    
+    st.write(f"🔍 DEBUG: calculate_momentum_allocations_dynamic called with:")
+    st.write(f"🔍 DEBUG: tickers = {tickers} (type: {type(tickers)})")
+    st.write(f"🔍 DEBUG: momentum_windows = {momentum_windows} (type: {type(momentum_windows)})")
+    st.write(f"🔍 DEBUG: current_year = {current_year} (type: {type(current_year)})")
+    
+    # Ensure tickers is a list
+    if not isinstance(tickers, list):
+        tickers = list(tickers) if hasattr(tickers, '__iter__') else []
+        st.write(f"🔍 DEBUG: Converted tickers to list: {tickers}")
+    
+    # Get momentum scores for each ticker
+    momentum_scores = {}
+    
+    for ticker in tickers:
+        if ticker not in reindexed_data:
+            continue
+            
+        ticker_data = reindexed_data[ticker]
+        total_momentum = 0
+        
+        # Ensure momentum_windows is a list
+        if not isinstance(momentum_windows, list):
+            momentum_windows = []
+            
+        for window in momentum_windows:
+            if not isinstance(window, dict) or 'lookback' not in window or 'weight' not in window:
+                continue
+            lookback = window['lookback']
+            weight = window['weight']
+            
+            # Calculate momentum for this window
+            try:
+                # Get data for the lookback period
+                end_date = f"{current_year}-01-01"
+                start_date = pd.to_datetime(end_date) - pd.Timedelta(days=lookback)
+                
+                window_data = ticker_data[
+                    (ticker_data.index >= start_date) & 
+                    (ticker_data.index <= end_date)
+                ]
+                
+                # Ensure window_data is a DataFrame/Series and has more than 1 row
+                if hasattr(window_data, '__len__') and len(window_data) > 1:
+                    momentum = (window_data['Close'].iloc[-1] / window_data['Close'].iloc[0]) - 1
+                    total_momentum += momentum * weight
+            except:
+                continue
+        
+        momentum_scores[ticker] = max(total_momentum, 0)  # Only positive momentum
+    
+    # Convert momentum scores to allocations
+    if momentum_scores:
+        total_momentum = sum(momentum_scores.values())
+        if total_momentum > 0:
+            allocations = {}
+            for ticker, score in momentum_scores.items():
+                allocations[ticker] = (score / total_momentum) * 100
+            return allocations
+    
+    # Fallback to equal weight if momentum calculation fails
+    equal_weight = 100.0 / len(tickers)
+    return {ticker: equal_weight for ticker in tickers}
 
 
 # -----------------------
@@ -9204,13 +9916,33 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         with contextlib.redirect_stdout(buffer):
             data = {}
             invalid_tickers = []
-            for i, t in enumerate(all_tickers):
+            
+            # Handle special dynamic tickers - expand them to individual tickers
+            special_tickers = [t for t in all_tickers if is_special_dynamic_ticker(t)]
+            individual_tickers_to_download = set()
+            
+            for special_ticker in special_tickers:
+                dynamic_data = get_dynamic_portfolio_data(special_ticker)
+                if dynamic_data:
+                    individual_tickers_to_download.update(dynamic_data['tickers'])
+            
+            # Combine regular tickers with individual tickers from special tickers
+            all_tickers_to_download = set(all_tickers) | individual_tickers_to_download
+            # Remove special tickers from download list (we'll handle them separately)
+            all_tickers_to_download = [t for t in all_tickers_to_download if not is_special_dynamic_ticker(t)]
+            
+            total_downloads = len(all_tickers_to_download) + len(special_tickers)
+            download_count = 0
+            
+            # Download individual tickers
+            for i, t in enumerate(all_tickers_to_download):
                 # Check for kill request during data download
                 check_kill_request()
                 
                 try:
-                    progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
-                    progress_bar.progress((i + 1) / (len(all_tickers) + 1), text=progress_text)
+                    download_count += 1
+                    progress_text = f"Downloading data for {t} ({download_count}/{total_downloads})..."
+                    progress_bar.progress(download_count / total_downloads, text=progress_text)
                     hist = get_ticker_data(t, period="max", auto_adjust=False)
                     if hist.empty:
                         invalid_tickers.append(t)
@@ -9224,14 +9956,22 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     data[t] = hist
                 except Exception as e:
                     invalid_tickers.append(t)
+            
+            # Add special tickers to data with placeholder (they'll be handled in backtest)
+            for special_ticker in special_tickers:
+                download_count += 1
+                progress_text = f"Processing special ticker {special_ticker} ({download_count}/{total_downloads})..."
+                progress_bar.progress(download_count / total_downloads, text=progress_text)
+                data[special_ticker] = "special_dynamic_ticker"
             # Display invalid ticker warnings in Streamlit UI
             if invalid_tickers:
                 # Separate portfolio tickers from benchmark tickers
                 portfolio_tickers = set(s['ticker'] for cfg in st.session_state.multi_backtest_portfolio_configs for s in cfg['stocks'] if s['ticker'])
                 benchmark_tickers = set(cfg.get('benchmark_ticker') for cfg in st.session_state.multi_backtest_portfolio_configs if 'benchmark_ticker' in cfg)
                 
-                portfolio_invalid = [t for t in invalid_tickers if t in portfolio_tickers]
-                benchmark_invalid = [t for t in invalid_tickers if t in benchmark_tickers]
+                # Filter out special tickers from invalid list since they don't need data download
+                portfolio_invalid = [t for t in invalid_tickers if t in portfolio_tickers and not is_special_dynamic_ticker(t)]
+                benchmark_invalid = [t for t in invalid_tickers if t in benchmark_tickers and not is_special_dynamic_ticker(t)]
                 
                 if portfolio_invalid:
                     st.warning(f"The following portfolio tickers are invalid and will be skipped: {', '.join(portfolio_invalid)}")
@@ -9239,9 +9979,14 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     st.warning(f"The following benchmark tickers are invalid and will be skipped: {', '.join(benchmark_invalid)}")
             
             # BULLETPROOF VALIDATION: Check for valid tickers and stop gracefully if none
-            if not data:
-                if invalid_tickers and len(invalid_tickers) == len(all_tickers):
-                    st.error(f"❌ **No valid tickers found!** All tickers are invalid: {', '.join(invalid_tickers)}. Please check your ticker symbols and try again.")
+            # But don't count special tickers as invalid
+            special_tickers_in_portfolio = [t for t in all_tickers if is_special_dynamic_ticker(t)]
+            regular_tickers = [t for t in all_tickers if not is_special_dynamic_ticker(t)]
+            valid_regular_tickers = [t for t in regular_tickers if t in data]
+            
+            if not data and not special_tickers_in_portfolio:
+                if invalid_tickers and len(invalid_tickers) == len(regular_tickers):
+                    st.error(f"❌ **No valid tickers found!** All regular tickers are invalid: {', '.join(invalid_tickers)}. Please check your ticker symbols and try again.")
                 else:
                     st.error("❌ **No valid tickers found!** No data downloaded; aborting.")
                 progress_bar.empty()
@@ -9252,9 +9997,16 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             else:
                 # Persist raw downloaded price data so later recomputations can access benchmark series
                 st.session_state.multi_backtest_raw_data = data
-                # Determine common date range for all portfolios
-                common_start = max(df.first_valid_index() for df in data.values())
-                common_end = min(df.last_valid_index() for df in data.values())
+                # Determine common date range for all portfolios (filter out special ticker placeholders)
+                valid_data_frames = [df for df in data.values() if not isinstance(df, str)]
+                if valid_data_frames:
+                    common_start = max(df.first_valid_index() for df in valid_data_frames)
+                    common_end = min(df.last_valid_index() for df in valid_data_frames)
+                else:
+                    # Fallback if no valid data frames (e.g., only special tickers)
+                    # Use a reasonable default date range for special tickers
+                    common_start = pd.Timestamp('1989-01-01')  # Start of S&P 500 data
+                    common_end = pd.Timestamp.now()
                 
                 # Get all portfolio tickers (excluding benchmarks)
                 all_portfolio_tickers = set()
@@ -9279,7 +10031,13 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 
                 global_start_with = st.session_state.get('multi_backtest_start_with', 'all')
                 if global_start_with == 'all':
-                    final_start = max(data[t].first_valid_index() for t in valid_portfolio_tickers)
+                    # Filter out special ticker placeholders when calculating start date
+                    valid_ticker_data = [data[t] for t in valid_portfolio_tickers if not isinstance(data[t], str)]
+                    if valid_ticker_data:
+                        final_start = max(df.first_valid_index() for df in valid_ticker_data)
+                    else:
+                        # Fallback for special tickers only - use a reasonable start date
+                        final_start = pd.Timestamp('1989-01-01')
                 else:  # global_start_with == 'oldest'
                     # For 'oldest', we need to find the portfolio that starts the LATEST
                     # (has the most recent earliest asset), then use that portfolio's earliest asset
@@ -9288,17 +10046,24 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         portfolio_tickers = [stock['ticker'] for stock in cfg.get('stocks', []) if stock['ticker']]
                         valid_portfolio_tickers_for_cfg = [t for t in portfolio_tickers if t in data]
                         if valid_portfolio_tickers_for_cfg:
-                            # Find the earliest asset in this portfolio
-                            portfolio_earliest = min(data[t].first_valid_index() for t in valid_portfolio_tickers_for_cfg)
-                            portfolio_earliest_dates[cfg['name']] = portfolio_earliest
+                            # Find the earliest asset in this portfolio (filter out special ticker placeholders)
+                            valid_ticker_data_for_cfg = [data[t] for t in valid_portfolio_tickers_for_cfg if not isinstance(data[t], str)]
+                            if valid_ticker_data_for_cfg:
+                                portfolio_earliest = min(df.first_valid_index() for df in valid_ticker_data_for_cfg)
+                                portfolio_earliest_dates[cfg['name']] = portfolio_earliest
                     
                     if portfolio_earliest_dates:
                         # Find the portfolio with the LATEST earliest asset
                         latest_starting_portfolio = max(portfolio_earliest_dates.items(), key=lambda x: x[1])
                         final_start = latest_starting_portfolio[1]
                     else:
-                        # Fallback to original logic
-                        final_start = min(data[t].first_valid_index() for t in valid_portfolio_tickers)
+                        # Fallback to original logic (filter out special ticker placeholders)
+                        valid_ticker_data = [data[t] for t in valid_portfolio_tickers if not isinstance(data[t], str)]
+                        if valid_ticker_data:
+                            final_start = min(df.first_valid_index() for df in valid_ticker_data)
+                        else:
+                            # Fallback for special tickers only - use a reasonable start date
+                            final_start = pd.Timestamp('1989-01-01')
                 
                 # Apply user date constraints if any
                 for cfg in st.session_state.multi_backtest_portfolio_configs:
@@ -9316,15 +10081,23 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 # Create simulation index for the entire period
                 simulation_index = pd.date_range(start=final_start, end=common_end, freq='D')
                 
-                # Reindex all data to the simulation period (only valid tickers)
+                # Reindex all data to the simulation period (all tickers that have data)
                 data_reindexed = {}
-                for t in all_tickers:
+                # Process ALL tickers in data, not just all_tickers (to include individual tickers from special tickers)
+                for t in data.keys():
                     if t in data:  # Only process tickers that have data
-                        df = data[t].reindex(simulation_index)
-                        df["Close"] = df["Close"].ffill()
-                        df["Dividends"] = df["Dividends"].fillna(0)
-                        df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
-                        data_reindexed[t] = df
+                        ticker_data = data[t]
+                        # Skip special ticker placeholders (they'll be handled in special backtest functions)
+                        if isinstance(ticker_data, str):
+                            data_reindexed[t] = ticker_data  # Keep as string for special handling
+                        else:
+                            # Regular ticker data - reindex it
+                            df = ticker_data.reindex(simulation_index)
+                            df["Close"] = df["Close"].ffill()
+                            df["Dividends"] = df["Dividends"].fillna(0)
+                            df["Price_change"] = df["Close"].pct_change(fill_method=None).fillna(0)
+                            data_reindexed[t] = df
+                
                 
                 progress_bar.progress(1.0, text="Executing multi-portfolio backtest analysis...")
                 
@@ -9373,68 +10146,74 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         
                         name = cfg.get('name', f'Portfolio {i}')
                         
-                        # Run single backtest for this portfolio
-                        total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
+                        # Check if this portfolio contains a special dynamic ticker
+                        has_special_ticker = any(is_special_dynamic_ticker(stock['ticker']) for stock in cfg['stocks'])
                         
-                        # Compute today_weights_map for regular portfolios
-                        today_weights_map = {}
-                        try:
-                            alloc_dates = sorted(list(historical_allocations.keys()))
-                            if alloc_dates:
-                                final_d = alloc_dates[-1]
-                                metrics_local = historical_metrics
-                                
-                                # Check if momentum is used for this portfolio
-                                use_momentum = cfg.get('use_momentum', True)
-                                
-                                if final_d in metrics_local:
-                                    if use_momentum:
-                                        # Extract Calculated_Weight if present (momentum-based)
-                                        weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
-                                        # Normalize (ensure sums to 1 excluding CASH)
-                                        sumw = sum(w for k, w in weights.items() if k != 'CASH')
-                                        if sumw > 0:
-                                            norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
-                                        else:
-                                            norm = weights
-                                        today_weights_map = norm
-                                    else:
-                                        # Use user-defined allocations from portfolio config
-                                        today_weights_map = {}
-                                        for stock in cfg.get('stocks', []):
-                                            ticker = stock.get('ticker', '').strip()
-                                            if ticker:
-                                                today_weights_map[ticker] = stock.get('allocation', 0)
-                                        # Add CASH if needed
-                                        total_alloc = sum(today_weights_map.values())
-                                        if total_alloc < 1.0:
-                                            today_weights_map['CASH'] = 1.0 - total_alloc
-                                        else:
-                                            today_weights_map['CASH'] = 0
-                                else:
-                                    # Fallback: use allocation snapshot at final date
-                                    final_alloc = historical_allocations.get(final_d, {})
-                                    noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
-                                    s = sum(noncash.values())
-                                    if s > 0:
-                                        norm = {k: (v / s) for k, v in noncash.items()}
-                                        norm['CASH'] = final_alloc.get('CASH', 0)
-                                    else:
-                                        norm = final_alloc
-                                        today_weights_map = norm
-                        except Exception as e:
-                            # If computation fails, use user-defined allocations as fallback
+                        if has_special_ticker:
+                            # Use year-aware backtest for dynamic tickers
+                            total_series, total_series_no_additions, historical_allocations, historical_metrics, today_weights_map = single_backtest_year_aware(cfg, simulation_index, data_reindexed)
+                        else:
+                            # Regular backtest for normal tickers
+                            total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
+                            # Compute today_weights_map for regular portfolios
                             today_weights_map = {}
-                            for stock in cfg.get('stocks', []):
-                                ticker = stock.get('ticker', '').strip()
-                                if ticker:
-                                    today_weights_map[ticker] = stock.get('allocation', 0)
-                            # Add CASH if needed
-                            total_alloc = sum(today_weights_map.values())
-                            if total_alloc < 1.0:
-                                today_weights_map['CASH'] = 1.0 - total_alloc
-                            else:
-                                today_weights_map['CASH'] = 0
+                            try:
+                                alloc_dates = sorted(list(historical_allocations.keys()))
+                                if alloc_dates:
+                                    final_d = alloc_dates[-1]
+                                    metrics_local = historical_metrics
+                                    
+                                    # Check if momentum is used for this portfolio
+                                    use_momentum = cfg.get('use_momentum', True)
+                                    
+                                    if final_d in metrics_local:
+                                        if use_momentum:
+                                            # Extract Calculated_Weight if present (momentum-based)
+                                            weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
+                                            # Normalize (ensure sums to 1 excluding CASH)
+                                            sumw = sum(w for k, w in weights.items() if k != 'CASH')
+                                            if sumw > 0:
+                                                norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
+                                            else:
+                                                norm = weights
+                                            today_weights_map = norm
+                                        else:
+                                            # Use user-defined allocations from portfolio config
+                                            today_weights_map = {}
+                                            for stock in cfg.get('stocks', []):
+                                                ticker = stock.get('ticker', '').strip()
+                                                if ticker:
+                                                    today_weights_map[ticker] = stock.get('allocation', 0)
+                                            # Add CASH if needed
+                                            total_alloc = sum(today_weights_map.values())
+                                            if total_alloc < 1.0:
+                                                today_weights_map['CASH'] = 1.0 - total_alloc
+                                            else:
+                                                today_weights_map['CASH'] = 0
+                                    else:
+                                        # Fallback: use allocation snapshot at final date
+                                        final_alloc = historical_allocations.get(final_d, {})
+                                        noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
+                                        s = sum(noncash.values())
+                                        if s > 0:
+                                            norm = {k: (v / s) for k, v in noncash.items()}
+                                            norm['CASH'] = final_alloc.get('CASH', 0)
+                                        else:
+                                            norm = final_alloc
+                                            today_weights_map = norm
+                            except Exception as e:
+                                # If computation fails, use user-defined allocations as fallback
+                                today_weights_map = {}
+                                for stock in cfg.get('stocks', []):
+                                    ticker = stock.get('ticker', '').strip()
+                                    if ticker:
+                                        today_weights_map[ticker] = stock.get('allocation', 0)
+                                # Add CASH if needed
+                                total_alloc = sum(today_weights_map.values())
+                                if total_alloc < 1.0:
+                                    today_weights_map['CASH'] = 1.0 - total_alloc
+                                else:
+                                    today_weights_map['CASH'] = 0
                         
                         if total_series is not None and len(total_series) > 0:
                             # Prepare results for this portfolio
