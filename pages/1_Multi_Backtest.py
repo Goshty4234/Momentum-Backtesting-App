@@ -1071,9 +1071,8 @@ def get_goldsim_complete_data(period="max"):
         except:
             return pd.DataFrame()
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=None):
-    """Cache ticker data to improve performance across multiple tabs
+    """Get ticker data (NO_CACHE version)
     
     Args:
         ticker_symbol: Stock ticker symbol (supports leverage format like SPY?L=3)
@@ -3548,9 +3547,8 @@ def get_portfolio_value(portfolio_name):
                     portfolio_value = float(latest_value)
     return portfolio_value
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
 def create_allocation_evolution_chart(portfolio_name, allocs_data):
-    """Create allocation evolution chart for a portfolio - cached for performance"""
+    """Create allocation evolution chart for a portfolio (NO_CACHE version)"""
     try:
         # Convert to DataFrame for easier processing
         alloc_df = pd.DataFrame(allocs_data).T
@@ -3625,9 +3623,8 @@ def create_allocation_evolution_chart(portfolio_name, allocs_data):
         st.error(f"Error creating allocation evolution chart for {portfolio_name}: {str(e)}")
         return None
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
 def process_allocation_dataframe(portfolio_name, allocation_data):
-    """Process allocation data into a clean DataFrame - cached for performance"""
+    """Process allocation data into a clean DataFrame (NO_CACHE version)"""
     try:
         # Ensure all tickers (including CASH) are present in all dates for proper DataFrame creation
         all_tickers = set()
@@ -3665,9 +3662,8 @@ def process_allocation_dataframe(portfolio_name, allocation_data):
         st.error(f"Error processing allocation data for {portfolio_name}: {str(e)}")
         return None, []
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
 def create_pie_chart(portfolio_name, allocation_data, title_suffix="Current Allocation"):
-    """Create pie chart for portfolio allocation - cached for performance"""
+    """Create pie chart for portfolio allocation (NO_CACHE version)"""
     try:
         if not allocation_data:
             return None
@@ -5469,13 +5465,22 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
             # CALCULATE CURRENT TOTAL VALUE
             current_total = sum(values[t][-1] for t in all_tickers + ['SP500TOP20'])
             
-            # ADD PERIODIC CONTRIBUTIONS
+            # ADD PERIODIC CONTRIBUTIONS - Use added_frequency like normal portfolios
             if added_frequency != "None" and added_amount > 0:
-                if rebalancing_frequency == "Daily" or \
-                   (rebalancing_frequency == "Weekly" and date.weekday() == 0) or \
-                   (rebalancing_frequency == "Monthly" and date.day == 1) or \
-                   (rebalancing_frequency == "Quarterly" and date.month in [1, 4, 7, 10] and date.day == 1) or \
-                   (rebalancing_frequency == "Annually" and date.month == 1 and date.day == 1):
+                # Check if this is an addition date based on added_frequency (not rebalancing_frequency)
+                is_addition_date = False
+                if added_frequency == "Daily":
+                    is_addition_date = True
+                elif added_frequency == "Weekly" and date.weekday() == 0:
+                    is_addition_date = True
+                elif added_frequency == "Monthly" and date.day == 1:
+                    is_addition_date = True
+                elif added_frequency == "Quarterly" and date.month in [1, 4, 7, 10] and date.day == 1:
+                    is_addition_date = True
+                elif added_frequency == "Annually" and date.month == 1 and date.day == 1:
+                    is_addition_date = True
+                
+                if is_addition_date:
                     current_total += added_amount
             
             if use_momentum:
@@ -5551,6 +5556,24 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
             unallocated_cash.append(unallocated_cash[-1])
             unreinvested_cash.append(unreinvested_cash[-1])
             
+            # ADD PERIODIC CONTRIBUTIONS (even when not rebalancing) - Use added_frequency like normal portfolios
+            if added_frequency != "None" and added_amount > 0:
+                # Check if this is an addition date based on added_frequency
+                is_addition_date = False
+                if added_frequency == "Daily":
+                    is_addition_date = True
+                elif added_frequency == "Weekly" and date.weekday() == 0:
+                    is_addition_date = True
+                elif added_frequency == "Monthly" and date.day == 1:
+                    is_addition_date = True
+                elif added_frequency == "Quarterly" and date.month in [1, 4, 7, 10] and date.day == 1:
+                    is_addition_date = True
+                elif added_frequency == "Annually" and date.month == 1 and date.day == 1:
+                    is_addition_date = True
+                
+                if is_addition_date:
+                    unallocated_cash[-1] += added_amount
+            
             # Store current allocation snapshot (even when not rebalancing)
             current_total = sum(values[t][-1] for t in all_tickers + ['SP500TOP20']) + unallocated_cash[-1] + unreinvested_cash[-1]
             if current_total > 0:
@@ -5572,11 +5595,20 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
             contributions_made = 0
             for j in range(i + 1):
                 check_date = sim_index[j]
-                if rebalancing_frequency == "Daily" or \
-                   (rebalancing_frequency == "Weekly" and check_date.weekday() == 0) or \
-                   (rebalancing_frequency == "Monthly" and check_date.day == 1) or \
-                   (rebalancing_frequency == "Quarterly" and check_date.month in [1, 4, 7, 10] and check_date.day == 1) or \
-                   (rebalancing_frequency == "Annually" and check_date.month == 1 and check_date.day == 1):
+                # Use added_frequency like normal portfolios
+                is_addition_date = False
+                if added_frequency == "Daily":
+                    is_addition_date = True
+                elif added_frequency == "Weekly" and check_date.weekday() == 0:
+                    is_addition_date = True
+                elif added_frequency == "Monthly" and check_date.day == 1:
+                    is_addition_date = True
+                elif added_frequency == "Quarterly" and check_date.month in [1, 4, 7, 10] and check_date.day == 1:
+                    is_addition_date = True
+                elif added_frequency == "Annually" and check_date.month == 1 and check_date.day == 1:
+                    is_addition_date = True
+                
+                if is_addition_date and j > 0:  # Exclude initial investment
                     contributions_made += 1
             
             no_additions_value = total_value - (contributions_made * added_amount)
