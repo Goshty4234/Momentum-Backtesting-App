@@ -8483,7 +8483,7 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
             successful_strategies = 0
             failed_strategies = []
             
-            st.info(f"🚀 **Processing {len(st.session_state.strategy_comparison_portfolio_configs)} strategies with enhanced reliability...**")
+            st.info(f"🚀 **Processing {len(st.session_state.strategy_comparison_portfolio_configs)} strategies with enhanced reliability (CACHED)...**")
             
             # Process strategies one by one with robust error handling
             for i, cfg in enumerate(st.session_state.strategy_comparison_portfolio_configs, start=1):
