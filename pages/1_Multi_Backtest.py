@@ -11404,11 +11404,7 @@ def paste_all_json_callback():
             sync_date_widgets_with_portfolio()
             
             # Force a rerun so widgets rebuild with the new configs
-            try:
-                st.experimental_rerun()
-            except Exception:
-                # In some environments experimental rerun may raise; setting a rerun flag is a fallback
-                st.session_state.strategy_comparison_rerun_flag = True
+            st.session_state.multi_backtest_rerun_flag = True
         else:
             st.error('JSON must be a list of portfolio configurations.')
     except Exception as e:
