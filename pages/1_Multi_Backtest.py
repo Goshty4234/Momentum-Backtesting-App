@@ -4349,7 +4349,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 valid_assets.append(t)
         return cumulative_returns, valid_assets
 
-    def calculate_momentum_weights(returns, valid_assets, date, momentum_strategy='Classic', negative_momentum_strategy='Cash'):
+    def calculate_momentum_weights(returns, valid_assets, date, momentum_strategy='Classic', negative_momentum_strategy='Cash', config=None):
         # Mirror approach used in allocations/app.py: compute weights from raw momentum
         # (Classic or Relative) and then optionally post-filter by inverse volatility
         # and inverse absolute beta (multiplicative), then renormalize. This avoids
@@ -4368,6 +4368,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         beta_vals = {}
         vol_vals = {}
         # Get config parameters (same as in single_backtest)
+        if config is None:
+            config = {}
         calc_beta = config.get('calc_beta', False)
         calc_volatility = config.get('calc_volatility', False)
         benchmark_ticker = config.get('benchmark_ticker', '^GSPC')
@@ -4417,9 +4419,17 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         relative_mode = isinstance(momentum_strategy, str) and momentum_strategy.lower().startswith('relat')
 
         if all_negative:
-            if negative_momentum_strategy == 'Cash':
+            # Special handling for SP500TOP20: use Relative as default instead of Cash
+            is_sp500top20 = any(is_special_dynamic_ticker(t) for t in rets_keys) or config.get('dynamic_portfolio_data') is not None
+            
+            # For SP500TOP20, use Relative as default if user chose Cash
+            effective_strategy = negative_momentum_strategy
+            if is_sp500top20 and negative_momentum_strategy == 'Cash':
+                effective_strategy = 'Relative'
+            
+            if effective_strategy == 'Cash':
                 weights = {t: 0.0 for t in rets_keys}
-            elif negative_momentum_strategy == 'Equal weight':
+            elif effective_strategy == 'Equal weight':
                 weights = {t: 1.0 / len(rets_keys) for t in rets_keys}
             else:  # Relative momentum
                 min_score = min(rets[t] for t in rets_keys)
@@ -4965,7 +4975,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     weights, metrics_on_rebal = calculate_momentum_weights(
                         returns, valid_assets, date=date,
                         momentum_strategy=config.get('momentum_strategy', 'Classic'),
-                        negative_momentum_strategy=config.get('negative_momentum_strategy', 'Cash')
+                        negative_momentum_strategy=config.get('negative_momentum_strategy', 'Cash'),
+                        config=config
                     )
                     historical_metrics[date] = metrics_on_rebal
                     if all(w == 0 for w in weights.values()):
@@ -5183,7 +5194,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         weights, metrics_on_rebal = calculate_momentum_weights(
             returns, valid_assets, date=last_date,
             momentum_strategy=config.get('momentum_strategy', 'Classic'),
-            negative_momentum_strategy=config.get('negative_momentum_strategy', 'Cash')
+            negative_momentum_strategy=config.get('negative_momentum_strategy', 'Cash'),
+            config=config
         )
         # For momentum strategies, do NOT force add CASH - let the momentum strategy determine allocations
         # CASH should only be added if the momentum strategy itself decides to go to cash
@@ -5257,7 +5269,7 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
                 valid_assets.append(t)
         return cumulative_returns, valid_assets
 
-    def calculate_momentum_weights(returns, valid_assets, date, momentum_strategy='Classic', negative_momentum_strategy='Cash'):
+    def calculate_momentum_weights(returns, valid_assets, date, momentum_strategy='Classic', negative_momentum_strategy='Cash', config=None):
         """Momentum weights calculation function (EXACT same as in single_backtest)"""
         # Mirror approach used in allocations/app.py: compute weights from raw momentum
         # (Classic or Relative) and then optionally post-filter by inverse volatility
@@ -5277,6 +5289,8 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
         beta_vals = {}
         vol_vals = {}
         # Get config parameters (same as in single_backtest)
+        if config is None:
+            config = {}
         calc_beta = config.get('calc_beta', False)
         calc_volatility = config.get('calc_volatility', False)
         benchmark_ticker = config.get('benchmark_ticker', '^GSPC')
@@ -5326,9 +5340,17 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
         relative_mode = isinstance(momentum_strategy, str) and momentum_strategy.lower().startswith('relat')
 
         if all_negative:
-            if negative_momentum_strategy == 'Cash':
+            # Special handling for SP500TOP20: use Relative as default instead of Cash
+            is_sp500top20 = any(is_special_dynamic_ticker(t) for t in rets_keys) or config.get('dynamic_portfolio_data') is not None
+            
+            # For SP500TOP20, use Relative as default if user chose Cash
+            effective_strategy = negative_momentum_strategy
+            if is_sp500top20 and negative_momentum_strategy == 'Cash':
+                effective_strategy = 'Relative'
+            
+            if effective_strategy == 'Cash':
                 weights = {t: 0.0 for t in rets_keys}
-            elif negative_momentum_strategy == 'Equal weight':
+            elif effective_strategy == 'Equal weight':
                 weights = {t: 1.0 / len(rets_keys) for t in rets_keys}
             else:  # Relative momentum
                 min_score = min(rets[t] for t in rets_keys)
@@ -5499,7 +5521,7 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
                 if valid_assets:
                     weights, metrics_on_rebal = calculate_momentum_weights(
                         returns, valid_assets, date, config.get('momentum_strategy', 'Classic'), 
-                        config.get('negative_momentum_strategy', 'Cash')
+                        config.get('negative_momentum_strategy', 'Cash'), config
                     )
                     
                     # Reset all values
@@ -5614,8 +5636,9 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
                     if valid_assets:
                         weights, _ = calculate_momentum_weights(
                             returns, valid_assets, today_date, 
-                            config.get('momentum_strategy', 'Classic'), 
-                            config.get('negative_momentum_strategy', 'Cash')
+                            config.get('momentum_strategy', 'Classic'),
+                            config.get('negative_momentum_strategy', 'Cash'),
+                            config
                         )
                         
                         # Apply weights to available tickers
@@ -9278,12 +9301,28 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
             index=["Classic", "Relative Momentum"].index(active_portfolio.get('momentum_strategy', 'Classic')),
             key=f"multi_backtest_momentum_strategy_{st.session_state.multi_backtest_active_portfolio_index}"
         )
+        # Check if this is SP500TOP20 to set default to Relative instead of Cash
+        is_sp500top20 = any(is_special_dynamic_ticker(stock['ticker']) for stock in active_portfolio.get('stocks', []))
+        default_negative_strategy = 'Relative momentum' if is_sp500top20 else 'Cash'
+        
+        # Get current value from portfolio config
+        current_negative_strategy = active_portfolio.get('negative_momentum_strategy', default_negative_strategy)
+        
         negative_momentum_strategy = st.selectbox(
             "Strategy when ALL momentum scores are negative:",
             ["Cash", "Equal weight", "Relative momentum"],
-            index=["Cash", "Equal weight", "Relative momentum"].index(active_portfolio.get('negative_momentum_strategy', 'Cash')),
+            index=["Cash", "Equal weight", "Relative momentum"].index(current_negative_strategy),
             key=f"multi_backtest_negative_momentum_strategy_{st.session_state.multi_backtest_active_portfolio_index}"
         )
+        
+        # Show warning for SP500TOP20 if Cash is selected and auto-change to Relative
+        if is_sp500top20 and negative_momentum_strategy == 'Cash':
+            st.warning("⚠️ **SP500TOP20 detected!** Cash strategy is not recommended for dynamic portfolios. Automatically changed to 'Relative momentum' to stay invested in the top 20 stocks.")
+            negative_momentum_strategy = 'Relative momentum'  # Auto-change to Relative
+            # Force update the portfolio config immediately
+            active_portfolio['negative_momentum_strategy'] = 'Relative momentum'
+            # Force Streamlit to refresh the UI
+            st.rerun()
         active_portfolio['momentum_strategy'] = momentum_strategy
         active_portfolio['negative_momentum_strategy'] = negative_momentum_strategy
         st.markdown("💡 **Note:** These options control how weights are assigned based on momentum scores.")
@@ -10165,65 +10204,65 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         else:
                             # Regular backtest for normal tickers
                             total_series, total_series_no_additions, historical_allocations, historical_metrics = single_backtest(cfg, simulation_index, data_reindexed)
-                            # Compute today_weights_map for regular portfolios
-                            today_weights_map = {}
-                            try:
-                                alloc_dates = sorted(list(historical_allocations.keys()))
-                                if alloc_dates:
-                                    final_d = alloc_dates[-1]
-                                    metrics_local = historical_metrics
-                                    
-                                    # Check if momentum is used for this portfolio
-                                    use_momentum = cfg.get('use_momentum', True)
-                                    
-                                    if final_d in metrics_local:
-                                        if use_momentum:
-                                            # Extract Calculated_Weight if present (momentum-based)
-                                            weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
-                                            # Normalize (ensure sums to 1 excluding CASH)
-                                            sumw = sum(w for k, w in weights.items() if k != 'CASH')
-                                            if sumw > 0:
-                                                norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
-                                            else:
-                                                norm = weights
-                                            today_weights_map = norm
+                        # Compute today_weights_map for regular portfolios
+                        today_weights_map = {}
+                        try:
+                            alloc_dates = sorted(list(historical_allocations.keys()))
+                            if alloc_dates:
+                                final_d = alloc_dates[-1]
+                                metrics_local = historical_metrics
+                                
+                                # Check if momentum is used for this portfolio
+                                use_momentum = cfg.get('use_momentum', True)
+                                
+                                if final_d in metrics_local:
+                                    if use_momentum:
+                                        # Extract Calculated_Weight if present (momentum-based)
+                                        weights = {t: v.get('Calculated_Weight', 0) for t, v in metrics_local[final_d].items()}
+                                        # Normalize (ensure sums to 1 excluding CASH)
+                                        sumw = sum(w for k, w in weights.items() if k != 'CASH')
+                                        if sumw > 0:
+                                            norm = {k: (w / sumw) if k != 'CASH' else weights.get('CASH', 0) for k, w in weights.items()}
                                         else:
-                                            # Use user-defined allocations from portfolio config
-                                            today_weights_map = {}
-                                            for stock in cfg.get('stocks', []):
-                                                ticker = stock.get('ticker', '').strip()
-                                                if ticker:
-                                                    today_weights_map[ticker] = stock.get('allocation', 0)
-                                            # Add CASH if needed
-                                            total_alloc = sum(today_weights_map.values())
-                                            if total_alloc < 1.0:
-                                                today_weights_map['CASH'] = 1.0 - total_alloc
-                                            else:
-                                                today_weights_map['CASH'] = 0
+                                            norm = weights
+                                        today_weights_map = norm
                                     else:
-                                        # Fallback: use allocation snapshot at final date
-                                        final_alloc = historical_allocations.get(final_d, {})
-                                        noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
-                                        s = sum(noncash.values())
-                                        if s > 0:
-                                            norm = {k: (v / s) for k, v in noncash.items()}
-                                            norm['CASH'] = final_alloc.get('CASH', 0)
+                                        # Use user-defined allocations from portfolio config
+                                        today_weights_map = {}
+                                        for stock in cfg.get('stocks', []):
+                                            ticker = stock.get('ticker', '').strip()
+                                            if ticker:
+                                                today_weights_map[ticker] = stock.get('allocation', 0)
+                                        # Add CASH if needed
+                                        total_alloc = sum(today_weights_map.values())
+                                        if total_alloc < 1.0:
+                                            today_weights_map['CASH'] = 1.0 - total_alloc
                                         else:
-                                            norm = final_alloc
-                                            today_weights_map = norm
-                            except Exception as e:
-                                # If computation fails, use user-defined allocations as fallback
-                                today_weights_map = {}
-                                for stock in cfg.get('stocks', []):
-                                    ticker = stock.get('ticker', '').strip()
-                                    if ticker:
-                                        today_weights_map[ticker] = stock.get('allocation', 0)
-                                # Add CASH if needed
-                                total_alloc = sum(today_weights_map.values())
-                                if total_alloc < 1.0:
-                                    today_weights_map['CASH'] = 1.0 - total_alloc
+                                            today_weights_map['CASH'] = 0
                                 else:
-                                    today_weights_map['CASH'] = 0
+                                    # Fallback: use allocation snapshot at final date
+                                    final_alloc = historical_allocations.get(final_d, {})
+                                    noncash = {k: v for k, v in final_alloc.items() if k != 'CASH'}
+                                    s = sum(noncash.values())
+                                    if s > 0:
+                                        norm = {k: (v / s) for k, v in noncash.items()}
+                                        norm['CASH'] = final_alloc.get('CASH', 0)
+                                    else:
+                                        norm = final_alloc
+                                        today_weights_map = norm
+                        except Exception as e:
+                            # If computation fails, use user-defined allocations as fallback
+                            today_weights_map = {}
+                            for stock in cfg.get('stocks', []):
+                                ticker = stock.get('ticker', '').strip()
+                                if ticker:
+                                    today_weights_map[ticker] = stock.get('allocation', 0)
+                            # Add CASH if needed
+                            total_alloc = sum(today_weights_map.values())
+                            if total_alloc < 1.0:
+                                today_weights_map['CASH'] = 1.0 - total_alloc
+                            else:
+                                today_weights_map['CASH'] = 0
                         
                         if total_series is not None and len(total_series) > 0:
                             # Prepare results for this portfolio
