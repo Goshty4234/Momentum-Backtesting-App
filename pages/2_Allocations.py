@@ -129,12 +129,29 @@ def get_ticker_aliases():
         'IEFTR': 'IEF_COMPLETE',  # Complete IEF Dataset (1962+) - Historical + IEF
         'DBMFX': 'DBMF_COMPLETE',  # Complete DBMF Dataset (2000+) - Historical + DBMF
         'TBILL': 'TBILL_COMPLETE',  # Complete TBILL Dataset (1948+) - Historical + SGOV
+        
+        # Canadian Ticker Mappings (USD OTC -> Canadian Exchange)
+        'MDALF': 'MDA.TO',          # MDA Ltd - USD OTC -> Canadian TSX
+        'KRKNF': 'PNG.V',           # Kraken Robotics - USD OTC -> Canadian Venture
+        'CNSWF': 'CSU.TO',          # Constellation Software - USD OTC -> Canadian TSX
+        'TOITF': 'TOI.V',           # Topicus - USD OTC -> Canadian Venture
+        'LMGIF': 'LMN.V',           # Lumine Group - USD OTC -> Canadian Venture
+        'DLMAF': 'DOL.TO',          # Dollarama - USD OTC -> Canadian TSX
+        'FRFHF': 'FFH.TO',          # Fairfax Financial - USD OTC -> Canadian TSX
     }
 
 def resolve_ticker_alias(ticker):
     """Resolve ticker alias to actual ticker symbol"""
     aliases = get_ticker_aliases()
-    return aliases.get(ticker.upper(), ticker)
+    upper_ticker = ticker.upper()
+    
+    # Special conversion for Berkshire Hathaway tickers for Yahoo Finance compatibility
+    if upper_ticker == 'BRK.B':
+        upper_ticker = 'BRK-B'
+    elif upper_ticker == 'BRK.A':
+        upper_ticker = 'BRK-A'
+    
+    return aliases.get(upper_ticker, upper_ticker)
 
 # =============================================================================
 # PERFORMANCE OPTIMIZATION: CACHING FUNCTIONS
@@ -397,73 +414,79 @@ def apply_daily_leverage(price_data: pd.DataFrame, leverage: float) -> pd.DataFr
     
     return leveraged_data
 
-def get_ticker_aliases():
-    """Define ticker aliases for easier entry"""
-    return {
-        # Stock Market Indices
-        'SPX': '^GSPC',           # S&P 500 (price only, no dividends) - 1927+
-        'SPXTR': '^SP500TR',      # S&P 500 Total Return (with dividends) - 1988+
-        'SP500': '^GSPC',         # S&P 500 (price only, no dividends) - 1927+
-        'SP500TR': '^SP500TR',    # S&P 500 Total Return (with dividends) - 1988+
-        'SPYTR': '^SP500TR',      # S&P 500 Total Return (with dividends) - 1988+
-        'NASDAQ': '^IXIC',        # NASDAQ Composite (price only, no dividends) - 1971+
-        'NDX': '^NDX',           # NASDAQ 100 (price only, no dividends) - 1985+
-        'QQQTR': '^NDX',         # NASDAQ 100 (price only, no dividends) - 1985+
-        'DOW': '^DJI',           # Dow Jones Industrial Average (price only, no dividends) - 1992+
-        
-        # Treasury Yield Indices (LONGEST HISTORY - 1960s+)
-        'TNX': '^TNX',           # 10-Year Treasury Yield (1962+) - Price only, no coupons
-        'TYX': '^TYX',           # 30-Year Treasury Yield (1977+) - Price only, no coupons
-        'FVX': '^FVX',           # 5-Year Treasury Yield (1962+) - Price only, no coupons
-        'IRX': '^IRX',           # 3-Month Treasury Yield (1960+) - Price only, no coupons
-        
-        # Treasury Bond ETFs (MODERN - WITH COUPONS/DIVIDENDS)
-        'TLTETF': 'TLT',          # 20+ Year Treasury Bond ETF (2002+) - With coupons
-        'IEFETF': 'IEF',          # 7-10 Year Treasury Bond ETF (2002+) - With coupons
-        'SHY': 'SHY',            # 1-3 Year Treasury Bond ETF (2002+) - With coupons
-        'BIL': 'BIL',            # 1-3 Month T-Bill ETF (2007+) - With coupons
-        'GOVT': 'GOVT',          # US Treasury Bond ETF (2012+) - With coupons
-        'SPTL': 'SPTL',          # Long Term Treasury ETF (2007+) - With coupons
-        'SPTS': 'SPTS',          # Short Term Treasury ETF (2011+) - With coupons
-        'SPTI': 'SPTI',          # Intermediate Term Treasury ETF (2007+) - With coupons
-        
-        # Cash/Zero Return
-        'ZEROX': 'ZEROX',        # Zero-cost portfolio (literally cash doing nothing)
-        
-        # Gold & Commodities
-        'GOLDX': 'GOLDX',        # Fidelity Gold Fund (1994+) - With dividends
-        'GLD': 'GLD',            # SPDR Gold Trust ETF (2004+) - With dividends
-        'IAU': 'IAU',            # iShares Gold Trust ETF (2005+) - With dividends
-        'GOLDF': 'GC=F',         # Gold Futures (2000+) - No dividends
-        'SILVER': 'SI=F',        # Silver Futures (2000+) - No dividends
-        'OIL': 'CL=F',           # Crude Oil Futures (2000+) - No dividends
-        'NATGAS': 'NG=F',        # Natural Gas Futures (2000+) - No dividends
-        'CORN': 'ZC=F',          # Corn Futures (2000+) - No dividends
-        'SOYBEAN': 'ZS=F',       # Soybean Futures (2000+) - No dividends
-        'COFFEE': 'KC=F',        # Coffee Futures (2000+) - No dividends
-        'SUGAR': 'SB=F',         # Sugar Futures (2000+) - No dividends
-        'COTTON': 'CT=F',        # Cotton Futures (2000+) - No dividends
-        'COPPER': 'HG=F',        # Copper Futures (2000+) - No dividends
-        'PLATINUM': 'PL=F',      # Platinum Futures (1997+) - No dividends
-        'PALLADIUM': 'PA=F',     # Palladium Futures (1998+) - No dividends
-        
-        # Synthetic Complete Tickers
-        'SPYSIM': 'SPYSIM_COMPLETE',  # Complete S&P 500 Simulation (1885+) - Historical + SPYTR
-        'GOLDSIM': 'GOLDSIM_COMPLETE',  # Complete Gold Simulation (1968+) - New Historical + GOLDX
-        'GOLDX': 'GOLD_COMPLETE',  # Complete Gold Dataset (1975+) - Historical + GLD
-        'ZROZX': 'ZROZ_COMPLETE',  # Complete ZROZ Dataset (1962+) - Historical + ZROZ
-        'TLTTR': 'TLT_COMPLETE',  # Complete TLT Dataset (1962+) - Historical + TLT
-        'BITCOINX': 'BTC_COMPLETE',  # Complete Bitcoin Dataset (2010+) - Historical + BTC-USD
-        'KMLMX': 'KMLM_COMPLETE',  # Complete KMLM Dataset (1992+) - Historical + KMLM
-        'IEFTR': 'IEF_COMPLETE',  # Complete IEF Dataset (1962+) - Historical + IEF
-        'DBMFX': 'DBMF_COMPLETE',  # Complete DBMF Dataset (2000+) - Historical + DBMF
-        'TBILL': 'TBILL_COMPLETE',  # Complete TBILL Dataset (1948+) - Historical + SGOV
-    }
+def apply_leverage_to_hist_data(hist_data, leverage):
+    """Apply leverage to historical data"""
+    if leverage == 1.0:
+        return hist_data
+    
+    # Create a copy to avoid modifying original
+    leveraged_data = hist_data.copy()
+    
+    # Apply leverage to price columns
+    price_columns = ['Open', 'High', 'Low', 'Close']
+    for col in price_columns:
+        if col in leveraged_data.columns:
+            leveraged_data[col] = leveraged_data[col] * leverage
+    
+    # Recalculate price changes with the new leveraged prices
+    leveraged_data['Price_change'] = leveraged_data['Close'].pct_change(fill_method=None)
+    
+    return leveraged_data
 
-def resolve_ticker_alias(ticker):
-    """Resolve ticker alias to actual ticker symbol"""
-    aliases = get_ticker_aliases()
-    return aliases.get(ticker.upper(), ticker)
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False):
+    """Get ticker data specifically for valuation tables - converts Canadian USD tickers to CAD
+    
+    Args:
+        ticker_symbol: Stock ticker symbol
+        period: Data period
+        auto_adjust: Auto-adjust setting
+    """
+    try:
+        # Parse leverage from ticker symbol
+        base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
+        
+        # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange)
+        resolved_ticker = resolve_ticker_alias(base_ticker)
+        
+        # Special handling for synthetic complete tickers
+        if resolved_ticker == "SPYSIM_COMPLETE":
+            return get_spysim_complete_data(period)
+        if resolved_ticker == "GOLDSIM_COMPLETE":
+            return get_goldsim_complete_data(period)
+        if resolved_ticker == "TBILL_COMPLETE":
+            return get_tbill_complete_data(period)
+        if resolved_ticker == "IEF_COMPLETE":
+            return get_ief_complete_data(period)
+        if resolved_ticker == "TLT_COMPLETE":
+            return get_tlt_complete_data(period)
+        if resolved_ticker == "ZROZ_COMPLETE":
+            return get_zroz_complete_data(period)
+        if resolved_ticker == "BTC_COMPLETE":
+            return get_bitcoin_complete_data(period)
+        if resolved_ticker == "KMLM_COMPLETE":
+            return get_kmlm_complete_data(period)
+        if resolved_ticker == "DBMF_COMPLETE":
+            return get_dbmf_complete_data(period)
+        
+        # Create ticker object with resolved ticker
+        ticker_obj = yf.Ticker(resolved_ticker)
+        
+        # Get historical data
+        hist = ticker_obj.history(period=period, auto_adjust=auto_adjust)
+        
+        if hist.empty:
+            return None
+            
+        # Apply leverage if specified
+        if leverage != 1.0:
+            hist = apply_leverage_to_hist_data(hist, leverage)
+            
+        return hist
+        
+    except Exception as e:
+        st.error(f"Error fetching data for {ticker_symbol}: {str(e)}")
+        return None
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
@@ -478,8 +501,8 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
         # Parse leverage from ticker symbol
         base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
         
-        # Resolve ticker alias if it exists
-        resolved_ticker = resolve_ticker_alias(base_ticker)
+        # Use original ticker for backtests and calculations (NO conversion)
+        resolved_ticker = base_ticker
         
         # Special handling for synthetic complete tickers
         if resolved_ticker == "SPYSIM_COMPLETE":
@@ -725,7 +748,9 @@ def get_tbill_complete_data(period="max"):
 def get_ticker_info(ticker_symbol):
     """Cache ticker info to improve performance across multiple tabs"""
     try:
-        stock = yf.Ticker(ticker_symbol)
+        # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange)
+        resolved_ticker = resolve_ticker_alias(ticker_symbol)
+        stock = yf.Ticker(resolved_ticker)
         info = stock.info
         return info
     except Exception:
@@ -4261,9 +4286,10 @@ def update_benchmark():
     # Convert commas to dots for decimal separators (like case conversion)
     converted_benchmark = benchmark_val.replace(",", ".")
     upper_benchmark = converted_benchmark.upper()
-    resolved_benchmark = resolve_ticker_alias(upper_benchmark)
+    # Keep original benchmark ticker in UI (NO conversion here)
+    resolved_benchmark = upper_benchmark
     st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['benchmark_ticker'] = resolved_benchmark
-    # Update the widget to show resolved ticker
+    # Update the widget to show original ticker
     st.session_state['alloc_active_benchmark'] = resolved_benchmark
 
 def update_use_momentum():
@@ -4399,10 +4425,16 @@ def update_stock_ticker(index):
         # Convert the input value to uppercase
         upper_val = converted_val.upper()
         
-        # Resolve alias if it exists
-        resolved_ticker = resolve_ticker_alias(upper_val)
+        # Special conversion for Berkshire Hathaway tickers for Yahoo Finance compatibility
+        if upper_val == 'BRK.B':
+            upper_val = 'BRK-B'
+        elif upper_val == 'BRK.A':
+            upper_val = 'BRK-A'
+        
+        # Keep original ticker in UI (NO conversion here)
+        resolved_ticker = upper_val
 
-        # Update the portfolio configuration with the resolved ticker
+        # Update the portfolio configuration with the original ticker
         st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][index]['ticker'] = resolved_ticker
         
         # Update the text box's state to show the resolved ticker
@@ -4534,7 +4566,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
     # Get the actual ticker aliases from the function
     aliases = get_ticker_aliases()
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     with col1:
         st.markdown("**📈 Stock Indices**")
@@ -4618,6 +4650,27 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
                 })
                 st.session_state.alloc_rerun_flag = True
     
+    with col5:
+        st.markdown("**🇨🇦 Canadian Tickers**")
+        canadian_tickers = {
+            'MDA Ltd (TSX)': 'MDA.TO',
+            'Kraken Robotics (TSX)': 'PNG.TO', 
+            'Constellation Software (TSX)': 'TOI.TO',
+            'Lumine Group (TSX)': 'LMN.TO',
+            'Dollarama (TSX)': 'DOL.TO',
+            'Fairfax Financial (TSX)': 'FFH.TO'
+        }
+        
+        for name, ticker in canadian_tickers.items():
+            if st.button(f"➕ {name}", key=f"add_canadian_{ticker}", help=f"Add {ticker}"):
+                portfolio_index = st.session_state.alloc_active_portfolio_index
+                st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
+                    'ticker': ticker, 
+                    'allocation': 0.0, 
+                    'include_dividends': True
+                })
+                st.session_state.alloc_rerun_flag = True
+    
     st.markdown("---")
     
     # Ticker Aliases Section INSIDE the expander
@@ -4629,6 +4682,11 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
     st.markdown("- `TNX` → `^TNX` (10Y Treasury Yield, 1962+), `TYX` → `^TYX` (30Y Treasury Yield, 1977+)")
     st.markdown("- `TBILL3M` → `^IRX` (3M Treasury Yield, 1960+), `SHY` → `SHY` (1-3 Year Treasury ETF, 2002+)")
     st.markdown("- `ZEROX` (Cash doing nothing - zero return), `GOLDX` → `GC=F` (Gold Futures, 2000+), `XAU` → `^XAU` (Gold & Silver Index, 1983+)")
+    st.markdown("**🇨🇦 Canadian Ticker Mappings:** USD OTC → Canadian TSX (for better data quality):")
+    st.markdown("- `MDALF` → `MDA.TO` (MDA Ltd), `KRKNF` → `PNG.TO` (Kraken Robotics)")
+    st.markdown("- `CNSWF` → `TOI.TO` (Constellation Software), `TOITF` → `TOI.TO` (Constellation Software)")
+    st.markdown("- `LMGIF` → `LMN.TO` (Lumine Group), `DLMAF` → `DOL.TO` (Dollarama)")
+    st.markdown("- `FRFHF` → `FFH.TO` (Fairfax Financial)")
 
 
 with st.expander("⚡ Leverage & Expense Ratio Guide", expanded=False):
@@ -4702,6 +4760,11 @@ with st.expander("📝 Bulk Ticker Input", expanded=False):
             for ticker in bulk_tickers.replace(',', ' ').split():
                 ticker = ticker.strip().upper()
                 if ticker:
+                    # Special conversion for Berkshire Hathaway tickers for Yahoo Finance compatibility
+                    if ticker == 'BRK.B':
+                        ticker = 'BRK-B'
+                    elif ticker == 'BRK.A':
+                        ticker = 'BRK-A'
                     ticker_list.append(ticker)
             
             if ticker_list:
@@ -6483,6 +6546,7 @@ if st.session_state.get('alloc_backtest_run', False):
                         current_price = info.get('currentPrice', info.get('regularMarketPrice', None))
                         if current_price is None:
                             # Try to get from historical data
+                            stock = yf.Ticker(ticker)
                             hist = stock.history(period='1d')
                             if not hist.empty:
                                 current_price = hist['Close'].iloc[-1]
