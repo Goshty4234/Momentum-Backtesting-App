@@ -23,7 +23,9 @@ import multiprocessing as mp
 # Suppress specific Streamlit threading warnings
 warnings.filterwarnings('ignore')
 warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
+warnings.filterwarnings('ignore', message='.*missing ScriptRunContext.*')
 logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
+logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.scriptrunner.script_runner").propagate = False
 
 # Set pandas options for handling large dataframes
@@ -149,7 +151,15 @@ def get_ticker_aliases():
 def resolve_ticker_alias(ticker):
     """Resolve ticker alias to actual ticker symbol"""
     aliases = get_ticker_aliases()
-    return aliases.get(ticker.upper(), ticker)
+    upper_ticker = ticker.upper()
+    
+    # Special conversion for Berkshire Hathaway tickers for Yahoo Finance compatibility
+    if upper_ticker == 'BRK.B':
+        upper_ticker = 'BRK-B'
+    elif upper_ticker == 'BRK.A':
+        upper_ticker = 'BRK-A'
+    
+    return aliases.get(upper_ticker, upper_ticker)
 
 def parse_raw_sp500_csv():
     """Parse the raw S&P 500 CSV data into a structured DataFrame"""
@@ -752,7 +762,15 @@ def get_ticker_aliases():
 def resolve_ticker_alias(ticker):
     """Resolve ticker alias to actual ticker symbol"""
     aliases = get_ticker_aliases()
-    return aliases.get(ticker.upper(), ticker)
+    upper_ticker = ticker.upper()
+    
+    # Special conversion for Berkshire Hathaway tickers for Yahoo Finance compatibility
+    if upper_ticker == 'BRK.B':
+        upper_ticker = 'BRK-B'
+    elif upper_ticker == 'BRK.A':
+        upper_ticker = 'BRK-A'
+    
+    return aliases.get(upper_ticker, upper_ticker)
 
 # @st.cache_data(ttl=300)  # Cache for 5 minutes - DISABLED for parallel processing
 def generate_zero_return_data(period="max"):
@@ -3294,6 +3312,10 @@ if st.session_state.get('multi_backtest_rerun_flag', False):
     st.session_state.multi_backtest_rerun_flag = False
     st.rerun()
 
+# Reset running state on page load to prevent persistent running state
+if 'hard_kill_requested' in st.session_state:
+    st.session_state.hard_kill_requested = False
+
 # Place rerun logic after first portfolio input widget
 active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index] if 'multi_backtest_portfolio_configs' in st.session_state and 'multi_backtest_active_portfolio_index' in st.session_state else None
 
@@ -4725,8 +4747,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     historical_allocations[sim_index[0]]['CASH'] = unallocated_cash[0] / initial_value if initial_value > 0 else 0
     
     for i in range(len(sim_index)):
-        # Check for interrupt every 100 iterations
-        if i % 100 == 0:
+        # Check for interrupt every 5 iterations (much more frequent)
+        if i % 5 == 0:
             # Check if interrupt was requested
             if hasattr(st.session_state, 'hard_kill_requested') and st.session_state.hard_kill_requested:
                 print("🛑 Hard kill requested - stopping backtest")
@@ -6140,8 +6162,8 @@ def fusion_portfolio_backtest(fusion_portfolio_config, all_portfolio_configs, si
     
     # Calculate fusion portfolio value for each date
     for date_idx, current_date in enumerate(sim_index):
-        # Check for interrupt every 100 iterations
-        if date_idx % 100 == 0:
+        # Check for interrupt every 5 iterations (much more frequent)
+        if date_idx % 5 == 0:
             # Check if interrupt was requested
             if hasattr(st.session_state, 'hard_kill_requested') and st.session_state.hard_kill_requested:
                 print("🛑 Hard kill requested - stopping fusion calculation")
@@ -6225,8 +6247,8 @@ def fusion_portfolio_backtest(fusion_portfolio_config, all_portfolio_configs, si
     print(f"📊 BUILDING FUSION HISTORICAL DATA:")
     
     for date_idx, current_date in enumerate(sim_index):
-        # Check for interrupt every 100 iterations
-        if date_idx % 100 == 0:
+        # Check for interrupt every 5 iterations (much more frequent)
+        if date_idx % 5 == 0:
             # Check if interrupt was requested
             if hasattr(st.session_state, 'hard_kill_requested') and st.session_state.hard_kill_requested:
                 print("🛑 Hard kill requested - stopping historical data building")
@@ -8896,8 +8918,14 @@ def update_stock_ticker(index):
         
         # Convert the input value to uppercase
         upper_val = converted_val.upper()
+        
+        # Special conversion for Berkshire Hathaway tickers for Yahoo Finance compatibility
+        if upper_val == 'BRK.B':
+            upper_val = 'BRK-B'
+        elif upper_val == 'BRK.A':
+            upper_val = 'BRK-A'
 
-        # Update the portfolio configuration with the uppercase value
+        # Update the portfolio configuration with the converted value
         st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['ticker'] = upper_val
         
         # Update the text box's state to show the converted value (with dots and uppercase)
@@ -9206,6 +9234,11 @@ with st.expander("📝 Bulk Ticker Input", expanded=False):
             for ticker in bulk_tickers.replace(',', ' ').split():
                 ticker = ticker.strip().upper()
                 if ticker:
+                    # Special conversion for Berkshire Hathaway tickers for Yahoo Finance compatibility
+                    if ticker == 'BRK.B':
+                        ticker = 'BRK-B'
+                    elif ticker == 'BRK.A':
+                        ticker = 'BRK-A'
                     ticker_list.append(ticker)
             
             if ticker_list:
@@ -9840,6 +9873,7 @@ if st.sidebar.button("🚨 EMERGENCY KILL", type="secondary", use_container_widt
     st.toast("🚨 **EMERGENCY KILL** - Force terminating all processes...", icon="💥")
     emergency_kill()
 
+
 # Move Run Backtest to the left sidebar to make it conspicuous and separate from config
 if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=True):
     # Reset kill request when starting new backtest
@@ -10163,6 +10197,33 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
                         logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
                         
+                        # Check for kill request immediately
+                        if st.session_state.get('hard_kill_requested', False):
+                            return {
+                                'index': i,
+                                'success': False,
+                                'error': 'Kill requested before processing'
+                            }
+                        
+                        # Set a global kill flag for this thread
+                        import threading
+                        threading.current_thread().kill_requested = False
+                        
+                        # Add a more aggressive kill check mechanism
+                        def check_kill_request():
+                            return st.session_state.get('hard_kill_requested', False)
+                        
+                        # Check kill request every 5 iterations in the main processing loop
+                        kill_check_counter = 0
+                        
+                        # Add kill check in the main processing loop
+                        def check_kill_in_loop():
+                            nonlocal kill_check_counter
+                            kill_check_counter += 1
+                            if kill_check_counter % 5 == 0:
+                                return check_kill_request()
+                            return False
+                        
                         name = cfg.get('name', f'Portfolio {i}')
                         
                         # Check if this portfolio contains a special dynamic ticker
@@ -10386,6 +10447,14 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             # Collect results as they complete
                             completed_count = 0
                             for future in concurrent.futures.as_completed(future_to_index):
+                                # Check for kill request before processing each result
+                                if st.session_state.get('hard_kill_requested', False):
+                                    print("🛑 Hard kill requested - stopping regular portfolio processing")
+                                    # Cancel remaining futures
+                                    for f in future_to_index:
+                                        f.cancel()
+                                    break
+                                
                                 completed_count += 1
                                 progress_percent = completed_count / len(regular_portfolios)
                                 progress_bar.progress(progress_percent, text=f"Phase 1: Completed {completed_count}/{len(regular_portfolios)} regular portfolios...")
@@ -10473,6 +10542,14 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             # Collect results as they complete
                             completed_count = 0
                             for future in concurrent.futures.as_completed(future_to_index):
+                                # Check for kill request before processing each result
+                                if st.session_state.get('hard_kill_requested', False):
+                                    print("🛑 Hard kill requested - stopping fusion portfolio processing")
+                                    # Cancel remaining futures
+                                    for f in future_to_index:
+                                        f.cancel()
+                                    break
+                                
                                 completed_count += 1
                                 progress_percent = completed_count / len(fusion_portfolios)
                                 progress_bar.progress(progress_percent, text=f"Phase 2: Completed {completed_count}/{len(fusion_portfolios)} fusion portfolios...")
