@@ -143,15 +143,25 @@ def get_ticker_aliases():
 def resolve_ticker_alias(ticker):
     """Resolve ticker alias to actual ticker symbol"""
     aliases = get_ticker_aliases()
-    upper_ticker = ticker.upper()
+    
+    # Extract base ticker before any parameters (e.g., CNSWF?L=2?E=1 -> CNSWF)
+    base_ticker = ticker.split('?')[0].upper()
     
     # Special conversion for Berkshire Hathaway tickers for Yahoo Finance compatibility
-    if upper_ticker == 'BRK.B':
-        upper_ticker = 'BRK-B'
-    elif upper_ticker == 'BRK.A':
-        upper_ticker = 'BRK-A'
+    if base_ticker == 'BRK.B':
+        base_ticker = 'BRK-B'
+    elif base_ticker == 'BRK.A':
+        base_ticker = 'BRK-A'
     
-    return aliases.get(upper_ticker, upper_ticker)
+    # Get the Canadian ticker if available
+    resolved_base = aliases.get(base_ticker, base_ticker)
+    
+    # If we have parameters, add them back to the resolved ticker
+    if '?' in ticker:
+        parameters = ticker.split('?', 1)[1]  # Get everything after the first ?
+        return f"{resolved_base}?{parameters}"
+    else:
+        return resolved_base
 
 # =============================================================================
 # PERFORMANCE OPTIMIZATION: CACHING FUNCTIONS
