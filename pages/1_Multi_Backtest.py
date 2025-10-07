@@ -3446,7 +3446,7 @@ st.markdown("Use the forms below to configure and run backtests for multiple por
 # Performance Settings
 col1, col2 = st.columns([3, 1])
 with col1:
-    st.markdown("### 🚀 Performance Settings")
+    st.markdown("### Performance Settings")
 with col2:
     use_parallel = st.checkbox("Parallel Processing", value=False,
                               help="⚠️ Process multiple portfolios simultaneously using threading. May help with 3+ portfolios but can be slower due to Streamlit overhead. Try both modes to see what's faster for your setup.")
@@ -12144,7 +12144,20 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     st.warning(f"⚠️ Data length mismatch for portfolio: {name}")
                     continue
                     
-                fig1.add_trace(go.Scatter(x=x_dates, y=series_to_plot.values, mode='lines', name=name))
+                # Set hover mode based on user preference with fallback
+                try:
+                    current_hover_mode = "closest" if show_closest_only else "x unified"
+                except NameError:
+                    current_hover_mode = "x unified"
+                
+                fig1.add_trace(go.Scatter(
+                    x=x_dates, 
+                    y=series_to_plot.values, 
+                    mode='lines', 
+                    name=name,
+                    hovertemplate=f"<b>{name}</b><br>Value: $%{{y:,.2f}}<br>Date: %{{x|%Y-%m-%d}}<extra></extra>" if show_closest_only else None,
+                    hoverinfo='text' if show_closest_only else 'x+y+name'
+                ))
             except Exception as e:
                 st.warning(f"⚠️ Error plotting portfolio {name}: {str(e)}")
                 continue
@@ -12223,7 +12236,20 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     st.warning(f"⚠️ Data length mismatch for drawdown: {name}")
                     continue
                     
-                fig2.add_trace(go.Scatter(x=x_dates, y=drawdowns, mode='lines', name=name))
+                # Set hover mode based on user preference with fallback
+                try:
+                    current_hover_mode_dd = "closest" if show_closest_only else "x unified"
+                except NameError:
+                    current_hover_mode_dd = "x unified"
+                
+                fig2.add_trace(go.Scatter(
+                    x=x_dates, 
+                    y=drawdowns, 
+                    mode='lines', 
+                    name=name,
+                    hovertemplate=f"<b>{name}</b><br>Drawdown: %{{y:.2f}}%<br>Date: %{{x|%Y-%m-%d}}<extra></extra>" if show_closest_only else None,
+                    hoverinfo='text' if show_closest_only else 'x+y+name'
+                ))
             except Exception as e:
                 st.warning(f"⚠️ Error calculating drawdown for portfolio {name}: {str(e)}")
                 continue
@@ -16674,7 +16700,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             cached_dfs = len([key for key in st.session_state.keys() if key.startswith('processed_allocations_df_')])
             st.metric("Cached DataFrames", cached_dfs)
     
-    # Allocation Evolution Chart Section
+    # Portfolio Allocation Evolution Chart Section - EXACTLY LIKE MAIN CHARTS
     if 'multi_all_allocations' in st.session_state and st.session_state.multi_all_allocations:
         st.markdown("---")
         st.markdown("**📈 Portfolio Allocation Evolution**")
@@ -16684,7 +16710,6 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         extra_names = [n for n in st.session_state.get('multi_all_results', {}).keys() if n not in available_portfolio_names]
         all_portfolio_names = available_portfolio_names + extra_names
         
-        # OPTIMIZED: Lazy loading - only create charts when selected
         if all_portfolio_names:
             # Show the selector first
             selected_portfolio_evolution = st.selectbox(
@@ -16694,147 +16719,122 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 help="Choose which portfolio to show allocation evolution over time"
             )
             
-            # LAZY LOADING: Only create chart for selected portfolio
+            # Hover mode option for allocation evolution chart - EXACTLY LIKE MAIN CHARTS
+            try:
+                show_closest_only_allocation = st.checkbox(
+                    "Show Only Closest Allocation on Hover",
+                    value=False,
+                    help="When enabled, hovering will show only the allocation line closest to your cursor instead of all allocations.",
+                    key="allocation_evolution_closest_hover"
+                )
+            except Exception as e:
+                st.warning(f"Error with allocation hover checkbox: {e}")
+                show_closest_only_allocation = False
+            
+            # Create allocation evolution chart - EXACTLY LIKE MAIN CHARTS
             if selected_portfolio_evolution and selected_portfolio_evolution in st.session_state.multi_all_allocations:
-                chart_key = f'multi_allocation_evolution_chart_{selected_portfolio_evolution}'
+                allocs_data = st.session_state.multi_all_allocations[selected_portfolio_evolution]
                 
-                # Check if chart already exists in session state
-                if chart_key not in st.session_state:
-                    # Create chart only when needed
-                    st.info("🔄 Creating allocation evolution chart... (this will be cached for instant future access)")
-                    start_time = time.time()
-                    allocs_data = st.session_state.multi_all_allocations[selected_portfolio_evolution]
-                    
-                    # Check if this is a fusion portfolio and filter out fusion portfolio allocation data
-                    portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
-                    portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_evolution), None)
-                    is_fusion = portfolio_cfg and portfolio_cfg.get('fusion_portfolio', {}).get('enabled', False)
-                    
-                    if is_fusion:
-                        # Remove fusion portfolio allocation data from individual stock allocations
-                        filtered_allocs_data = {}
-                        for date, alloc_dict in allocs_data.items():
-                            filtered_alloc_dict = {k: v for k, v in alloc_dict.items() if k != '_FUSION_PORTFOLIOS_'}
-                            filtered_allocs_data[date] = filtered_alloc_dict
-                        allocs_data = filtered_allocs_data
-                    
-                    if allocs_data:
-                        # Create chart directly (no caching needed since it's stored in session state)
-                        try:
-                            # Convert to DataFrame for easier processing
-                            alloc_df = pd.DataFrame(allocs_data).T
-                            alloc_df.index = pd.to_datetime(alloc_df.index)
-                            alloc_df = alloc_df.sort_index()
-                            
-                            # Get all unique tickers (excluding None)
-                            all_tickers = set()
-                            for date, allocs in allocs_data.items():
-                                for ticker in allocs.keys():
-                                    if ticker is not None:
-                                        all_tickers.add(ticker)
-                            all_tickers = sorted(list(all_tickers))
-                            
-                            # Fill missing values with 0 for unavailable assets
-                            alloc_df = alloc_df.fillna(0)
-                            
-                            # Convert to percentages
-                            alloc_df = alloc_df * 100
-                            
-                            # Create the evolution chart
-                            fig_evolution = go.Figure()
-                            
-                            # Color palette for different tickers
-                            colors = [
-                                '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-                                '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
-                                '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5'
-                            ]
-                            
-                            # Add a trace for each ticker
-                            for i, ticker in enumerate(all_tickers):
-                                if ticker in alloc_df.columns:
-                                    # Get the allocation data for this ticker
-                                    ticker_data = alloc_df[ticker].dropna()
-                                    
-                                    if not ticker_data.empty:  # Only add if we have data
-                                        fig_evolution.add_trace(go.Scatter(
-                                            x=ticker_data.index,
-                                            y=ticker_data.values,
-                                            mode='lines',
-                                            name=ticker,
-                                            line=dict(color=colors[i % len(colors)], width=2),
-                                            hovertemplate=f'<b>{ticker}</b><br>' +
-                                                        'Date: %{x}<br>' +
-                                                        'Allocation: %{y:.1f}%<br>' +
-                                                        '<extra></extra>'
-                                        ))
-                            
-                            # Update layout
-                            fig_evolution.update_layout(
-                                title=f"Portfolio Allocation Evolution - {selected_portfolio_evolution}",
-                                xaxis_title="Date",
-                                yaxis_title="Allocation (%)",
-                                template='plotly_dark',
-                                height=600,
-                                hovermode='x unified',
-                                legend=dict(
-                                    orientation="v",
-                                    yanchor="top",
-                                    y=1,
-                                    xanchor="left",
-                                    x=1.01
-                                )
-                            )
-                            
-                            # Store the chart in session state
-                            st.session_state[chart_key] = fig_evolution
-                            
-                            # Show timing info
-                            end_time = time.time()
-                            st.success(f"✅ Chart created in {end_time - start_time:.2f} seconds and cached for instant future access!")
-                            
-                        except Exception as e:
-                            st.error(f"Error creating allocation evolution chart for {selected_portfolio_evolution}: {str(e)}")
-                else:
-                    # Chart exists in cache - show instant loading message
-                    st.success("⚡ Chart loaded instantly from cache!")
+                # Convert to DataFrame for easier processing
+                alloc_df = pd.DataFrame(allocs_data).T
+                alloc_df.index = pd.to_datetime(alloc_df.index)
+                alloc_df = alloc_df.sort_index()
                 
-                # Display the chart if it exists
-                if chart_key in st.session_state:
-                    st.plotly_chart(st.session_state[chart_key], use_container_width=True)
+                # Get all unique tickers (excluding None)
+                all_tickers = set()
+                for date, allocs in allocs_data.items():
+                    for ticker in allocs.keys():
+                        if ticker is not None:
+                            all_tickers.add(ticker)
+                all_tickers = sorted(list(all_tickers))
+                
+                # Fill missing values with 0 for unavailable assets
+                alloc_df = alloc_df.fillna(0)
+                
+                # Convert to percentages
+                alloc_df = alloc_df * 100
+                
+                if all_tickers:
+                    # Create figure - EXACTLY LIKE MAIN CHARTS
+                    fig_evolution = go.Figure()
                     
-                    # Show proper visual legend with colors and dotted lines
-                    allocs_data = st.session_state.multi_all_allocations[selected_portfolio_evolution]
-                    if allocs_data:
-                        # Get all unique tickers (excluding None)
-                        all_tickers = set()
-                        for date, allocs in allocs_data.items():
-                            for ticker in allocs.keys():
-                                if ticker is not None:
-                                    all_tickers.add(ticker)
-                        all_tickers = sorted(list(all_tickers))
-                        
-                        if all_tickers:
-                            st.info(f"📊 **Legend**: {len(all_tickers)} tickers in this portfolio")
-                            # Show ticker list with colors and dotted lines
-                            colors = [
-                                '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-                                '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
-                                '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5'
-                            ]
+                    # Color palette for different tickers
+                    colors = [
+                        '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                        '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+                        '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5'
+                    ]
+                    
+                    # Add traces - EXACTLY LIKE MAIN CHARTS
+                    for i, ticker in enumerate(all_tickers):
+                        if ticker in alloc_df.columns:
+                            # Get the allocation data for this ticker
+                            ticker_data = alloc_df[ticker].dropna()
                             
-                            # Create columns for ticker legend
-                            cols = st.columns(4)
-                            for i, ticker in enumerate(all_tickers):
-                                with cols[i % 4]:
-                                    color = colors[i % len(colors)]
-                                    st.markdown(f"<span style='color: {color}; font-weight: bold;'>━━━</span> {ticker}", unsafe_allow_html=True)
+                            if not ticker_data.empty:  # Only add if we have data
+                                # EXACTLY LIKE MAIN CHARTS - Set hover mode based on user preference with fallback
+                                try:
+                                    current_hover_mode_alloc = "closest" if show_closest_only_allocation else "x unified"
+                                except NameError:
+                                    current_hover_mode_alloc = "x unified"
+                                
+                                fig_evolution.add_trace(go.Scatter(
+                                    x=ticker_data.index,
+                                    y=ticker_data.values,
+                                    mode='lines',
+                                    name=ticker,
+                                    line=dict(color=colors[i % len(colors)], width=2),
+                                    hovertemplate=f"<b>{ticker}</b><br>Allocation: %{{y:.1f}}%<br>Date: %{{x|%Y-%m-%d}}<extra></extra>" if show_closest_only_allocation else None,
+                                    hoverinfo='text' if show_closest_only_allocation else 'x+y+name'
+                                ))
+                    
+                    # Update layout - EXACTLY LIKE MAIN CHARTS
+                    try:
+                        hover_mode_alloc = "closest" if show_closest_only_allocation else "x unified"
+                    except NameError:
+                        hover_mode_alloc = "x unified"
+                    
+                    fig_evolution.update_layout(
+                        title=f"Portfolio Allocation Evolution - {selected_portfolio_evolution}",
+                        xaxis_title="Date",
+                        yaxis_title="Allocation (%)",
+                        template='plotly_dark',
+                        height=600,
+                        hovermode=hover_mode_alloc,
+                        legend=dict(
+                            orientation="v",
+                            yanchor="top",
+                            y=1,
+                            xanchor="left",
+                            x=1.01
+                        )
+                    )
+                    
+                    # Add range selector
+                    fig_evolution.update_layout(
+                        xaxis=dict(
+                            rangeselector=dict(
+                                buttons=list([
+                                    dict(count=1, label="1M", step="month", stepmode="backward"),
+                                    dict(count=3, label="3M", step="month", stepmode="backward"),
+                                    dict(count=6, label="6M", step="month", stepmode="backward"),
+                                    dict(count=1, label="1Y", step="year", stepmode="backward"),
+                                    dict(step="all")
+                                ])
+                            ),
+                            rangeslider=dict(visible=True),
+                            type="date"
+                        )
+                    )
+                    
+                    # Display the chart
+                    st.plotly_chart(fig_evolution, use_container_width=True)
                 else:
-                    st.warning(f"Could not create allocation evolution chart for {selected_portfolio_evolution}")
+                    st.warning(f"No allocation data found for {selected_portfolio_evolution}")
             else:
-                st.warning(f"No allocation data available for {selected_portfolio_evolution}")
+                st.info("Please select a portfolio to view allocation evolution")
         else:
-            st.info("No portfolios available for allocation evolution chart.")
+            st.info("No portfolios available for allocation evolution")
     
     # PE Ratio Evolution Chart Section
     if 'multi_all_allocations' in st.session_state and st.session_state.multi_all_allocations:
