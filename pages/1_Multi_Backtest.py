@@ -9194,9 +9194,10 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
             expense_ratio_value = st.session_state.get('bulk_expense_ratio_value', 1.0)
             selected_tickers = st.session_state.get('bulk_selected_tickers', [])
             
-            # If no tickers selected, apply to all
+            # Check if any tickers are selected
             if not selected_tickers:
-                selected_tickers = [stock['ticker'] for stock in portfolio['stocks']]
+                st.warning("⚠️ Please select at least one ticker to apply leverage to.")
+                return
             
             applied_count = 0
             for i, stock in enumerate(portfolio['stocks']):
@@ -9236,9 +9237,10 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
             portfolio = st.session_state.multi_backtest_portfolio_configs[portfolio_index]
             selected_tickers = st.session_state.get('bulk_selected_tickers', [])
             
-            # If no tickers selected, apply to all
+            # Check if any tickers are selected
             if not selected_tickers:
-                selected_tickers = [stock['ticker'] for stock in portfolio['stocks']]
+                st.warning("⚠️ Please select at least one ticker to remove leverage from.")
+                return
             
             removed_count = 0
             for i, stock in enumerate(portfolio['stocks']):
@@ -9321,7 +9323,7 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
     if selected_count > 0:
         st.success(f"📊 {selected_count} ticker(s) selected for bulk operations")
     else:
-        st.info("💡 No tickers selected - operations will apply to ALL tickers")
+        st.warning("⚠️ No tickers selected - please select tickers before applying bulk operations")
 
     # Bulk leverage controls
     st.markdown("---")
