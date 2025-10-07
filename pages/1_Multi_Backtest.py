@@ -12110,21 +12110,56 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         last_date = max(series['no_additions'].index.max() for series in st.session_state.multi_all_results.values())
         st.subheader(f"Results for Backtest Period: {first_date.strftime('%Y-%m-%d')} to {last_date.strftime('%Y-%m-%d')}")
 
+        # Hover mode option with error handling
+        try:
+            show_closest_only = st.checkbox(
+                "Show Only Closest Portfolio on Hover",
+                value=False,
+                help="When enabled, hovering will show only the portfolio line closest to your cursor instead of all portfolios.",
+                key="multi_chart_closest_hover"
+            )
+        except Exception as e:
+            st.warning(f"Error with hover checkbox: {e}")
+            show_closest_only = False
+        
         fig1 = go.Figure()
         for name, series_dict in st.session_state.multi_all_results.items():
-            # Plot the series that includes added cash (with_additions) for comparison
-            series_to_plot = series_dict['with_additions'] if isinstance(series_dict, dict) and 'with_additions' in series_dict else series_dict
-            # Convert timestamp index to proper datetime for plotting - ensure it's actually datetime format
-            if hasattr(series_to_plot.index, 'to_pydatetime'):
-                x_dates = series_to_plot.index.to_pydatetime()
-            else:
-                x_dates = pd.to_datetime(series_to_plot.index)
-            fig1.add_trace(go.Scatter(x=x_dates, y=series_to_plot.values, mode='lines', name=name))
+            try:
+                # Plot the series that includes added cash (with_additions) for comparison
+                series_to_plot = series_dict['with_additions'] if isinstance(series_dict, dict) and 'with_additions' in series_dict else series_dict
+                
+                # Validate data before plotting
+                if series_to_plot is None or len(series_to_plot) == 0:
+                    st.warning(f"⚠️ No data available for portfolio: {name}")
+                    continue
+                
+                # Convert timestamp index to proper datetime for plotting - ensure it's actually datetime format
+                if hasattr(series_to_plot.index, 'to_pydatetime'):
+                    x_dates = series_to_plot.index.to_pydatetime()
+                else:
+                    x_dates = pd.to_datetime(series_to_plot.index)
+                
+                # Validate x_dates and values
+                if len(x_dates) != len(series_to_plot.values):
+                    st.warning(f"⚠️ Data length mismatch for portfolio: {name}")
+                    continue
+                    
+                fig1.add_trace(go.Scatter(x=x_dates, y=series_to_plot.values, mode='lines', name=name))
+            except Exception as e:
+                st.warning(f"⚠️ Error plotting portfolio {name}: {str(e)}")
+                continue
+        # Set hover mode based on user preference with fallback
+        try:
+            hover_mode = "closest" if show_closest_only else "x unified"
+        except NameError:
+            # Fallback if show_closest_only is not defined
+            hover_mode = "x unified"
+        
         fig1.update_layout(
             title="Backtest Comparison — Portfolio Value (with cash additions)",
             xaxis_title="Date",
             legend_title="Portfolios",
-            hovermode="x unified",
+            hovermode=hover_mode,
             template="plotly_dark",
             yaxis_tickprefix="$",
             yaxis_tickformat=",.0f",
@@ -12160,25 +12195,43 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
 
         fig2 = go.Figure()
         for name, series_dict in st.session_state.multi_all_results.items():
-            # Use the no-additions series for drawdown calculation (pure portfolio performance)
-            series_to_plot = series_dict['no_additions'] if isinstance(series_dict, dict) and 'no_additions' in series_dict else series_dict
-            
-            # Calculate drawdown for this series
-            values = series_to_plot.values
-            peak = np.maximum.accumulate(values)
-            drawdowns = (values - peak) / np.where(peak == 0, 1, peak) * 100  # Convert to percentage
-            
-            # Convert timestamp index to proper datetime for plotting - ensure it's actually datetime format
-            if hasattr(series_to_plot.index, 'to_pydatetime'):
-                x_dates = series_to_plot.index.to_pydatetime()
-            else:
-                x_dates = pd.to_datetime(series_to_plot.index)
-            fig2.add_trace(go.Scatter(x=x_dates, y=drawdowns, mode='lines', name=name))
+            try:
+                # Use the no-additions series for drawdown calculation (pure portfolio performance)
+                series_to_plot = series_dict['no_additions'] if isinstance(series_dict, dict) and 'no_additions' in series_dict else series_dict
+                
+                # Validate data before processing
+                if series_to_plot is None or len(series_to_plot) == 0:
+                    st.warning(f"⚠️ No data available for drawdown calculation: {name}")
+                    continue
+                
+                # Calculate drawdown for this series
+                values = series_to_plot.values
+                if len(values) == 0:
+                    continue
+                    
+                peak = np.maximum.accumulate(values)
+                drawdowns = (values - peak) / np.where(peak == 0, 1, peak) * 100  # Convert to percentage
+                
+                # Convert timestamp index to proper datetime for plotting - ensure it's actually datetime format
+                if hasattr(series_to_plot.index, 'to_pydatetime'):
+                    x_dates = series_to_plot.index.to_pydatetime()
+                else:
+                    x_dates = pd.to_datetime(series_to_plot.index)
+                
+                # Validate x_dates and drawdowns
+                if len(x_dates) != len(drawdowns):
+                    st.warning(f"⚠️ Data length mismatch for drawdown: {name}")
+                    continue
+                    
+                fig2.add_trace(go.Scatter(x=x_dates, y=drawdowns, mode='lines', name=name))
+            except Exception as e:
+                st.warning(f"⚠️ Error calculating drawdown for portfolio {name}: {str(e)}")
+                continue
         fig2.update_layout(
             title="Backtest Comparison (Max Drawdown)",
             xaxis_title="Date",
             legend_title="Portfolios",
-            hovermode="x unified",
+            hovermode=hover_mode if 'hover_mode' in locals() else "x unified",  # Use the same hover mode as the main chart
             template="plotly_dark",
             # No width/height restrictions - let them be responsive like other plots
             xaxis=dict(
