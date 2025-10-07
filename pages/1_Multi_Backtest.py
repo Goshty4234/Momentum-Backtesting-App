@@ -9196,7 +9196,7 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
             
             # Check if any tickers are selected
             if not selected_tickers:
-                st.warning("⚠️ Please select at least one ticker to apply leverage to.")
+                st.toast("⚠️ Please select at least one ticker to apply leverage to.")
                 return
             
             applied_count = 0
@@ -9239,7 +9239,7 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
             
             # Check if any tickers are selected
             if not selected_tickers:
-                st.warning("⚠️ Please select at least one ticker to remove leverage from.")
+                st.toast("⚠️ Please select at least one ticker to remove leverage from.")
                 return
             
             removed_count = 0
