@@ -23,9 +23,7 @@ import multiprocessing as mp
 # Suppress specific Streamlit threading warnings
 warnings.filterwarnings('ignore')
 warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
-warnings.filterwarnings('ignore', message='.*missing ScriptRunContext.*')
 logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
-logging.getLogger("streamlit.runtime.scriptrunner").setLevel(logging.ERROR)
 logging.getLogger("streamlit.runtime.scriptrunner.script_runner").propagate = False
 
 # Set pandas options for handling large dataframes
@@ -1089,9 +1087,8 @@ def get_goldsim_complete_data(period="max"):
         except:
             return pd.DataFrame()
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=None):
-    """Cache ticker data to improve performance across multiple tabs
+    """Get ticker data (NO_CACHE version)
     
     Args:
         ticker_symbol: Stock ticker symbol (supports leverage format like SPY?L=3)
@@ -3312,10 +3309,6 @@ if st.session_state.get('multi_backtest_rerun_flag', False):
     st.session_state.multi_backtest_rerun_flag = False
     st.rerun()
 
-# Reset running state on page load to prevent persistent running state
-if 'hard_kill_requested' in st.session_state:
-    st.session_state.hard_kill_requested = False
-
 # Place rerun logic after first portfolio input widget
 active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index] if 'multi_backtest_portfolio_configs' in st.session_state and 'multi_backtest_active_portfolio_index' in st.session_state else None
 
@@ -3570,9 +3563,8 @@ def get_portfolio_value(portfolio_name):
                     portfolio_value = float(latest_value)
     return portfolio_value
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
 def create_allocation_evolution_chart(portfolio_name, allocs_data):
-    """Create allocation evolution chart for a portfolio - cached for performance"""
+    """Create allocation evolution chart for a portfolio (NO_CACHE version)"""
     try:
         # Convert to DataFrame for easier processing
         alloc_df = pd.DataFrame(allocs_data).T
@@ -3647,9 +3639,8 @@ def create_allocation_evolution_chart(portfolio_name, allocs_data):
         st.error(f"Error creating allocation evolution chart for {portfolio_name}: {str(e)}")
         return None
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
 def process_allocation_dataframe(portfolio_name, allocation_data):
-    """Process allocation data into a clean DataFrame - cached for performance"""
+    """Process allocation data into a clean DataFrame (NO_CACHE version)"""
     try:
         # Ensure all tickers (including CASH) are present in all dates for proper DataFrame creation
         all_tickers = set()
@@ -3687,9 +3678,8 @@ def process_allocation_dataframe(portfolio_name, allocation_data):
         st.error(f"Error processing allocation data for {portfolio_name}: {str(e)}")
         return None, []
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
 def create_pie_chart(portfolio_name, allocation_data, title_suffix="Current Allocation"):
-    """Create pie chart for portfolio allocation - cached for performance"""
+    """Create pie chart for portfolio allocation (NO_CACHE version)"""
     try:
         if not allocation_data:
             return None
@@ -4504,7 +4494,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         if use_max_allocation and weights:
             max_allocation_decimal = max_allocation_percent / 100.0
             
-            # FIRST PASS: Apply maximum allocation filter (EXCLUDE CASH from max_allocation limit)
+            # FIRST PASS: Apply maximum allocation filter
             capped_weights = {}
             excess_weight = 0.0
             
@@ -4522,9 +4512,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             
             # Redistribute excess weight proportionally among stocks that are below the cap
             if excess_weight > 0:
-                # Find stocks that can receive more weight (below the cap) - include CASH as eligible
+                # Find stocks that can receive more weight (below the cap)
                 eligible_stocks = {ticker: weight for ticker, weight in capped_weights.items() 
-                                 if ticker == 'CASH' or weight < max_allocation_decimal}
+                                 if weight < max_allocation_decimal}
                 
                 if eligible_stocks:
                     # Calculate total weight of eligible stocks
@@ -4537,12 +4527,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             additional_weight = excess_weight * proportion
                             new_weight = capped_weights[ticker] + additional_weight
                             
-                            # CASH can receive unlimited weight, other stocks are capped
-                            if ticker == 'CASH':
-                                capped_weights[ticker] = new_weight
-                            else:
-                                # Make sure we don't exceed the cap
-                                capped_weights[ticker] = min(new_weight, max_allocation_decimal)
+                            # Make sure we don't exceed the cap
+                            capped_weights[ticker] = min(new_weight, max_allocation_decimal)
             
             weights = capped_weights
             
@@ -4595,9 +4581,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             
             # Redistribute excess weight proportionally among stocks that are below the cap
             if excess_weight > 0:
-                # Find stocks that can receive more weight (below the cap) - include CASH as eligible
+                # Find stocks that can receive more weight (below the cap)
                 eligible_stocks = {ticker: weight for ticker, weight in capped_weights.items() 
-                                 if ticker == 'CASH' or weight < max_allocation_decimal}
+                                 if weight < max_allocation_decimal}
                 
                 if eligible_stocks:
                     # Calculate total weight of eligible stocks
@@ -4610,12 +4596,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             additional_weight = excess_weight * proportion
                             new_weight = capped_weights[ticker] + additional_weight
                             
-                            # CASH can receive unlimited weight, other stocks are capped
-                            if ticker == 'CASH':
-                                capped_weights[ticker] = new_weight
-                            else:
-                                # Make sure we don't exceed the cap
-                                capped_weights[ticker] = min(new_weight, max_allocation_decimal)
+                            # Make sure we don't exceed the cap
+                            capped_weights[ticker] = min(new_weight, max_allocation_decimal)
             
             weights = capped_weights
             
@@ -4657,7 +4639,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         if use_max_allocation and current_allocations:
             max_allocation_decimal = max_allocation_percent / 100.0
             
-            # FIRST PASS: Apply maximum allocation filter (EXCLUDE CASH from max_allocation limit)
+            # FIRST PASS: Apply maximum allocation filter
             capped_allocations = {}
             excess_allocation = 0.0
             
@@ -4675,9 +4657,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             
             # Redistribute excess allocation proportionally among stocks that are below the cap
             if excess_allocation > 0:
-                # Find stocks that can receive more allocation (below the cap) - include CASH as eligible
+                # Find stocks that can receive more allocation (below the cap)
                 eligible_stocks = {ticker: allocation for ticker, allocation in capped_allocations.items() 
-                                 if ticker == 'CASH' or allocation < max_allocation_decimal}
+                                 if allocation < max_allocation_decimal}
                 
                 if eligible_stocks:
                     # Calculate total allocation of eligible stocks
@@ -4690,14 +4672,15 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             additional_allocation = excess_allocation * proportion
                             new_allocation = capped_allocations[ticker] + additional_allocation
                             
-                            # CASH can receive unlimited allocation, other stocks are capped
-                            if ticker == 'CASH':
-                                capped_allocations[ticker] = new_allocation
-                            else:
-                                # Make sure we don't exceed the cap
-                                capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
+                            # Make sure we don't exceed the cap
+                            capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
             
             current_allocations = capped_allocations
+            
+            # Final normalization to 100% in case not enough stocks to distribute excess
+            total_alloc = sum(current_allocations.values())
+            if total_alloc > 0:
+                current_allocations = {ticker: allocation / total_alloc for ticker, allocation in current_allocations.items()}
         
         # Apply minimal threshold filter for non-momentum strategies
         if use_threshold and current_allocations:
@@ -4743,9 +4726,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             
             # Redistribute excess allocation proportionally among stocks that are below the cap
             if excess_allocation > 0:
-                # Find stocks that can receive more allocation (below the cap) - include CASH as eligible
+                # Find stocks that can receive more allocation (below the cap)
                 eligible_stocks = {ticker: allocation for ticker, allocation in capped_allocations.items() 
-                                 if ticker == 'CASH' or allocation < max_allocation_decimal}
+                                 if allocation < max_allocation_decimal}
                 
                 if eligible_stocks:
                     # Calculate total allocation of eligible stocks
@@ -4758,12 +4741,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             additional_allocation = excess_allocation * proportion
                             new_allocation = capped_allocations[ticker] + additional_allocation
                             
-                            # CASH can receive unlimited allocation, other stocks are capped
-                            if ticker == 'CASH':
-                                capped_allocations[ticker] = new_allocation
-                            else:
-                                # Make sure we don't exceed the cap
-                                capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
+                            # Make sure we don't exceed the cap
+                            capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
             
             current_allocations = capped_allocations
     else:
@@ -4785,8 +4764,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     historical_allocations[sim_index[0]]['CASH'] = unallocated_cash[0] / initial_value if initial_value > 0 else 0
     
     for i in range(len(sim_index)):
-        # Check for interrupt every 5 iterations (much more frequent)
-        if i % 5 == 0:
+        # Check for interrupt every 100 iterations
+        if i % 100 == 0:
             # Check if interrupt was requested
             if hasattr(st.session_state, 'hard_kill_requested') and st.session_state.hard_kill_requested:
                 print("🛑 Hard kill requested - stopping backtest")
@@ -5047,60 +5026,6 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                         unallocated_cash[-1] = current_total
                         unreinvested_cash[-1] = 0
                     else:
-                        # Apply max_allocation to momentum weights if enabled
-                        use_max_allocation = config.get('use_max_allocation', False)
-                        max_allocation_percent = config.get('max_allocation_percent', 10.0)
-                        
-                        if use_max_allocation and weights:
-                            max_allocation_decimal = max_allocation_percent / 100.0
-                            
-                            # Apply maximum allocation filter to momentum weights (EXCLUDE CASH from max_allocation limit)
-                            capped_weights = {}
-                            excess_weight = 0.0
-                            
-                            for ticker, weight in weights.items():
-                                # CASH is exempt from max_allocation limit to prevent money loss
-                                if ticker == 'CASH':
-                                    capped_weights[ticker] = weight
-                                elif weight > max_allocation_decimal:
-                                    # Cap the weight and collect excess
-                                    capped_weights[ticker] = max_allocation_decimal
-                                    excess_weight += (weight - max_allocation_decimal)
-                                else:
-                                    # Keep original weight
-                                    capped_weights[ticker] = weight
-                            
-                            # Redistribute excess weight proportionally among stocks that are below the cap
-                            if excess_weight > 0:
-                                # Find stocks that can receive more weight (below the cap) - include CASH as eligible
-                                eligible_stocks = {ticker: weight for ticker, weight in capped_weights.items() 
-                                                 if ticker == 'CASH' or weight < max_allocation_decimal}
-                                
-                                if eligible_stocks:
-                                    # Calculate total weight of eligible stocks
-                                    total_eligible_weight = sum(eligible_stocks.values())
-                                    
-                                    if total_eligible_weight > 0:
-                                        # Redistribute excess proportionally
-                                        for ticker in eligible_stocks:
-                                            proportion = eligible_stocks[ticker] / total_eligible_weight
-                                            additional_weight = excess_weight * proportion
-                                            new_weight = capped_weights[ticker] + additional_weight
-                                            
-                                            # CASH can receive unlimited weight, other stocks are capped
-                                            if ticker == 'CASH':
-                                                capped_weights[ticker] = new_weight
-                                            else:
-                                                # Make sure we don't exceed the cap
-                                                capped_weights[ticker] = min(new_weight, max_allocation_decimal)
-                            
-                            weights = capped_weights
-                            
-                            # Final normalization to 100% in case not enough stocks to distribute excess
-                            total_weight = sum(weights.values())
-                            if total_weight > 0:
-                                weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
-                        
                         # For Buy & Hold strategies with momentum, only distribute new cash
                         if rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"]:
                             # Calculate current proportions for Buy & Hold, or use momentum weights for Buy & Hold (Target)
@@ -5147,10 +5072,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     excess_allocation = 0.0
                     
                     for ticker, allocation in rebalance_allocations.items():
-                        # CASH is exempt from max_allocation limit to prevent money loss
-                        if ticker == 'CASH':
-                            capped_allocations[ticker] = allocation
-                        elif allocation > max_allocation_decimal:
+                        if allocation > max_allocation_decimal:
                             # Cap the allocation and collect excess
                             capped_allocations[ticker] = max_allocation_decimal
                             excess_allocation += (allocation - max_allocation_decimal)
@@ -5160,9 +5082,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     
                     # Redistribute excess allocation proportionally among stocks that are below the cap
                     if excess_allocation > 0:
-                        # Find stocks that can receive more allocation (below the cap) - include CASH as eligible
+                        # Find stocks that can receive more allocation (below the cap)
                         eligible_stocks = {ticker: allocation for ticker, allocation in capped_allocations.items() 
-                                         if ticker == 'CASH' or allocation < max_allocation_decimal}
+                                         if allocation < max_allocation_decimal}
                         
                         if eligible_stocks:
                             # Calculate total allocation of eligible stocks
@@ -5175,19 +5097,10 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                                     additional_allocation = excess_allocation * proportion
                                     new_allocation = capped_allocations[ticker] + additional_allocation
                                     
-                                    # CASH can receive unlimited allocation, other stocks are capped
-                                    if ticker == 'CASH':
-                                        capped_allocations[ticker] = new_allocation
-                                    else:
-                                        # Make sure we don't exceed the cap
-                                        capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
+                                    # Make sure we don't exceed the cap
+                                    capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
                     
                     rebalance_allocations = capped_allocations
-                    
-                    # Final normalization to 100% in case not enough stocks to distribute excess
-                    total_alloc = sum(rebalance_allocations.values())
-                    if total_alloc > 0:
-                        rebalance_allocations = {ticker: allocation / total_alloc for ticker, allocation in rebalance_allocations.items()}
                 
                 # Apply minimal threshold filter for non-momentum strategies during rebalancing
                 if use_threshold and rebalance_allocations:
@@ -5221,10 +5134,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     excess_allocation = 0.0
                     
                     for ticker, allocation in rebalance_allocations.items():
-                        # CASH is exempt from max_allocation limit to prevent money loss
-                        if ticker == 'CASH':
-                            capped_allocations[ticker] = allocation
-                        elif allocation > max_allocation_decimal:
+                        if allocation > max_allocation_decimal:
                             # Cap the allocation and collect excess
                             capped_allocations[ticker] = max_allocation_decimal
                             excess_allocation += (allocation - max_allocation_decimal)
@@ -5234,9 +5144,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     
                     # Redistribute excess allocation proportionally among stocks that are below the cap
                     if excess_allocation > 0:
-                        # Find stocks that can receive more allocation (below the cap) - include CASH as eligible
+                        # Find stocks that can receive more allocation (below the cap)
                         eligible_stocks = {ticker: allocation for ticker, allocation in capped_allocations.items() 
-                                         if ticker == 'CASH' or allocation < max_allocation_decimal}
+                                         if allocation < max_allocation_decimal}
                         
                         if eligible_stocks:
                             # Calculate total allocation of eligible stocks
@@ -5249,19 +5159,10 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                                     additional_allocation = excess_allocation * proportion
                                     new_allocation = capped_allocations[ticker] + additional_allocation
                                     
-                                    # CASH can receive unlimited allocation, other stocks are capped
-                                    if ticker == 'CASH':
-                                        capped_allocations[ticker] = new_allocation
-                                    else:
-                                        # Make sure we don't exceed the cap
-                                        capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
+                                    # Make sure we don't exceed the cap
+                                    capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
                     
                     rebalance_allocations = capped_allocations
-                    
-                    # Final normalization to 100% in case not enough stocks to distribute excess
-                    total_alloc = sum(rebalance_allocations.values())
-                    if total_alloc > 0:
-                        rebalance_allocations = {ticker: allocation / total_alloc for ticker, allocation in rebalance_allocations.items()}
                 
                 sum_alloc = sum(rebalance_allocations.values())
                 if sum_alloc > 0:
@@ -6278,8 +6179,8 @@ def fusion_portfolio_backtest(fusion_portfolio_config, all_portfolio_configs, si
     
     # Calculate fusion portfolio value for each date
     for date_idx, current_date in enumerate(sim_index):
-        # Check for interrupt every 5 iterations (much more frequent)
-        if date_idx % 5 == 0:
+        # Check for interrupt every 100 iterations
+        if date_idx % 100 == 0:
             # Check if interrupt was requested
             if hasattr(st.session_state, 'hard_kill_requested') and st.session_state.hard_kill_requested:
                 print("🛑 Hard kill requested - stopping fusion calculation")
@@ -6363,8 +6264,8 @@ def fusion_portfolio_backtest(fusion_portfolio_config, all_portfolio_configs, si
     print(f"📊 BUILDING FUSION HISTORICAL DATA:")
     
     for date_idx, current_date in enumerate(sim_index):
-        # Check for interrupt every 5 iterations (much more frequent)
-        if date_idx % 5 == 0:
+        # Check for interrupt every 100 iterations
+        if date_idx % 100 == 0:
             # Check if interrupt was requested
             if hasattr(st.session_state, 'hard_kill_requested') and st.session_state.hard_kill_requested:
                 print("🛑 Hard kill requested - stopping historical data building")
@@ -6852,7 +6753,7 @@ def sync_cashflow_from_first_portfolio_callback():
                 st.session_state['multi_backtest_cashflow_sync_message_type'] = 'success'
                 
                 # Force immediate rerun to show changes
-                st.session_state.strategy_comparison_rerun_flag = True
+                st.session_state.multi_backtest_rerun_flag = True
             else:
                 # Store info message in session state
                 st.session_state['multi_backtest_cashflow_sync_message'] = "ℹ️ No portfolios were updated (all were excluded or already had matching values)"
@@ -6894,7 +6795,7 @@ def sync_rebalancing_from_first_portfolio_callback():
                 st.session_state['multi_backtest_rebalancing_sync_message_type'] = 'success'
                 
                 # Force immediate rerun to show changes
-                st.session_state.strategy_comparison_rerun_flag = True
+                st.session_state.multi_backtest_rerun_flag = True
             else:
                 # Store info message in session state
                 st.session_state['multi_backtest_rebalancing_sync_message'] = "ℹ️ No portfolios were updated (all were excluded or already had matching values)"
@@ -6995,8 +6896,10 @@ def paste_json_callback():
             json_data['use_minimal_threshold'] = False
         if 'minimal_threshold_percent' not in json_data:
             json_data['minimal_threshold_percent'] = 2.0
-        # Don't override max_allocation values from JSON - preserve imported values
-        # REMOVED: Don't force max_allocation values to preserve JSON values
+        if 'use_max_allocation' not in json_data:
+            json_data['use_max_allocation'] = False
+        if 'max_allocation_percent' not in json_data:
+            json_data['max_allocation_percent'] = 10.0
         
         # Debug: Show what we received
         st.info(f"Received JSON keys: {list(json_data.keys())}")
@@ -7193,7 +7096,33 @@ def paste_json_callback():
         st.error(f"An error occurred: {e}")
     st.session_state.multi_backtest_rerun_flag = True
 
+def save_current_portfolio_beta_vol_settings():
+    """Save current beta and volatility settings to the active portfolio before switching"""
+    if (st.session_state.multi_backtest_active_portfolio_index is not None and 
+        st.session_state.multi_backtest_active_portfolio_index < len(st.session_state.multi_backtest_portfolio_configs)):
+        
+        active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
+        
+        # Save beta settings
+        if 'multi_backtest_active_calc_beta' in st.session_state:
+            active_portfolio['calc_beta'] = st.session_state['multi_backtest_active_calc_beta']
+        if 'multi_backtest_active_beta_window' in st.session_state:
+            active_portfolio['beta_window_days'] = st.session_state['multi_backtest_active_beta_window']
+        if 'multi_backtest_active_beta_exclude' in st.session_state:
+            active_portfolio['exclude_days_beta'] = st.session_state['multi_backtest_active_beta_exclude']
+        
+        # Save volatility settings
+        if 'multi_backtest_active_calc_vol' in st.session_state:
+            active_portfolio['calc_volatility'] = st.session_state['multi_backtest_active_calc_vol']
+        if 'multi_backtest_active_vol_window' in st.session_state:
+            active_portfolio['vol_window_days'] = st.session_state['multi_backtest_active_vol_window']
+        if 'multi_backtest_active_vol_exclude' in st.session_state:
+            active_portfolio['exclude_days_vol'] = st.session_state['multi_backtest_active_vol_exclude']
+
 def update_active_portfolio_index():
+    # CRITICAL: Save current portfolio's beta and volatility settings before switching
+    save_current_portfolio_beta_vol_settings()
+    
     # Use safe accessors to avoid AttributeError when keys are not yet set
     selected_name = st.session_state.get('multi_backtest_portfolio_selector', None)
     portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
@@ -8142,6 +8071,7 @@ else:
         st.session_state.multi_backtest_portfolio_configs[i]['start_date_user'] = None
         st.session_state.multi_backtest_portfolio_configs[i]['end_date_user'] = None
 
+
 st.header(f"Editing Portfolio: {active_portfolio['name']}")
 
 # Check if this is a fusion portfolio and show info message
@@ -8800,7 +8730,7 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                         
                         # CRITICAL: Force a proper portfolio switch to update all UI widgets
                         # This ensures the portfolio name text box and other widgets show the new portfolio's data
-                        st.session_state.strategy_comparison_rerun_flag = True
+                        st.session_state.multi_backtest_rerun_flag = True
                         
                         st.success("🗑️ Removed original portfolio - Active portfolio updated")
                     else:
@@ -10084,7 +10014,6 @@ if st.sidebar.button("🚨 EMERGENCY KILL", type="secondary", use_container_widt
     st.toast("🚨 **EMERGENCY KILL** - Force terminating all processes...", icon="💥")
     emergency_kill()
 
-
 # Move Run Backtest to the left sidebar to make it conspicuous and separate from config
 if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=True):
     # Reset kill request when starting new backtest
@@ -10368,7 +10297,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 # Emergency stop is now handled by the existing emergency_kill function
                 
                 # =============================================================================
-                # SIMPLE, FAST, AND RELIABLE PORTFOLIO PROCESSING (CACHED VERSION)
+                # SIMPLE, FAST, AND RELIABLE PORTFOLIO PROCESSING (NO_CACHE VERSION)
                 # =============================================================================
                 
                 # Initialize results storage
@@ -10381,7 +10310,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 successful_portfolios = 0
                 failed_portfolios = []
                 
-                st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability (CACHED)...**")
+                st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability (NO_CACHE)...**")
                 
                 # Start timing for performance measurement
                 import time as time_module
@@ -10407,33 +10336,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         import logging
                         warnings.filterwarnings('ignore', message='.*ScriptRunContext.*')
                         logging.getLogger("streamlit.runtime.scriptrunner.script_runner").setLevel(logging.ERROR)
-                        
-                        # Check for kill request immediately
-                        if st.session_state.get('hard_kill_requested', False):
-                            return {
-                                'index': i,
-                                'success': False,
-                                'error': 'Kill requested before processing'
-                            }
-                        
-                        # Set a global kill flag for this thread
-                        import threading
-                        threading.current_thread().kill_requested = False
-                        
-                        # Add a more aggressive kill check mechanism
-                        def check_kill_request():
-                            return st.session_state.get('hard_kill_requested', False)
-                        
-                        # Check kill request every 5 iterations in the main processing loop
-                        kill_check_counter = 0
-                        
-                        # Add kill check in the main processing loop
-                        def check_kill_in_loop():
-                            nonlocal kill_check_counter
-                            kill_check_counter += 1
-                            if kill_check_counter % 5 == 0:
-                                return check_kill_request()
-                            return False
                         
                         name = cfg.get('name', f'Portfolio {i}')
                         
@@ -10658,14 +10560,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             # Collect results as they complete
                             completed_count = 0
                             for future in concurrent.futures.as_completed(future_to_index):
-                                # Check for kill request before processing each result
-                                if st.session_state.get('hard_kill_requested', False):
-                                    print("🛑 Hard kill requested - stopping regular portfolio processing")
-                                    # Cancel remaining futures
-                                    for f in future_to_index:
-                                        f.cancel()
-                                    break
-                                
                                 completed_count += 1
                                 progress_percent = completed_count / len(regular_portfolios)
                                 progress_bar.progress(progress_percent, text=f"Phase 1: Completed {completed_count}/{len(regular_portfolios)} regular portfolios...")
@@ -10753,14 +10647,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             # Collect results as they complete
                             completed_count = 0
                             for future in concurrent.futures.as_completed(future_to_index):
-                                # Check for kill request before processing each result
-                                if st.session_state.get('hard_kill_requested', False):
-                                    print("🛑 Hard kill requested - stopping fusion portfolio processing")
-                                    # Cancel remaining futures
-                                    for f in future_to_index:
-                                        f.cancel()
-                                    break
-                                
                                 completed_count += 1
                                 progress_percent = completed_count / len(fusion_portfolios)
                                 progress_bar.progress(progress_percent, text=f"Phase 2: Completed {completed_count}/{len(fusion_portfolios)} fusion portfolios...")
@@ -11368,7 +11254,7 @@ def paste_all_json_callback():
             obj = json.loads(json_text)
             st.success("✅ Multi-portfolio JSON parsed successfully using advanced cleaning!")
         
-        # Add missing fields for compatibility if they don't exist (based on page 3 logic)
+        # Add missing fields for compatibility if they don't exist
         if isinstance(obj, list):
             for portfolio in obj:
                 # Add missing fields with default values
@@ -11378,13 +11264,14 @@ def paste_all_json_callback():
                     portfolio['exclude_from_cashflow_sync'] = False
                 if 'exclude_from_rebalancing_sync' not in portfolio:
                     portfolio['exclude_from_rebalancing_sync'] = False
-                # Only add missing fields if they don't exist in the JSON (like minimal_threshold)
                 if 'use_minimal_threshold' not in portfolio:
                     portfolio['use_minimal_threshold'] = False
                 if 'minimal_threshold_percent' not in portfolio:
                     portfolio['minimal_threshold_percent'] = 2.0
-                # Don't override max_allocation values from JSON - preserve imported values like minimal_threshold
-                # REMOVED: Don't force max_allocation values to preserve JSON values
+                if 'use_max_allocation' not in portfolio:
+                    portfolio['use_max_allocation'] = False
+                if 'max_allocation_percent' not in portfolio:
+                    portfolio['max_allocation_percent'] = 10.0
         
         if isinstance(obj, list):
             # Clear widget keys to force re-initialization
@@ -11409,9 +11296,9 @@ def paste_all_json_callback():
                 is_fusion_portfolio = 'fusion_portfolio' in cfg and isinstance(cfg.get('fusion_portfolio'), dict)
                 if is_fusion_portfolio:
                     fusion_config = cfg.get('fusion_portfolio', {})
-                    st.info(f"🔗 Detected fusion portfolio: {cfg.get('name', 'Unknown')}")
-                    st.info(f"   Selected portfolios: {fusion_config.get('selected_portfolios', [])}")
-                    st.info(f"   Allocations: {fusion_config.get('allocations', {})}")
+                    # st.info(f"🔗 Detected fusion portfolio: {cfg.get('name', 'Unknown')}")
+                    # st.info(f"   Selected portfolios: {fusion_config.get('selected_portfolios', [])}")
+                    # st.info(f"   Allocations: {fusion_config.get('allocations', {})}")
                 
                 # Handle momentum strategy value mapping from other pages
                 momentum_strategy = cfg.get('momentum_strategy', 'Classic')
@@ -11479,9 +11366,11 @@ def paste_all_json_callback():
                 
                 # Debug: Show what we received for this portfolio
                 if 'momentum_windows' in cfg:
-                    st.info(f"Momentum windows for {cfg.get('name', 'Unknown')}: {cfg['momentum_windows']}")
+                    # st.info(f"Momentum windows for {cfg.get('name', 'Unknown')}: {cfg['momentum_windows']}")
+                    pass
                 if 'use_momentum' in cfg:
-                    st.info(f"Use momentum for {cfg.get('name', 'Unknown')}: {cfg['use_momentum']}")
+                    # st.info(f"Use momentum for {cfg.get('name', 'Unknown')}: {cfg['use_momentum']}")
+                    pass
                 
                 # Map frequency values from app.py format to Multi-Backtest format
                 def map_frequency(freq):
@@ -11609,9 +11498,10 @@ def paste_all_json_callback():
             st.success('All portfolio configurations updated from JSON (Multi-Backtest page).')
             # Debug: Show final momentum windows for first portfolio
             if processed_configs:
-                st.info(f"Final momentum windows for first portfolio: {processed_configs[0]['momentum_windows']}")
-                st.info(f"Final use_momentum for first portfolio: {processed_configs[0]['use_momentum']}")
-                st.info(f"Sync exclusions for first portfolio - Cash Flow: {processed_configs[0].get('exclude_from_cashflow_sync', False)}, Rebalancing: {processed_configs[0].get('exclude_from_rebalancing_sync', False)}")
+                # st.info(f"Final momentum windows for first portfolio: {processed_configs[0]['momentum_windows']}")
+                # st.info(f"Final use_momentum for first portfolio: {processed_configs[0]['use_momentum']}")
+                # st.info(f"Sync exclusions for first portfolio - Cash Flow: {processed_configs[0].get('exclude_from_cashflow_sync', False)}, Rebalancing: {processed_configs[0].get('exclude_from_rebalancing_sync', False)}")
+                pass
             # Sync date widgets with the updated portfolio
             sync_date_widgets_with_portfolio()
             
