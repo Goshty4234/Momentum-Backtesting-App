@@ -6995,10 +6995,8 @@ def paste_json_callback():
             json_data['use_minimal_threshold'] = False
         if 'minimal_threshold_percent' not in json_data:
             json_data['minimal_threshold_percent'] = 2.0
-        if 'use_max_allocation' not in json_data:
-            json_data['use_max_allocation'] = False
-        if 'max_allocation_percent' not in json_data:
-            json_data['max_allocation_percent'] = 10.0
+        # Don't override max_allocation values from JSON - preserve imported values
+        # REMOVED: Don't force max_allocation values to preserve JSON values
         
         # Debug: Show what we received
         st.info(f"Received JSON keys: {list(json_data.keys())}")
@@ -11273,7 +11271,7 @@ def paste_all_json_callback():
             obj = json.loads(json_text)
             st.success("✅ Multi-portfolio JSON parsed successfully using advanced cleaning!")
         
-        # Add missing fields for compatibility if they don't exist
+        # Add missing fields for compatibility if they don't exist (based on page 3 logic)
         if isinstance(obj, list):
             for portfolio in obj:
                 # Add missing fields with default values
@@ -11283,14 +11281,13 @@ def paste_all_json_callback():
                     portfolio['exclude_from_cashflow_sync'] = False
                 if 'exclude_from_rebalancing_sync' not in portfolio:
                     portfolio['exclude_from_rebalancing_sync'] = False
+                # Only add missing fields if they don't exist in the JSON (like minimal_threshold)
                 if 'use_minimal_threshold' not in portfolio:
                     portfolio['use_minimal_threshold'] = False
                 if 'minimal_threshold_percent' not in portfolio:
                     portfolio['minimal_threshold_percent'] = 2.0
-                if 'use_max_allocation' not in portfolio:
-                    portfolio['use_max_allocation'] = False
-                if 'max_allocation_percent' not in portfolio:
-                    portfolio['max_allocation_percent'] = 10.0
+                # Don't override max_allocation values from JSON - preserve imported values like minimal_threshold
+                # REMOVED: Don't force max_allocation values to preserve JSON values
         
         if isinstance(obj, list):
             # Clear widget keys to force re-initialization
@@ -11434,6 +11431,8 @@ def paste_all_json_callback():
                     'momentum_windows': momentum_windows,
                     'use_minimal_threshold': cfg.get('use_minimal_threshold', False),
                     'minimal_threshold_percent': cfg.get('minimal_threshold_percent', 2.0),
+                    'use_max_allocation': cfg.get('use_max_allocation', False),
+                    'max_allocation_percent': cfg.get('max_allocation_percent', 10.0),
                     'calc_beta': cfg.get('calc_beta', False),
                     'calc_volatility': cfg.get('calc_volatility', True),
                     'beta_window_days': cfg.get('beta_window_days', 365),
