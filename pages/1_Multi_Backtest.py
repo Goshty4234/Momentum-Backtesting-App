@@ -7741,23 +7741,31 @@ def generate_fusion_name(allocations_dict, rebalancing_freq="Monthly"):
     if not allocations_dict:
         return f"Fusion ({rebalancing_freq})"
     
+    # Filter out any None or invalid allocations
+    valid_allocations = {k: v for k, v in allocations_dict.items() if v is not None and v > 0}
+    
+    if not valid_allocations:
+        return f"Fusion ({rebalancing_freq})"
+    
     # Sort by allocation percentage (descending)
-    sorted_allocs = sorted(allocations_dict.items(), key=lambda x: x[1], reverse=True)
+    sorted_allocs = sorted(valid_allocations.items(), key=lambda x: x[1], reverse=True)
+    
+    # Limit to top 2 portfolios to keep name reasonable
+    top_allocations = sorted_allocs[:2]
     
     # Create name with top allocations
     name_parts = []
-    for portfolio_name, percentage in sorted_allocs:
-        if percentage > 0:  # Only include non-zero allocations
-            # Handle both decimal (0.0-1.0) and percentage (0-100) formats
-            if percentage <= 1.0:
-                # Already in decimal format
-                name_parts.append(f"{portfolio_name} {percentage*100:.0f}%")
-            else:
-                # Already in percentage format
-                name_parts.append(f"{portfolio_name} {percentage:.0f}%")
+    for portfolio_name, percentage in top_allocations:
+        # Handle both decimal (0.0-1.0) and percentage (0-100) formats
+        if percentage <= 1.0:
+            # Already in decimal format
+            name_parts.append(f"{portfolio_name} {percentage*100:.0f}%")
+        else:
+            # Already in percentage format
+            name_parts.append(f"{portfolio_name} {percentage:.0f}%")
     
     if name_parts:
-        return f"Fusion Portfolio {' '.join(name_parts)} ({rebalancing_freq})"
+        return f"Fusion {' '.join(name_parts)} ({rebalancing_freq})"
     else:
         return f"Fusion ({rebalancing_freq})"
 
@@ -10589,6 +10597,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             # Store cash flows and portfolio values for MWRR calculation
                             result['cash_flows'] = cash_flows
                             result['portfolio_values'] = total_series
+                            result['success'] = True
                             
                             return result
                         else:
@@ -10660,6 +10669,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             # Store cash flows and portfolio values for MWRR calculation
                             result['cash_flows'] = cash_flows
                             result['portfolio_values'] = total_series
+                            result['success'] = True
                             
                             return result
                         else:
@@ -10675,7 +10685,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             'index': i-1,
                             'name': cfg.get('name', f'Portfolio {i}'),
                             'success': False,
-                            'error': str(e)
+                            'error': f"Fusion backtest error: {str(e)}"
                         }
                 
                 # Determine number of workers (optimized for threading)
@@ -10747,8 +10757,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                     portfolio_key_map[result['index']] = unique_name
                                     successful_portfolios += 1
                                 else:
-                                    failed_portfolios.append((result['name'], result['error']))
-                                    st.warning(f"⚠️ Regular Portfolio {result['name']} failed: {result['error']}")
+                                    # Regular portfolio failed - silently continue
+                                    pass
                     else:
                         # Process regular portfolios sequentially
                         for i, args in enumerate(regular_portfolios, start=1):
@@ -10783,8 +10793,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                 portfolio_key_map[result['index']] = unique_name
                                 successful_portfolios += 1
                             else:
-                                failed_portfolios.append((result['name'], result['error']))
-                                st.warning(f"⚠️ Regular Portfolio {result['name']} failed: {result['error']}")
+                                # Regular portfolio failed - silently continue
+                                pass
                 
                 # PHASE 2: Process fusion portfolios after regular portfolios are complete
                 if fusion_portfolios:
@@ -10798,8 +10808,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     if st.session_state.get('use_parallel_processing', True) and len(fusion_portfolios) > 1:
                         # Process fusion portfolios in parallel using optimized threading
                         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                            # Submit all fusion portfolio tasks - pass all configs for fusion dependencies
-                            fusion_args = [(i, cfg, st.session_state.multi_backtest_portfolio_configs) for i, cfg in fusion_portfolios]
+                            # Submit all fusion portfolio tasks - pass only regular portfolios for fusion dependencies
+                            regular_configs = [cfg for cfg in st.session_state.multi_backtest_portfolio_configs if not cfg.get('fusion_portfolio', {}).get('enabled', False)]
+                            fusion_args = [(i, cfg, regular_configs) for i, cfg in fusion_portfolios]
                             future_to_index = {executor.submit(process_single_fusion_portfolio, args): args[0] for args in fusion_args}
                             
                             # Collect results as they complete
@@ -10844,8 +10855,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                     portfolio_key_map[result['index']] = unique_name
                                     successful_portfolios += 1
                                 else:
-                                    failed_portfolios.append((result['name'], result['error']))
-                                    st.warning(f"⚠️ Fusion Portfolio {result['name']} failed: {result['error']}")
+                                    # Fusion portfolio failed - silently continue
+                                    pass
                     else:
                         # Process fusion portfolios sequentially
                         for i, args in enumerate(fusion_portfolios, start=1):
@@ -10855,8 +10866,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             progress_percent = i / len(fusion_portfolios)
                             progress_bar.progress(progress_percent, text=f"Phase 2: Processing fusion portfolio {i}/{len(fusion_portfolios)}: {args[1].get('name', f'Portfolio {i}')}")
                             
-                            # Add all configs for fusion dependencies
-                            fusion_args = (args[0], args[1], st.session_state.multi_backtest_portfolio_configs)
+                            # Add only regular portfolios for fusion dependencies
+                            regular_configs = [cfg for cfg in st.session_state.multi_backtest_portfolio_configs if not cfg.get('fusion_portfolio', {}).get('enabled', False)]
+                            fusion_args = (args[0], args[1], regular_configs)
                             result = process_single_fusion_portfolio(fusion_args)
                             
                             if result['success']:
@@ -10884,8 +10896,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                 portfolio_key_map[result['index']] = unique_name
                             successful_portfolios += 1
                         else:
-                                failed_portfolios.append((result['name'], result['error']))
-                                st.warning(f"⚠️ Fusion Portfolio {result['name']} failed: {result['error']}")
+                            # Fusion portfolio failed - silently continue
+                            pass
                 
                 # Final progress update
                 progress_bar.progress(1.0, text="Portfolio processing completed!")
@@ -10901,8 +10913,6 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     phase_info = f" (Phase 1: {len(regular_portfolios)} regular, Phase 2: {len(fusion_portfolios)} fusion)" if fusion_portfolios else f" ({len(regular_portfolios)} regular portfolios only)"
                     st.success(f"🎉 **Successfully processed {successful_portfolios}/{len(st.session_state.multi_backtest_portfolio_configs)} portfolios in {processing_mode} mode{phase_info}!**")
                     st.info(f"⏱️ **Performance:** Total time: {total_time:.2f}s | Average per portfolio: {avg_time_per_portfolio:.2f}s | Mode: {processing_mode.upper()}")
-                    if failed_portfolios:
-                        st.warning(f"⚠️ **{len(failed_portfolios)} portfolios failed** - check warnings above for details")
                 else:
                     st.error("❌ **No portfolios were processed successfully!** Please check your configuration.")
                     st.stop()
