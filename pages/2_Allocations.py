@@ -2833,12 +2833,15 @@ def single_backtest(config, sim_index, reindexed_data):
         if use_max_allocation:
             max_allocation_decimal = max_allocation_percent / 100.0
             
-            # FIRST PASS: Apply maximum allocation filter
+            # FIRST PASS: Apply maximum allocation filter (EXCLUDE CASH from max_allocation limit)
             capped_allocations = {}
             excess_allocation = 0.0
             
             for ticker, allocation in allocations.items():
-                if allocation > max_allocation_decimal:
+                # CASH is exempt from max_allocation limit to prevent money loss
+                if ticker == 'CASH':
+                    capped_allocations[ticker] = allocation
+                elif allocation > max_allocation_decimal:
                     # Cap the allocation and collect excess
                     capped_allocations[ticker] = max_allocation_decimal
                     excess_allocation += (allocation - max_allocation_decimal)
@@ -2847,9 +2850,9 @@ def single_backtest(config, sim_index, reindexed_data):
             
             # Redistribute excess allocation proportionally to stocks below the cap
             if excess_allocation > 0:
-                # Find stocks below the cap
+                # Find stocks below the cap (include CASH as eligible for redistribution)
                 below_cap_stocks = {ticker: allocation for ticker, allocation in capped_allocations.items() 
-                                  if allocation < max_allocation_decimal}
+                                  if ticker == 'CASH' or allocation < max_allocation_decimal}
                 
                 if below_cap_stocks:
                     total_below_cap = sum(below_cap_stocks.values())
@@ -2858,7 +2861,11 @@ def single_backtest(config, sim_index, reindexed_data):
                         for ticker in below_cap_stocks:
                             proportion = below_cap_stocks[ticker] / total_below_cap
                             new_allocation = capped_allocations[ticker] + (excess_allocation * proportion)
-                            capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
+                            # CASH can receive unlimited allocation, other stocks are capped
+                            if ticker == 'CASH':
+                                capped_allocations[ticker] = new_allocation
+                            else:
+                                capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
             
             allocations = capped_allocations
         
@@ -2888,12 +2895,15 @@ def single_backtest(config, sim_index, reindexed_data):
         if use_max_allocation:
             max_allocation_decimal = max_allocation_percent / 100.0
             
-            # Check if any stocks exceed the cap after threshold filtering and normalization
+            # Check if any stocks exceed the cap after threshold filtering and normalization (EXCLUDE CASH)
             capped_allocations = {}
             excess_allocation = 0.0
             
             for ticker, allocation in allocations.items():
-                if allocation > max_allocation_decimal:
+                # CASH is exempt from max_allocation limit to prevent money loss
+                if ticker == 'CASH':
+                    capped_allocations[ticker] = allocation
+                elif allocation > max_allocation_decimal:
                     # Cap the allocation and collect excess
                     capped_allocations[ticker] = max_allocation_decimal
                     excess_allocation += (allocation - max_allocation_decimal)
@@ -2902,9 +2912,9 @@ def single_backtest(config, sim_index, reindexed_data):
             
             # Redistribute excess allocation proportionally to stocks below the cap
             if excess_allocation > 0:
-                # Find stocks below the cap
+                # Find stocks below the cap (include CASH as eligible for redistribution)
                 below_cap_stocks = {ticker: allocation for ticker, allocation in capped_allocations.items() 
-                                  if allocation < max_allocation_decimal}
+                                  if ticker == 'CASH' or allocation < max_allocation_decimal}
                 
                 if below_cap_stocks:
                     total_below_cap = sum(below_cap_stocks.values())
@@ -2913,9 +2923,18 @@ def single_backtest(config, sim_index, reindexed_data):
                         for ticker in below_cap_stocks:
                             proportion = below_cap_stocks[ticker] / total_below_cap
                             new_allocation = capped_allocations[ticker] + (excess_allocation * proportion)
-                            capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
+                            # CASH can receive unlimited allocation, other stocks are capped
+                            if ticker == 'CASH':
+                                capped_allocations[ticker] = new_allocation
+                            else:
+                                capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
             
             allocations = capped_allocations
+            
+            # Final normalization to 100% in case not enough stocks to distribute excess
+            total_alloc = sum(allocations.values())
+            if total_alloc > 0:
+                allocations = {ticker: allocation / total_alloc for ticker, allocation in allocations.items()}
         
         # Update tickers list to only include tickers with non-zero allocations
         tickers = [ticker for ticker, allocation in allocations.items() if allocation > 0]
@@ -3177,6 +3196,11 @@ def single_backtest(config, sim_index, reindexed_data):
                             capped_weights[ticker] = min(new_weight, max_allocation_decimal)
             
             weights = capped_weights
+            
+            # Final normalization to 100% in case not enough stocks to distribute excess
+            total_weight = sum(weights.values())
+            if total_weight > 0:
+                weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
         
         # Apply minimal threshold filter if enabled
         if use_threshold and weights:
@@ -3238,6 +3262,11 @@ def single_backtest(config, sim_index, reindexed_data):
                             capped_weights[ticker] = min(new_weight, max_allocation_decimal)
             
             weights = capped_weights
+            
+            # Final normalization to 100% in case not enough stocks to distribute excess
+            total_weight = sum(weights.values())
+            if total_weight > 0:
+                weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
 
         for t in weights:
             metrics[t]['Calculated_Weight'] = weights.get(t, 0)
