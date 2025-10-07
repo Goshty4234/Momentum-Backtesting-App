@@ -6487,52 +6487,8 @@ with col_stock_buttons2[1]:
     if st.sidebar.button("Add Ticker", on_click=add_stock_callback, use_container_width=True):
         pass
 
-
-# Calculate live total ticker allocation for global tickers
-valid_stocks = [s for s in st.session_state.strategy_comparison_global_tickers if s['ticker']]
-total_stock_allocation = sum(s['allocation'] for s in valid_stocks)
-
-# Always show allocation status (not hidden by momentum)
-if abs(total_stock_allocation - 1.0) > 0.001:
-    st.sidebar.warning(f"Total allocation: {total_stock_allocation*100:.1f}%")
-else:
-    st.sidebar.success(f"Total allocation: {total_stock_allocation*100:.1f}%")
-
-# Stock inputs in sidebar (using global tickers) - Layout similar to app.py
-for i in range(len(st.session_state.strategy_comparison_global_tickers)):
-    stock = st.session_state.strategy_comparison_global_tickers[i]
-    
-    # Use columns to display ticker, allocation, dividends, and remove button on same line
-    col1, col2, col3, col4 = st.sidebar.columns([1, 1, 1, 0.2])
-    
-    with col1:
-        # Ticker input - always use current value from global tickers
-        ticker_key = f"strategy_comparison_global_ticker_{i}"
-        # Only set initial value if key doesn't exist (first time)
-        if ticker_key not in st.session_state:
-            st.session_state[ticker_key] = stock['ticker']
-        ticker_val = st.text_input(f"Ticker {i+1}", key=ticker_key, on_change=update_global_stock_ticker, args=(i,))
-    
-    with col2:
-        # Allocation input - always use current value from global tickers
-        alloc_key = f"strategy_comparison_global_alloc_{i}"
-        st.session_state[alloc_key] = int(stock['allocation'] * 100)  # Always update to current value
-        alloc_val = st.number_input(f"Alloc % {i+1}", min_value=0, step=1, format="%d", key=alloc_key, on_change=update_global_stock_allocation, args=(i,))
-    
-    with col3:
-        # Dividends checkbox - always use current value from global tickers
-        div_key = f"strategy_comparison_global_div_{i}"
-        st.session_state[div_key] = stock['include_dividends']  # Always update to current value
-        div_val = st.checkbox("Dividends", key=div_key, on_change=update_global_stock_dividends, args=(i,))
-        
-    
-    with col4:
-        # Remove button
-        if st.button("x", key=f"remove_global_stock_{i}_{stock['ticker']}_{id(stock)}", help="Remove this ticker", on_click=remove_global_stock_callback, args=(stock['ticker'],)):
-            pass
-
 # Bulk Leverage Controls
-with st.expander("🔧 Bulk Leverage Controls", expanded=False):
+with st.sidebar.expander("🔧 Bulk Leverage Controls", expanded=False):
     def apply_bulk_leverage_callback():
         """Apply leverage and expense ratio to all tickers in the current portfolio"""
         try:
@@ -6588,7 +6544,7 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
             st.error(f"Error removing leverage: {str(e)}")
 
     # Bulk leverage controls
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    col1, col2, col3, col4 = st.columns([1.2, 1.2, 1, 1])
 
     with col1:
         st.number_input(
@@ -6620,6 +6576,49 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
 
     with col4:
         if st.button("Remove to All", on_click=remove_bulk_leverage_callback, type="secondary"):
+            pass
+
+# Calculate live total ticker allocation for global tickers
+valid_stocks = [s for s in st.session_state.strategy_comparison_global_tickers if s['ticker']]
+total_stock_allocation = sum(s['allocation'] for s in valid_stocks)
+
+# Always show allocation status (not hidden by momentum)
+if abs(total_stock_allocation - 1.0) > 0.001:
+    st.sidebar.warning(f"Total allocation: {total_stock_allocation*100:.1f}%")
+else:
+    st.sidebar.success(f"Total allocation: {total_stock_allocation*100:.1f}%")
+
+# Stock inputs in sidebar (using global tickers) - Layout similar to app.py
+for i in range(len(st.session_state.strategy_comparison_global_tickers)):
+    stock = st.session_state.strategy_comparison_global_tickers[i]
+    
+    # Use columns to display ticker, allocation, dividends, and remove button on same line
+    col1, col2, col3, col4 = st.sidebar.columns([1, 1, 1, 0.2])
+    
+    with col1:
+        # Ticker input - always use current value from global tickers
+        ticker_key = f"strategy_comparison_global_ticker_{i}"
+        # Only set initial value if key doesn't exist (first time)
+        if ticker_key not in st.session_state:
+            st.session_state[ticker_key] = stock['ticker']
+        ticker_val = st.text_input(f"Ticker {i+1}", key=ticker_key, on_change=update_global_stock_ticker, args=(i,))
+    
+    with col2:
+        # Allocation input - always use current value from global tickers
+        alloc_key = f"strategy_comparison_global_alloc_{i}"
+        st.session_state[alloc_key] = int(stock['allocation'] * 100)  # Always update to current value
+        alloc_val = st.number_input(f"Alloc % {i+1}", min_value=0, step=1, format="%d", key=alloc_key, on_change=update_global_stock_allocation, args=(i,))
+    
+    with col3:
+        # Dividends checkbox - always use current value from global tickers
+        div_key = f"strategy_comparison_global_div_{i}"
+        st.session_state[div_key] = stock['include_dividends']  # Always update to current value
+        div_val = st.checkbox("Dividends", key=div_key, on_change=update_global_stock_dividends, args=(i,))
+        
+    
+    with col4:
+        # Remove button
+        if st.button("x", key=f"remove_global_stock_{i}_{stock['ticker']}_{id(stock)}", help="Remove this ticker", on_click=remove_global_stock_callback, args=(stock['ticker'],)):
             pass
 
 # Bulk ticker input section
