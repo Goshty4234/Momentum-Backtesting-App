@@ -1,6 +1,14 @@
 import numpy as np
 # Backtest_Engine.py
 import streamlit as st
+
+# Configure Streamlit page
+st.set_page_config(
+    page_title="Quantitative Portfolio Momentum Backtest & Analytics",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 import matplotlib.pyplot as plt
 import io
 import contextlib
@@ -13,7 +21,10 @@ from typing import List, Dict
 import yfinance as yf
 import pandas as pd
 import matplotlib.dates as mdates
-import mplcursors
+try:
+    import mplcursors
+except ImportError:
+    mplcursors = None
 from scipy.optimize import newton, brentq, root_scalar
 import pandas_market_calendars as mcal
 from warnings import warn
