@@ -4553,8 +4553,7 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
                 ticker_key = f"alloc_ticker_{portfolio_index}_{i}"
                 st.session_state[ticker_key] = new_ticker
             
-            st.success(f"✅ Applied {leverage_value}x leverage and {expense_ratio_value}% expense ratio to all tickers!")
-            st.rerun()
+            st.toast(f"✅ Applied {leverage_value}x leverage and {expense_ratio_value}% expense ratio to all tickers!")
             
         except Exception as e:
             st.error(f"Error applying bulk leverage: {str(e)}")
@@ -4578,14 +4577,13 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
                 ticker_key = f"alloc_ticker_{portfolio_index}_{i}"
                 st.session_state[ticker_key] = base_ticker
             
-            st.success("✅ Removed all leverage and expense ratio from all tickers!")
-            st.rerun()
+            st.toast("✅ Removed all leverage and expense ratio from all tickers!")
             
         except Exception as e:
             st.error(f"Error removing leverage: {str(e)}")
 
     # Bulk leverage controls
-    col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
+    col1, col2, col3, col4 = st.columns([1.2, 1.2, 1, 1])
 
     with col1:
         st.number_input(
