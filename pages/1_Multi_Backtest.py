@@ -7922,6 +7922,28 @@ if portfolio_count >= 2:
                         # Update session state
                         st.session_state["fusion_rebalancing_frequency"] = fusion_rebalancing_frequency
                         
+                        # Sync & Normalize button for server synchronization
+                        col1, col2 = st.columns([1, 1])
+                        with col1:
+                            if st.button("🔄 Sync & Normalize", help="Force synchronization and normalization of allocations", key="fusion_sync_button"):
+                                # Force refresh allocations from inputs
+                                for portfolio_name in selected_portfolios:
+                                    key = f"alloc_{portfolio_name}"
+                                    if key in st.session_state:
+                                        allocations[portfolio_name] = st.session_state[key]
+                                
+                                # Normalize to 100%
+                                total = sum(allocations.values())
+                                if total > 0:
+                                    for name in allocations:
+                                        allocations[name] = allocations[name] / total * 100.0
+                                
+                                # Force rerun to update UI
+                                st.rerun()
+                        
+                        with col2:
+                            st.caption("💡 Click to sync allocations and normalize to 100%")
+                        
                         # Portfolio name (generated after rebalancing frequency is selected)
                         default_name = generate_fusion_name(allocations, fusion_rebalancing_frequency)
                         fusion_name = st.text_input(
