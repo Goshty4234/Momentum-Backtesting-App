@@ -3754,7 +3754,10 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             excess_weight = 0.0
             
             for ticker, weight in weights.items():
-                if weight > max_allocation_decimal:
+                # CASH is exempt from max_allocation limit to prevent money loss
+                if ticker == 'CASH':
+                    capped_weights[ticker] = weight
+                elif weight > max_allocation_decimal:
                     # Cap the weight and collect excess
                     capped_weights[ticker] = max_allocation_decimal
                     excess_weight += (weight - max_allocation_decimal)
@@ -3783,6 +3786,11 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             capped_weights[ticker] = min(new_weight, max_allocation_decimal)
             
             weights = capped_weights
+            
+            # Final normalization to 100% in case not enough stocks to distribute excess
+            total_weight = sum(weights.values())
+            if total_weight > 0:
+                weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
         
         # Apply minimal threshold filter if enabled
         if use_threshold and weights:
@@ -3815,7 +3823,10 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             excess_weight = 0.0
             
             for ticker, weight in weights.items():
-                if weight > max_allocation_decimal:
+                # CASH is exempt from max_allocation limit to prevent money loss
+                if ticker == 'CASH':
+                    capped_weights[ticker] = weight
+                elif weight > max_allocation_decimal:
                     # Cap the weight and collect excess
                     capped_weights[ticker] = max_allocation_decimal
                     excess_weight += (weight - max_allocation_decimal)
@@ -3844,6 +3855,11 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             capped_weights[ticker] = min(new_weight, max_allocation_decimal)
             
             weights = capped_weights
+            
+            # Final normalization to 100% in case not enough stocks to distribute excess
+            total_weight = sum(weights.values())
+            if total_weight > 0:
+                weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
 
         # Attach calculated weights to metrics and return
         for t in weights:
@@ -3883,7 +3899,10 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             excess_allocation = 0.0
             
             for ticker, allocation in current_allocations.items():
-                if allocation > max_allocation_decimal:
+                # CASH is exempt from max_allocation limit to prevent money loss
+                if ticker == 'CASH':
+                    capped_allocations[ticker] = allocation
+                elif allocation > max_allocation_decimal:
                     # Cap the allocation and collect excess
                     capped_allocations[ticker] = max_allocation_decimal
                     excess_allocation += (allocation - max_allocation_decimal)
@@ -3912,6 +3931,11 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
             
             current_allocations = capped_allocations
+            
+            # Final normalization to 100% in case not enough stocks to distribute excess
+            total_alloc = sum(current_allocations.values())
+            if total_alloc > 0:
+                current_allocations = {ticker: allocation / total_alloc for ticker, allocation in current_allocations.items()}
         
         # Apply minimal threshold filter for non-momentum strategies
         if use_threshold and current_allocations:
@@ -3944,7 +3968,10 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             excess_allocation = 0.0
             
             for ticker, allocation in current_allocations.items():
-                if allocation > max_allocation_decimal:
+                # CASH is exempt from max_allocation limit to prevent money loss
+                if ticker == 'CASH':
+                    capped_allocations[ticker] = allocation
+                elif allocation > max_allocation_decimal:
                     # Cap the allocation and collect excess
                     capped_allocations[ticker] = max_allocation_decimal
                     excess_allocation += (allocation - max_allocation_decimal)
