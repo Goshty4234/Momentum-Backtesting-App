@@ -1,3 +1,4 @@
+# CACHED VERSION - Optimized with @st.cache_data decorators for better performance
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -86,7 +87,7 @@ def get_ticker_aliases():
         'SPYTR': '^SP500TR',      # S&P 500 Total Return (with dividends) - 1988+
         'NASDAQ': '^IXIC',        # NASDAQ Composite (price only, no dividends) - 1971+
         'NDX': '^NDX',           # NASDAQ 100 (price only, no dividends) - 1985+
-        'QQQTR': '^NDX',         # NASDAQ 100 (price only, no dividends) - 1985+
+        'QQQTR': '^IXIC',        # NASDAQ Composite (price only, no dividends) - 1971+
         'DOW': '^DJI',           # Dow Jones Industrial Average (price only, no dividends) - 1992+
         
         # Treasury Yield Indices (LONGEST HISTORY - 1960s+)
@@ -143,6 +144,19 @@ def get_ticker_aliases():
         'COPPER': 'HG=F',        # Copper Futures (2000+) - No dividends
         'PLATINUM': 'PL=F',      # Platinum Futures (1997+) - No dividends
         'PALLADIUM': 'PA=F',     # Palladium Futures (1998+) - No dividends
+        
+        # Leveraged & Inverse ETFs (Synthetic Aliases)
+        'TQQQTR': '^IXIC?L=3?E=0.95',    # 3x NASDAQ Composite (price only) - 1971+
+        'SPXLTR': '^SP500TR?L=3?E=1.00', # 3x S&P 500 (with dividends)
+        'UPROTR': '^SP500TR?L=3?E=0.91', # 3x S&P 500 (with dividends)
+        'QLDTR': '^IXIC?L=2?E=0.95',     # 2x NASDAQ Composite (price only) - 1971+
+        'SSOTR': '^SP500TR?L=2?E=0.91',  # 2x S&P 500 (with dividends)
+        'SHTR': '^GSPC?L=-1?E=0.89',     # -1x S&P 500 (price only, no dividends) - 1927+
+        'PSQTR': '^IXIC?L=-1?E=0.95',    # -1x NASDAQ Composite (price only, no dividends) - 1971+
+        'SDSTR': '^GSPC?L=-2?E=0.91',    # -2x S&P 500 (price only, no dividends) - 1927+
+        'QIDTR': '^IXIC?L=-2?E=0.95',    # -2x NASDAQ Composite (price only, no dividends) - 1971+
+        'SPXUTR': '^GSPC?L=-3?E=1.00',   # -3x S&P 500 (price only, no dividends) - 1927+
+        'SQQQTR': '^IXIC?L=-3?E=0.95',   # -3x NASDAQ Composite (price only, no dividends) - 1971+
         
         # Special Dynamic Portfolio Tickers
         'SP500TOP20': 'SP500TOP20',  # Dynamic S&P 500 Top 20 (rebalances yearly based on historical data)
@@ -549,9 +563,7 @@ def parse_ticker_parameters(ticker_symbol: str) -> tuple[str, float, float]:
             else:
                 leverage = float(leverage_part)
             
-            # Validate leverage range (reasonable bounds for leveraged ETFs)
-            if leverage < 0.1 or leverage > 10.0:
-                raise ValueError(f"Leverage {leverage} is outside reasonable range (0.1-10.0)")
+            # Leverage validation removed - allow any leverage value for testing
                 
         except (ValueError, IndexError) as e:
             # If parsing fails, treat as regular ticker with no leverage
@@ -601,6 +613,7 @@ def parse_leverage_ticker(ticker_symbol: str) -> tuple[str, float]:
     base_ticker, leverage, _ = parse_ticker_parameters(ticker_symbol)
     return base_ticker, leverage
 
+@st.cache_data(show_spinner=False)
 def apply_daily_leverage(price_data: pd.DataFrame, leverage: float, expense_ratio: float = 0.0) -> pd.DataFrame:
     """
     Apply daily leverage multiplier and expense ratio to price data, simulating leveraged ETF behavior.
@@ -697,7 +710,7 @@ def get_ticker_aliases():
         'SPYTR': '^SP500TR',      # S&P 500 Total Return (with dividends) - 1988+
         'NASDAQ': '^IXIC',        # NASDAQ Composite (price only, no dividends) - 1971+
         'NDX': '^NDX',           # NASDAQ 100 (price only, no dividends) - 1985+
-        'QQQTR': '^NDX',         # NASDAQ 100 (price only, no dividends) - 1985+
+        'QQQTR': '^IXIC',        # NASDAQ Composite (price only, no dividends) - 1971+
         'DOW': '^DJI',           # Dow Jones Industrial Average (price only, no dividends) - 1992+
         
         # Treasury Yield Indices (LONGEST HISTORY - 1960s+)
@@ -755,6 +768,19 @@ def get_ticker_aliases():
         'PLATINUM': 'PL=F',      # Platinum Futures (1997+) - No dividends
         'PALLADIUM': 'PA=F',     # Palladium Futures (1998+) - No dividends
         
+        # Leveraged & Inverse ETFs (Synthetic Aliases)
+        'TQQQTR': '^IXIC?L=3?E=0.95',    # 3x NASDAQ Composite (price only) - 1971+
+        'SPXLTR': '^SP500TR?L=3?E=1.00', # 3x S&P 500 (with dividends)
+        'UPROTR': '^SP500TR?L=3?E=0.91', # 3x S&P 500 (with dividends)
+        'QLDTR': '^IXIC?L=2?E=0.95',     # 2x NASDAQ Composite (price only) - 1971+
+        'SSOTR': '^SP500TR?L=2?E=0.91',  # 2x S&P 500 (with dividends)
+        'SHTR': '^GSPC?L=-1?E=0.89',     # -1x S&P 500 (price only, no dividends) - 1927+
+        'PSQTR': '^IXIC?L=-1?E=0.95',    # -1x NASDAQ Composite (price only, no dividends) - 1971+
+        'SDSTR': '^GSPC?L=-2?E=0.91',    # -2x S&P 500 (price only, no dividends) - 1927+
+        'QIDTR': '^IXIC?L=-2?E=0.95',    # -2x NASDAQ Composite (price only, no dividends) - 1971+
+        'SPXUTR': '^GSPC?L=-3?E=1.00',   # -3x S&P 500 (price only, no dividends) - 1927+
+        'SQQQTR': '^IXIC?L=-3?E=0.95',   # -3x NASDAQ Composite (price only, no dividends) - 1971+
+        
         # Special Dynamic Portfolio Tickers
         'SP500TOP20': 'SP500TOP20',  # Dynamic S&P 500 Top 20 (rebalances yearly based on historical data)
     }
@@ -772,7 +798,7 @@ def resolve_ticker_alias(ticker):
     
     return aliases.get(upper_ticker, upper_ticker)
 
-# @st.cache_data(ttl=300)  # Cache for 5 minutes - DISABLED for parallel processing
+@st.cache_data(ttl=300, show_spinner=False)
 def generate_zero_return_data(period="max"):
     """Generate synthetic zero return data for ZEROX ticker"""
     try:
@@ -799,7 +825,7 @@ def generate_zero_return_data(period="max"):
         }, index=dates)
         return zero_data
 
-# @st.cache_data(ttl=300)  # Cache for 5 minutes - DISABLED for parallel processing
+@st.cache_data(ttl=300, show_spinner=False)
 def get_gold_complete_data(period="max"):
     """Get complete gold data from historical CSV and GLD"""
     try:
@@ -1089,9 +1115,9 @@ def get_goldsim_complete_data(period="max"):
         except:
             return pd.DataFrame()
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=None):
-    """Cache ticker data to improve performance across multiple tabs
+    """Get ticker data (CACHED version - 1 hour TTL)
     
     Args:
         ticker_symbol: Stock ticker symbol (supports leverage format like SPY?L=3)
@@ -1163,7 +1189,7 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=
     except Exception:
         return pd.DataFrame()
 
-# @st.cache_data(ttl=300)  # Cache for 5 minutes - DISABLED for parallel processing
+@st.cache_data(ttl=300, show_spinner=False)
 def get_ticker_info(ticker_symbol):
     """Cache ticker info to improve performance across multiple tabs"""
     try:
@@ -3570,9 +3596,9 @@ def get_portfolio_value(portfolio_name):
                     portfolio_value = float(latest_value)
     return portfolio_value
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
+@st.cache_data(show_spinner=False)
 def create_allocation_evolution_chart(portfolio_name, allocs_data):
-    """Create allocation evolution chart for a portfolio - cached for performance"""
+    """Create allocation evolution chart for a portfolio (CACHED version)"""
     try:
         # Convert to DataFrame for easier processing
         alloc_df = pd.DataFrame(allocs_data).T
@@ -3647,9 +3673,9 @@ def create_allocation_evolution_chart(portfolio_name, allocs_data):
         st.error(f"Error creating allocation evolution chart for {portfolio_name}: {str(e)}")
         return None
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
+@st.cache_data(show_spinner=False)
 def process_allocation_dataframe(portfolio_name, allocation_data):
-    """Process allocation data into a clean DataFrame - cached for performance"""
+    """Process allocation data into a clean DataFrame (CACHED version)"""
     try:
         # Ensure all tickers (including CASH) are present in all dates for proper DataFrame creation
         all_tickers = set()
@@ -3687,9 +3713,8 @@ def process_allocation_dataframe(portfolio_name, allocation_data):
         st.error(f"Error processing allocation data for {portfolio_name}: {str(e)}")
         return None, []
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
 def create_pie_chart(portfolio_name, allocation_data, title_suffix="Current Allocation"):
-    """Create pie chart for portfolio allocation - cached for performance"""
+    """Create pie chart for portfolio allocation (CACHED version)"""
     try:
         if not allocation_data:
             return None
@@ -8637,11 +8662,305 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
         if f"enable_max_allocation_{portfolio_index}" in st.session_state:
             del st.session_state[f"enable_max_allocation_{portfolio_index}"]
     
+    # Momentum Windows Section - Using the exact same code that works
+    if use_momentum_vary:
+        st.markdown("---")
+        st.subheader("Momentum Windows")
+        
+        # Add button to create new momentum windows configuration
+        if st.button("➕ Add Momentum Windows Configuration", key=f"add_momentum_config_{portfolio_index}"):
+            if f"momentum_windows_configs_{portfolio_index}" not in st.session_state:
+                st.session_state[f"momentum_windows_configs_{portfolio_index}"] = []
+            st.session_state[f"momentum_windows_configs_{portfolio_index}"].append([
+                {"lookback": 365, "exclude": 30, "weight": 0.5},
+                {"lookback": 180, "exclude": 30, "weight": 0.3},
+                {"lookback": 120, "exclude": 30, "weight": 0.2}
+            ])
+            st.rerun()
+
+        # Initialize if not exists
+        if f"momentum_windows_configs_{portfolio_index}" not in st.session_state:
+            st.session_state[f"momentum_windows_configs_{portfolio_index}"] = [
+                [
+                    {"lookback": 365, "exclude": 30, "weight": 0.5},
+                    {"lookback": 180, "exclude": 30, "weight": 0.3},
+                    {"lookback": 120, "exclude": 30, "weight": 0.2}
+                ]
+            ]
+
+        momentum_configs = st.session_state[f"momentum_windows_configs_{portfolio_index}"]
+        if not momentum_configs:
+            st.info("No momentum windows configured. Click 'Add Window' to create momentum lookback windows.")
+        
+        # Display each momentum windows configuration
+        for config_idx, momentum_windows in enumerate(momentum_configs):
+            st.markdown(f"**Configuration {config_idx + 1}:**")
+            
+            # Individual buttons for this configuration
+            col_reset, col_norm, col_addrem = st.columns([0.4, 0.4, 0.2])
+            with col_reset:
+                if st.button(f"Reset Config {config_idx + 1}", key=f"reset_config_{portfolio_index}_{config_idx}"):
+                    momentum_windows.clear()
+                    momentum_windows.extend([
+                        {"lookback": 365, "exclude": 30, "weight": 0.5},
+                        {"lookback": 180, "exclude": 30, "weight": 0.3},
+                        {"lookback": 120, "exclude": 30, "weight": 0.2}
+                    ])
+                    st.rerun()
+            with col_norm:
+                if st.button(f"Normalize Config {config_idx + 1}", key=f"normalize_config_{portfolio_index}_{config_idx}"):
+                    total_weight = sum(w['weight'] for w in momentum_windows)
+                    if total_weight > 0:
+                        for w in momentum_windows:
+                            w['weight'] /= total_weight
+                    st.rerun()
+            with col_addrem:
+                if st.button(f"Add Window", key=f"add_window_{portfolio_index}_{config_idx}"):
+                    momentum_windows.append({"lookback": 90, "exclude": 30, "weight": 0.1})
+                    st.rerun()
+                if st.button(f"Remove Window", key=f"remove_window_{portfolio_index}_{config_idx}"):
+                    if momentum_windows:
+                        momentum_windows.pop()
+                    st.rerun()
+            
+            # Delete button for this configuration (only if more than 1 config)
+            if len(momentum_configs) > 1 and st.button(f"🗑️ Delete Config {config_idx + 1}", key=f"delete_config_{portfolio_index}_{config_idx}"):
+                momentum_configs.pop(config_idx)
+                st.rerun()
+            
+            # Display momentum windows for this configuration
+            col_headers = st.columns(3)
+            with col_headers[0]:
+                st.markdown("**Lookback (days)**")
+            with col_headers[1]:
+                st.markdown("**Exclude (days)**")
+            with col_headers[2]:
+                st.markdown("**Weight %**")
+
+            for j in range(len(momentum_windows)):
+                with st.container():
+                    col_mw1, col_mw2, col_mw3 = st.columns(3)
+                    lookback_key = f"momentum_lookback_{portfolio_index}_{config_idx}_{j}"
+                    exclude_key = f"momentum_exclude_{portfolio_index}_{config_idx}_{j}"
+                    weight_key = f"momentum_weight_{portfolio_index}_{config_idx}_{j}"
+                    
+                    if lookback_key not in st.session_state:
+                        st.session_state[lookback_key] = int(momentum_windows[j]['lookback'])
+                    if exclude_key not in st.session_state:
+                        st.session_state[exclude_key] = int(momentum_windows[j]['exclude'])
+                    if weight_key not in st.session_state:
+                        weight = momentum_windows[j]['weight']
+                        if isinstance(weight, (int, float)):
+                            if weight > 1.0:
+                                weight_percentage = min(weight, 100.0)
+                            else:
+                                weight_percentage = weight * 100.0
+                        else:
+                            weight_percentage = 10.0
+                        st.session_state[weight_key] = int(weight_percentage)
+                    
+                    with col_mw1:
+                        st.number_input(f"Lookback {j+1}", min_value=1, value=st.session_state[lookback_key], key=lookback_key, label_visibility="collapsed")
+                        momentum_windows[j]['lookback'] = st.session_state[lookback_key]
+                    with col_mw2:
+                        st.number_input(f"Exclude {j+1}", min_value=0, value=st.session_state[exclude_key], key=exclude_key, label_visibility="collapsed")
+                        momentum_windows[j]['exclude'] = st.session_state[exclude_key]
+                    with col_mw3:
+                        st.number_input(f"Weight {j+1}", min_value=0, max_value=100, step=1, format="%d", value=st.session_state[weight_key], key=weight_key, label_visibility="collapsed")
+                        momentum_windows[j]['weight'] = st.session_state[weight_key] / 100.0
+            
+            # Custom text input for this momentum configuration
+            momentum_custom_text = st.text_input(
+                f"Custom Text for Momentum Config {config_idx + 1} (optional)", 
+                key=f"momentum_custom_text_{portfolio_index}_{config_idx}",
+                placeholder="e.g., MyMomentum, Strategy1, etc.",
+                help="This text will be added to the end of portfolio names for this momentum configuration"
+            )
+            
+            st.markdown("---")
+
+        # Collect custom texts for momentum configurations
+        momentum_custom_texts = []
+        for config_idx in range(len(momentum_configs)):
+            custom_text = st.session_state.get(f"momentum_custom_text_{portfolio_index}_{config_idx}", "")
+            momentum_custom_texts.append(custom_text)
+        
+        # Add to variant params
+        variant_params["momentum_windows"] = momentum_configs
+        variant_params["momentum_custom_texts"] = momentum_custom_texts
+        
+        # Beta Window Section - Multiple configurations
+        st.markdown("---")
+        st.subheader("Beta Window")
+        
+        # Add button to create new beta window configuration
+        if st.button("➕ Add Beta Configuration", key=f"add_beta_config_{portfolio_index}"):
+            if f"beta_window_configs_{portfolio_index}" not in st.session_state:
+                st.session_state[f"beta_window_configs_{portfolio_index}"] = []
+            st.session_state[f"beta_window_configs_{portfolio_index}"].append({
+                "lookback": 365,
+                "exclude": 30
+            })
+            st.rerun()
+        
+        # Initialize beta window configs if not exists
+        if f"beta_window_configs_{portfolio_index}" not in st.session_state:
+            st.session_state[f"beta_window_configs_{portfolio_index}"] = [
+                {"lookback": 365, "exclude": 30}
+            ]
+        
+        # Display each beta window configuration
+        beta_configs = st.session_state[f"beta_window_configs_{portfolio_index}"]
+        for config_idx, beta_config in enumerate(beta_configs):
+            st.markdown(f"**Beta Configuration {config_idx + 1}:**")
+            
+            # Individual buttons for this configuration
+            col_reset, col_norm, col_addrem = st.columns([0.4, 0.4, 0.2])
+            with col_reset:
+                if st.button(f"Reset Beta Config {config_idx + 1}", key=f"reset_beta_config_{portfolio_index}_{config_idx}"):
+                    beta_config["lookback"] = 365
+                    beta_config["exclude"] = 30
+                    # Update session state for the number inputs
+                    st.session_state[f"beta_lookback_{portfolio_index}_{config_idx}"] = 365
+                    st.session_state[f"beta_exclude_{portfolio_index}_{config_idx}"] = 30
+                    st.rerun()
+            with col_norm:
+                pass
+            with col_addrem:
+                if len(beta_configs) > 1 and st.button(f"🗑️ Delete Beta Config {config_idx + 1}", key=f"delete_beta_config_{portfolio_index}_{config_idx}"):
+                    beta_configs.pop(config_idx)
+                    st.rerun()
+            
+            # Display beta window inputs
+            col_headers = st.columns(2)
+            with col_headers[0]:
+                st.markdown("**Lookback (days)**")
+            with col_headers[1]:
+                st.markdown("**Exclude (days)**")
+            
+            col_beta1, col_beta2 = st.columns(2)
+            with col_beta1:
+                beta_lookback = st.number_input(f"Beta Lookback {config_idx + 1}", min_value=1, value=beta_config["lookback"], key=f"beta_lookback_{portfolio_index}_{config_idx}", label_visibility="collapsed")
+                beta_config["lookback"] = beta_lookback
+            with col_beta2:
+                beta_exclude = st.number_input(f"Beta Exclude {config_idx + 1}", min_value=0, value=beta_config["exclude"], key=f"beta_exclude_{portfolio_index}_{config_idx}", label_visibility="collapsed")
+                beta_config["exclude"] = beta_exclude
+            
+            # Custom text input for this beta configuration
+            beta_custom_text = st.text_input(
+                f"Custom Text for Beta Config {config_idx + 1} (optional)", 
+                key=f"beta_custom_text_{portfolio_index}_{config_idx}",
+                placeholder="e.g., MyBeta, Risk1, etc.",
+                help="This text will be added to the end of portfolio names for this beta configuration"
+            )
+            
+            st.markdown("---")
+        
+        # Collect custom texts for beta configurations
+        beta_custom_texts = []
+        for config_idx in range(len(beta_configs)):
+            custom_text = st.session_state.get(f"beta_custom_text_{portfolio_index}_{config_idx}", "")
+            beta_custom_texts.append(custom_text)
+        
+        # Add to variant params ONLY if there are beta configurations
+        # Store as tuples (lookback, exclude) to keep them paired together
+        if beta_configs:
+            variant_params["beta_configs"] = [(config["lookback"], config["exclude"]) for config in beta_configs]
+            variant_params["beta_custom_texts"] = beta_custom_texts
+        
+        # Volatility Window Section - Multiple configurations
+        st.markdown("---")
+        st.subheader("Volatility Window")
+        
+        # Add button to create new volatility window configuration
+        if st.button("➕ Add Volatility Configuration", key=f"add_volatility_config_{portfolio_index}"):
+            if f"volatility_window_configs_{portfolio_index}" not in st.session_state:
+                st.session_state[f"volatility_window_configs_{portfolio_index}"] = []
+            st.session_state[f"volatility_window_configs_{portfolio_index}"].append({
+                "lookback": 365,
+                "exclude": 30
+            })
+            st.rerun()
+        
+        # Initialize volatility window configs if not exists
+        if f"volatility_window_configs_{portfolio_index}" not in st.session_state:
+            st.session_state[f"volatility_window_configs_{portfolio_index}"] = [
+                {"lookback": 365, "exclude": 30}
+            ]
+        
+        # Display each volatility window configuration
+        volatility_configs = st.session_state[f"volatility_window_configs_{portfolio_index}"]
+        for config_idx, volatility_config in enumerate(volatility_configs):
+            st.markdown(f"**Volatility Configuration {config_idx + 1}:**")
+            
+            # Individual buttons for this configuration
+            col_reset, col_norm, col_addrem = st.columns([0.4, 0.4, 0.2])
+            with col_reset:
+                if st.button(f"Reset Volatility Config {config_idx + 1}", key=f"reset_volatility_config_{portfolio_index}_{config_idx}"):
+                    volatility_config["lookback"] = 365
+                    volatility_config["exclude"] = 30
+                    # Update session state for the number inputs
+                    st.session_state[f"vol_lookback_{portfolio_index}_{config_idx}"] = 365
+                    st.session_state[f"vol_exclude_{portfolio_index}_{config_idx}"] = 30
+                    st.rerun()
+            with col_norm:
+                pass
+            with col_addrem:
+                if len(volatility_configs) > 1 and st.button(f"🗑️ Delete Volatility Config {config_idx + 1}", key=f"delete_volatility_config_{portfolio_index}_{config_idx}"):
+                    volatility_configs.pop(config_idx)
+                    st.rerun()
+            
+            # Display volatility window inputs
+            col_headers = st.columns(2)
+            with col_headers[0]:
+                st.markdown("**Lookback (days)**")
+            with col_headers[1]:
+                st.markdown("**Exclude (days)**")
+            
+            col_vol1, col_vol2 = st.columns(2)
+            with col_vol1:
+                vol_lookback = st.number_input(f"Volatility Lookback {config_idx + 1}", min_value=1, value=volatility_config["lookback"], key=f"vol_lookback_{portfolio_index}_{config_idx}", label_visibility="collapsed")
+                volatility_config["lookback"] = vol_lookback
+            with col_vol2:
+                vol_exclude = st.number_input(f"Volatility Exclude {config_idx + 1}", min_value=0, value=volatility_config["exclude"], key=f"vol_exclude_{portfolio_index}_{config_idx}", label_visibility="collapsed")
+                volatility_config["exclude"] = vol_exclude
+            
+            # Custom text input for this volatility configuration
+            volatility_custom_text = st.text_input(
+                f"Custom Text for Volatility Config {config_idx + 1} (optional)", 
+                key=f"volatility_custom_text_{portfolio_index}_{config_idx}",
+                placeholder="e.g., MyVol, Vol1, etc.",
+                help="This text will be added to the end of portfolio names for this volatility configuration"
+            )
+            
+            st.markdown("---")
+        
+        # Collect custom texts for volatility configurations
+        volatility_custom_texts = []
+        for config_idx in range(len(volatility_configs)):
+            custom_text = st.session_state.get(f"volatility_custom_text_{portfolio_index}_{config_idx}", "")
+            volatility_custom_texts.append(custom_text)
+        
+        # Add to variant params ONLY if there are volatility configurations
+        # Store as tuples (lookback, exclude) to keep them paired together
+        if volatility_configs:
+            variant_params["volatility_configs"] = [(config["lookback"], config["exclude"]) for config in volatility_configs]
+            variant_params["volatility_custom_texts"] = volatility_custom_texts
+        
     
-    # Calculate total combinations
+    # Calculate total variants by multiplying all parameter options
+    # This works for ALL parameters, not just momentum/beta/volatility
     total_variants = 1
-    for param_values in variant_params.values():
-        total_variants *= len(param_values)
+    for param, values in variant_params.items():
+        if isinstance(values, list):
+            # Skip custom text parameters (they don't create variants)
+            if param not in ['momentum_custom_texts', 'beta_custom_texts', 'volatility_custom_texts']:
+                # For momentum_windows, count the number of configurations
+                if param == 'momentum_windows':
+                    total_variants *= len(values)
+                # For other parameters, count the number of options
+                else:
+                    total_variants *= len(values)
     
     if variant_params:
         st.info(f"🎯 **{total_variants} variants** will be generated")
@@ -8690,44 +9009,77 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                 # Define the function locally to avoid import issues
                 def generate_portfolio_variants(base_portfolio, variant_params, base_name):
                     """
-                    Generate multiple portfolio variants based on the base portfolio and variant parameters.
-                    
-                    Args:
-                        base_portfolio (dict): The base portfolio configuration
-                        variant_params (dict): Dictionary containing variant parameters and their possible values
-                        base_name (str): The base name to use for variant naming
-                        
-                    Returns:
-                        list: List of portfolio variant configurations
+                    Generate multiple portfolio variants based on ALL parameter combinations.
+                    Uses itertools.product to create all combinations of all parameters.
                     """
+                    from itertools import product
+                    import copy
+                    
                     variants = []
                     
-                    # Get all possible values for each parameter
-                    param_values = {}
-                    for param, values in variant_params.items():
-                        if isinstance(values, list):
-                            param_values[param] = values
-                        else:
-                            param_values[param] = [values]
+                    # Separate custom texts from actual parameters
+                    momentum_texts = variant_params.get('momentum_custom_texts', [])
+                    beta_texts = variant_params.get('beta_custom_texts', [])
+                    volatility_texts = variant_params.get('volatility_custom_texts', [])
                     
-                    # Generate all combinations
-                    from itertools import product
+                    # Get all possible values for each parameter (excluding custom texts)
+                    # For parameters that need index tracking (momentum_windows, beta_window_days, vol_window_days),
+                    # store tuples of (index, value) instead of just values
+                    param_values = {}
+                    param_needs_index = {}  # Track which params need index info
+                    
+                    for param, values in variant_params.items():
+                        # Skip custom text parameters
+                        if param not in ['momentum_custom_texts', 'beta_custom_texts', 'volatility_custom_texts']:
+                            if isinstance(values, list):
+                                # For these params, we need to track the index for custom texts
+                                if param in ['momentum_windows', 'beta_configs', 'volatility_configs']:
+                                    # Store as (index, value) tuples
+                                    param_values[param] = [(idx, val) for idx, val in enumerate(values)]
+                                    param_needs_index[param] = True
+                                else:
+                                    param_values[param] = values
+                                    param_needs_index[param] = False
+                            else:
+                                param_values[param] = [values]
+                                param_needs_index[param] = False
                     
                     # Get the parameter names and their possible values
                     param_names = list(param_values.keys())
                     param_value_lists = [param_values[param] for param in param_names]
                     
-                    # Generate all combinations
+                    # Generate all combinations using itertools.product
                     combinations = list(product(*param_value_lists))
                     
                     # Create a variant for each combination
                     for i, combination in enumerate(combinations):
                         # Create a deep copy of the base portfolio
-                        variant = base_portfolio.copy()
+                        variant = copy.deepcopy(base_portfolio)
+                        
+                        # Track indices for custom texts by looking at which value was selected
+                        # from each parameter's list of possible values
+                        mom_idx = None
+                        beta_idx = None
+                        vol_idx = None
                         
                         # Update the variant with the new parameter values
                         for j, param in enumerate(param_names):
-                            value = combination[j]
+                            raw_value = combination[j]
+                            
+                            # Extract actual value and index if this param uses tuples
+                            if param_needs_index.get(param, False):
+                                # This is a (index, value) tuple
+                                idx_val, value = raw_value
+                                # Store the index for custom text mapping
+                                if param == "momentum_windows":
+                                    mom_idx = idx_val
+                                elif param == "beta_configs":
+                                    beta_idx = idx_val
+                                elif param == "volatility_configs":
+                                    vol_idx = idx_val
+                            else:
+                                # Regular value
+                                value = raw_value
                             
                             # Map UI parameter names to actual portfolio configuration fields
                             if param == "rebalance_frequency":
@@ -8740,48 +9092,53 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                                 variant["calc_beta"] = value
                             elif param == "include_volatility":
                                 variant["calc_volatility"] = value
+                            elif param == "momentum_windows":
+                                if isinstance(value, list):
+                                    variant["momentum_windows"] = copy.deepcopy(value)
+                            elif param == "beta_configs":
+                                # value is a tuple (lookback, exclude)
+                                if isinstance(value, tuple) and len(value) == 2:
+                                    variant["beta_window_days"] = value[0]
+                                    variant["exclude_days_beta"] = value[1]
+                            elif param == "volatility_configs":
+                                # value is a tuple (lookback, exclude)
+                                if isinstance(value, tuple) and len(value) == 2:
+                                    variant["vol_window_days"] = value[0]
+                                    variant["exclude_days_vol"] = value[1]
                             elif param == "minimal_threshold":
                                 if value is not None:
                                     variant["use_minimal_threshold"] = True
                                     variant["minimal_threshold_percent"] = value
                                 else:
                                     variant["use_minimal_threshold"] = False
-                                    variant["minimal_threshold_percent"] = 2.0  # Default value
+                                    variant["minimal_threshold_percent"] = 2.0
                             elif param == "max_allocation":
                                 if value is not None:
                                     variant["use_max_allocation"] = True
                                     variant["max_allocation_percent"] = value
                                 else:
                                     variant["use_max_allocation"] = False
-                                    variant["max_allocation_percent"] = 10.0  # Default value
+                                    variant["max_allocation_percent"] = 10.0
                             else:
                                 # For any other parameters, use the original name
                                 variant[param] = value
                         
-                        # Generate a unique name for the variant
-                        variant_name_parts = []
-                        for param in param_names:
-                            if param in variant:
-                                value = variant[param]
-                                if isinstance(value, bool):
-                                    variant_name_parts.append(f"{param}_{'ON' if value else 'OFF'}")
-                                elif isinstance(value, (int, float)):
-                                    variant_name_parts.append(f"{param}_{value}")
-                                else:
-                                    variant_name_parts.append(f"{param}_{str(value)}")
+                        # Generate name with custom texts BEFORE parentheses
+                        # Collect custom texts in order: Momentum, Beta, Volatility
+                        custom_texts = []
+                        if mom_idx is not None and mom_idx < len(momentum_texts) and momentum_texts[mom_idx].strip():
+                            custom_texts.append(f"[{momentum_texts[mom_idx]}]")
+                        if beta_idx is not None and beta_idx < len(beta_texts) and beta_texts[beta_idx].strip():
+                            custom_texts.append(f"[{beta_texts[beta_idx]}]")
+                        if vol_idx is not None and vol_idx < len(volatility_texts) and volatility_texts[vol_idx].strip():
+                            custom_texts.append(f"[{volatility_texts[vol_idx]}]")
                         
-                        # Create variant name
-                        if variant_name_parts:
-                            variant['name'] = f"{base_portfolio.get('name', 'Portfolio')}_Variant_{i+1}_{'_'.join(variant_name_parts)}"
+                        # Build the name: BASE_NAME [tags]
+                        if custom_texts:
+                            custom_text_part = "".join(custom_texts)
+                            variant['name'] = f"{base_name} {custom_text_part}"
                         else:
-                            variant['name'] = f"{base_portfolio.get('name', 'Portfolio')}_Variant_{i+1}"
-                        
-                        # Ensure unique name by adding suffix if needed
-                        base_name = variant['name']
-                        counter = 1
-                        while any(v.get('name') == variant['name'] for v in variants):
-                            variant['name'] = f"{base_name}_{counter}"
-                            counter += 1
+                            variant['name'] = base_name
                         
                         variants.append(variant)
                     
@@ -8818,6 +9175,13 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                 
                 # CUSTOM NAMING: Override the generated names with clearer, more readable names
                 for variant in variants:
+                    # Extract custom tags from the current name (format: "BASE_NAME [tag1][tag2]...")
+                    current_name = variant['name']
+                    custom_tags = ""
+                    if current_name != base_name:
+                        # Extract everything after base_name (the custom tags part)
+                        custom_tags = current_name[len(base_name):].strip()
+                    
                     # Create a much clearer name format
                     clear_name_parts = []
                     
@@ -8866,8 +9230,12 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                         max_allocation_percent = variant.get('max_allocation_percent', 10.0)
                         clear_name_parts.append(f"- Max {max_allocation_percent:.2f}%")
                     
-                    # Create the new clear name
-                    clear_name = f"{base_name} ({' '.join(clear_name_parts)})"
+                    # Create the new clear name WITH custom tags before parentheses
+                    # Format: BASE_NAME [tags] (details...)
+                    if custom_tags:
+                        clear_name = f"{base_name} {custom_tags} ({' '.join(clear_name_parts)})"
+                    else:
+                        clear_name = f"{base_name} ({' '.join(clear_name_parts)})"
                     variant['name'] = clear_name
                 
                 # Store the original user choice before any modifications
@@ -9121,11 +9489,21 @@ def update_stock_ticker(index):
         elif upper_val == 'BRK.A':
             upper_val = 'BRK-A'
 
-        # Update the portfolio configuration with the converted value
-        st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['ticker'] = upper_val
+        # CRITICAL: Resolve ticker alias BEFORE storing in portfolio config
+        resolved_ticker = resolve_ticker_alias(upper_val)
         
-        # Update the text box's state to show the converted value (with dots and uppercase)
-        st.session_state[key] = upper_val
+        # Update the portfolio configuration with the resolved ticker (with leverage/expense)
+        st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['ticker'] = resolved_ticker
+        
+        # Update the text box's state to show the resolved ticker (with leverage/expense visible)
+        st.session_state[key] = resolved_ticker
+        
+        # Auto-disable dividends for negative leverage (inverse ETFs)
+        if '?L=-' in resolved_ticker:
+            st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['include_dividends'] = False
+            # Also update the checkbox UI state
+            div_key = f"multi_backtest_div_{st.session_state.multi_backtest_active_portfolio_index}_{index}"
+            st.session_state[div_key] = False
         # Force UI refresh to show the converted value
         st.session_state.multi_backtest_rerun_flag = True
     except Exception:
@@ -9489,7 +9867,20 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
             'Complete Gold Dataset (1975+)': 'GOLD_COMPLETE',
             'Complete KMLM Dataset (1992+)': 'KMLM_COMPLETE',
             'Complete DBMF Dataset (2000+)': 'DBMF_COMPLETE',
-            'Complete Bitcoin Dataset (2010+)': 'BTC_COMPLETE'
+            'Complete Bitcoin Dataset (2010+)': 'BTC_COMPLETE',
+            
+            # Leveraged & Inverse ETFs (Synthetic)
+            'Simulated TQQQ (3x QQQ)': '^IXIC?L=3?E=0.95',
+            'Simulated SPXL (3x SPY)': '^SP500TR?L=3?E=1.00',
+            'Simulated UPRO (3x SPY)': '^SP500TR?L=3?E=0.91',
+            'Simulated QLD (2x QQQ)': '^IXIC?L=2?E=0.95',
+            'Simulated SSO (2x SPY)': '^SP500TR?L=2?E=0.91',
+            'Simulated SH (-1x SPY)': '^GSPC?L=-1?E=0.89',
+            'Simulated PSQ (-1x QQQ)': '^IXIC?L=-1?E=0.95',
+            'Simulated SDS (-2x SPY)': '^GSPC?L=-2?E=0.91',
+            'Simulated QID (-2x QQQ)': '^IXIC?L=-2?E=0.95',
+            'Simulated SPXU (-3x SPY)': '^GSPC?L=-3?E=1.00',
+            'Simulated SQQQ (-3x QQQ)': '^IXIC?L=-3?E=0.95'
         }
         
         for name, ticker in synthetic_tickers.items():
@@ -9500,12 +9891,14 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
             
             if st.button(f"➕ {name}", key=f"add_synthetic_{ticker}", help=help_text):
                 portfolio_index = st.session_state.multi_backtest_active_portfolio_index
+                # Auto-disable dividends for negative leverage (inverse ETFs)
+                include_divs = False if '?L=-' in ticker else True
                 st.session_state.multi_backtest_portfolio_configs[portfolio_index]['stocks'].append({
                     'ticker': ticker, 
                     'allocation': 0.0, 
-                    'include_dividends': True
+                    'include_dividends': include_divs
                 })
-                st.session_state.multi_backtest_rerun_flag = True
+                st.rerun()
     
     st.markdown("---")
     
@@ -10659,7 +11052,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 successful_portfolios = 0
                 failed_portfolios = []
                 
-                st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability (CACHED)...**")
+                st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability & caching...**")
                 
                 # Start timing for performance measurement
                 import time as time_module
@@ -12159,7 +12552,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     y=series_to_plot.values, 
                     mode='lines', 
                     name=name,
-                    hovertemplate=f"<b>{name}</b><br>Portfolio Value: $%{{y:,.2f}}<br>Date: %{{x|%Y-%m-%d}}<extra></extra>",
+                    hovertemplate=f"<b>{name}</b><br>Portfolio Value: $%{{y:,.2f}}<br>Date: %{{x|%Y-%m-%d}}<extra></extra>" if show_closest_only else f"<b>{name}</b><br>Portfolio Value: $%{{y:,.2f}}<br>Date: %{{x|%Y-%m-%d}}<extra></extra>",
                     hoverinfo='text'
                 ))
             except Exception as e:
@@ -12190,14 +12583,17 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 automargin=True,  # Ensure labels fit
                 range=None  # Let Plotly auto-range to ensure perfect alignment
             ),
+            # Improve legend layout to prevent name truncation
             legend=dict(
-                orientation="h",  # Horizontal legend
+                orientation="h",
                 yanchor="top",
-                y=1.15,
+                y=1.05,
                 xanchor="center",
-                x=0.5
+                x=0.5,
+                font=dict(size=10),
+                itemwidth=30
             ),
-            margin=dict(l=80, r=80, t=120, b=80),  # EXACT same margins as Strategy Comparison Chart 1
+            margin=dict(t=120, l=80, r=80, b=80),  # Standardized margins for alignment
             height=600,  # Taller height to prevent crushing
             yaxis=dict(
                 title="Portfolio Value ($)", 
@@ -12251,7 +12647,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     y=drawdowns, 
                     mode='lines', 
                     name=name,
-                    hovertemplate=f"<b>{name}</b><br>Drawdown: %{{y:.2f}}%<br>Date: %{{x|%Y-%m-%d}}<extra></extra>",
+                    hovertemplate=f"<b>{name}</b><br>Drawdown: %{{y:.2f}}%<br>Date: %{{x|%Y-%m-%d}}<extra></extra>" if show_closest_only else f"<b>{name}</b><br>Drawdown: %{{y:.2f}}%<br>Date: %{{x|%Y-%m-%d}}<extra></extra>",
                     hoverinfo='text'
                 ))
             except Exception as e:
@@ -12273,14 +12669,17 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 automargin=True,  # Ensure labels fit
                 range=None  # Let Plotly auto-range to ensure perfect alignment
             ),
+            # Improve legend layout to prevent name truncation
             legend=dict(
-                orientation="h",  # Horizontal legend
+                orientation="h",
                 yanchor="bottom",
                 y=1.02,
                 xanchor="center",
-                x=0.5
+                x=0.5,
+                font=dict(size=10),
+                itemwidth=30
             ),
-            margin=dict(l=80, r=80, t=80, b=120),  # More space at bottom for legend
+            margin=dict(t=80, l=80, r=80, b=120),  # More space at bottom for legend
             height=600,  # Taller height to prevent crushing
             yaxis=dict(
                 title="Drawdown (%)", 
@@ -12289,6 +12688,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 position=0.0  # Force left alignment for perfect positioning
             )
         )
+        
+        
         st.plotly_chart(fig2, use_container_width=True, key="multi_drawdown_chart")
         # Store in session state for PDF export
         st.session_state.fig2 = fig2
@@ -12375,7 +12776,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 xanchor="center",
                 x=0.5
             ),
-            margin=dict(l=80, r=80, t=120, b=80),  # EXACT same margins as the other plots
+            margin=dict(t=120, l=80, r=80, b=80),  # Standardized margins for alignment
             height=600,  # Same height as the other plots
             yaxis=dict(
                 title="VIX Level", 
@@ -12451,7 +12852,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 xanchor="center",
                 x=0.5
             ),
-            margin=dict(l=80, r=80, t=120, b=80),  # EXACT same margins as the other plots
+            margin=dict(t=120, l=80, r=80, b=80),  # Standardized margins for alignment
             height=600,  # Same height as the other plots
             yaxis=dict(
                 title="Daily Risk-Free Rate (basis points)", 
@@ -12527,7 +12928,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 xanchor="center",
                 x=0.5
             ),
-            margin=dict(l=80, r=80, t=120, b=80),  # EXACT same margins as the other plots
+            margin=dict(t=120, l=80, r=80, b=80),  # Standardized margins for alignment
             height=600,  # Same height as the other plots
             yaxis=dict(
                 title="Annualized Risk-Free Rate (%)", 
@@ -12848,15 +13249,17 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 
                 # Apply specific scaling for Total Return before clamping
                 if stat_type == "Total Return":
-                    v = v * 100
+                    # Total Return is now always in percentage format for both positive and negative CAGR
+                    # No conversion needed - already in percentage format
+                    pass
                 
                 # Clamping logic - separate Total Return from other percentage stats
                 if stat_type in ["CAGR", "Volatility", "MWRR"]:
-                    if isinstance(v, (int, float)) and (v < 0 or v > 100):
+                    if isinstance(v, (int, float)) and v > 100:
                         return "N/A"
                 elif stat_type == "Total Return":
-                    if isinstance(v, (int, float)) and v < 0:  # Only check for negative values
-                        return "N/A"
+                    # Allow negative total returns - no clamping needed
+                    pass
                 elif stat_type == "MaxDrawdown":
                     if isinstance(v, (int, float)) and (v < -100 or v > 0):
                         return "N/A"
@@ -12893,7 +13296,14 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     initial_val = stats_values[0]
                     final_val = stats_values[-1]
                     if initial_val > 0:
-                        total_return = (final_val / initial_val - 1)  # Return as decimal, not percentage
+                        # Calculate CAGR first to determine which formula to use
+                        cagr_temp = calculate_cagr(stats_values, stats_dates)
+                        if cagr_temp < 0:
+                            # If CAGR is negative: use DIFFERENT formula
+                            total_return = (final_val / initial_val - 1) * 100  # Return as percentage
+                        else:
+                            # If CAGR is positive: use NORMAL calculation with * 100
+                            total_return = (final_val / initial_val - 1) * 100  # Return as percentage
                 
                 cagr = calculate_cagr(stats_values, stats_dates)
                 max_dd, drawdowns = calculate_max_drawdown(stats_values)
@@ -12966,7 +13376,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 if isinstance(series_obj, dict) and 'with_additions' in series_obj and len(series_obj['with_additions']) > 0:
                     final_value_with_additions = series_obj['with_additions'].iloc[-1]
                     if isinstance(total_money_added, (int, float)) and total_money_added > 0:
-                        total_return_contributed = (final_value_with_additions / total_money_added - 1)  # Return as decimal
+                        total_return_contributed = (final_value_with_additions / total_money_added - 1) * 100  # Return as percentage
 
                 recomputed_stats[name] = {
                     "Total Return": clamp_stat(total_return, "Total Return"),
@@ -13837,10 +14247,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 'Momentum Windows': str(cfg.get('momentum_windows', [])),
                 'Beta Enabled': 'Yes' if cfg.get('calc_beta', False) else 'No',
                 'Volatility Enabled': 'Yes' if cfg.get('calc_volatility', False) else 'No',
-                'Beta Window': f"{cfg.get('beta_window_days', 0)} days" if cfg.get('calc_beta', False) else 'N/A',
-                'Volatility Window': f"{cfg.get('vol_window_days', 0)} days" if cfg.get('calc_volatility', False) else 'N/A',
-                'Beta Exclude Days': f"{cfg.get('exclude_days_beta', 0)} days" if cfg.get('calc_beta', False) else 'N/A',
-                'Volatility Exclude Days': f"{cfg.get('exclude_days_vol', 0)} days" if cfg.get('calc_volatility', False) else 'N/A',
+                'Beta Window': f"{cfg.get('beta_window_days', 0)}-{cfg.get('exclude_days_beta', 0)}" if cfg.get('calc_beta', False) else 'N/A',
+                'Volatility Window': f"{cfg.get('vol_window_days', 0)}-{cfg.get('exclude_days_vol', 0)}" if cfg.get('calc_volatility', False) else 'N/A',
                 'Minimal Threshold': f"{cfg.get('minimal_threshold_percent', 2.0):.1f}%" if cfg.get('use_minimal_threshold', False) else 'Disabled',
                 'Maximum Allocation': f"{cfg.get('max_allocation_percent', 10.0):.1f}%" if cfg.get('use_max_allocation', False) else 'Disabled'
             }
@@ -16770,7 +17178,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     mode='lines',
                                     name=ticker,
                                     line=dict(color=colors[i % len(colors)], width=2),
-                                    hovertemplate=f"<b>{ticker}</b><br>Allocation: %{{y:.1f}}%<br>Date: %{{x|%Y-%m-%d}}<extra></extra>",
+                                    hovertemplate=f"<b>{ticker}</b><br>Allocation: %{{y:.1f}}%<br>Date: %{{x|%Y-%m-%d}}<extra></extra>" if show_closest_only_allocation else f"<b>{ticker}</b><br>Allocation: %{{y:.1f}}%<br>Date: %{{x|%Y-%m-%d}}<extra></extra>",
                                     hoverinfo='text'
                                 ))
                     
@@ -16789,13 +17197,17 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         hovermode=hover_mode_alloc,
                         hoverdistance=20,
                         spikedistance=100,
+                        # Improve legend layout to prevent name truncation
                         legend=dict(
                             orientation="v",
                             yanchor="top",
                             y=1,
                             xanchor="left",
-                            x=1.01
-                        )
+                            x=1.02,
+                            font=dict(size=10),
+                            itemwidth=30
+                        ),
+                        margin=dict(t=120, l=80, r=80, b=80)  # Standardized margins for alignment
                     )
                     
                     # Add range selector
