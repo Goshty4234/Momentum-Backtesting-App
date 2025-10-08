@@ -980,6 +980,100 @@ def get_ticker_data_cached(base_ticker, leverage, expense_ratio, period="max", a
     return hist
 
 @st.cache_data(ttl=7200, show_spinner=False)
+def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
+    """
+    Smart batch download with fallback to individual downloads.
+    
+    Strategy:
+    1. Try batch download (fast - 1 API call for all tickers)
+    2. If batch fails → fallback to individual downloads (reliable)
+    3. Invalid tickers are skipped, others continue
+    """
+    if not ticker_list:
+        return {}
+    
+    results = {}
+    yahoo_tickers = []
+    
+    for ticker_symbol in ticker_list:
+        # Parse ticker parameters
+        base_ticker = ticker_symbol
+        leverage = 1.0
+        expense_ratio = 0.0
+        
+        if '?L=' in ticker_symbol or '?E=' in ticker_symbol:
+            parts = ticker_symbol.split('?')
+            base_ticker = parts[0]
+            for part in parts[1:]:
+                if part.startswith('L='):
+                    try:
+                        leverage = float(part[2:])
+                    except:
+                        pass
+                elif part.startswith('E='):
+                    try:
+                        expense_ratio = float(part[2:])
+                    except:
+                        pass
+        
+        resolved = resolve_ticker_alias(base_ticker)
+        yahoo_tickers.append((ticker_symbol, resolved, leverage, expense_ratio))
+    
+    # Extract unique resolved tickers
+    resolved_list = list(set([resolved for _, resolved, _, _ in yahoo_tickers]))
+    
+    try:
+        # BATCH DOWNLOAD
+        if len(resolved_list) > 1:
+            batch_data = yf.download(
+                resolved_list,
+                period=period,
+                auto_adjust=auto_adjust,
+                progress=False,
+                show_errors=False,
+                group_by='ticker'
+            )
+            
+            if not batch_data.empty:
+                for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
+                    try:
+                        if len(resolved_list) > 1:
+                            ticker_data = batch_data[resolved][['Close', 'Dividends']] if resolved in batch_data else pd.DataFrame()
+                        else:
+                            ticker_data = batch_data[['Close', 'Dividends']]
+                        
+                        if not ticker_data.empty:
+                            if leverage != 1.0 or expense_ratio != 0.0:
+                                ticker_data = apply_daily_leverage(ticker_data, leverage, expense_ratio)
+                            results[ticker_symbol] = ticker_data
+                        else:
+                            results[ticker_symbol] = pd.DataFrame()
+                    except:
+                        pass
+            else:
+                raise Exception("Batch download returned empty")
+    except Exception:
+        pass
+    
+    # FALLBACK - Individual downloads
+    for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
+        if ticker_symbol not in results or results[ticker_symbol].empty:
+            try:
+                ticker = yf.Ticker(resolved)
+                hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
+                
+                if not hist.empty:
+                    if leverage != 1.0 or expense_ratio != 0.0:
+                        hist = apply_daily_leverage(hist, leverage, expense_ratio)
+                    results[ticker_symbol] = hist
+                else:
+                    results[ticker_symbol] = pd.DataFrame()
+            except:
+                results[ticker_symbol] = pd.DataFrame()
+    
+    return results
+
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
     """Cache ticker data to improve performance across multiple tabs
     
@@ -8731,28 +8825,35 @@ if st.session_state.get('strategy_comparison_run_backtest', False):
         for base_ticker in base_tickers_to_add:
             if base_ticker not in all_tickers:
                 all_tickers.append(base_ticker)
-        # Downloading data for all tickers
+        # OPTIMIZED: Batch download with smart fallback
         data = {}
         invalid_tickers = []
+        
+        progress_text = f"Downloading data for {len(all_tickers)} tickers (batch mode)..."
+        progress_bar.progress(0.1, text=progress_text)
+        
+        # Use batch download for all tickers (much faster!)
+        batch_results = get_multiple_tickers_batch(list(all_tickers), period="max", auto_adjust=False)
+        
+        # Process batch results
         for i, t in enumerate(all_tickers):
+            progress_text = f"Processing {t} ({i+1}/{len(all_tickers)})..."
+            progress_bar.progress((i + 1) / (len(all_tickers) + 1), text=progress_text)
+            
+            hist = batch_results.get(t, pd.DataFrame())
+            
+            if hist.empty:
+                invalid_tickers.append(t)
+                continue
+            
             try:
-                progress_text = f"Downloading data for {t} ({i+1}/{len(all_tickers)})..."
-                progress_bar.progress((i + 1) / (len(all_tickers) + 1), text=progress_text)
-                hist = get_ticker_data(t, period="max", auto_adjust=False)
-                if hist.empty:
-                    # No data available for ticker
-                    invalid_tickers.append(t)
-                    continue
-                
                 # Force tz-naive for hist (like Backtest_Engine.py)
                 hist = hist.copy()
                 hist.index = hist.index.tz_localize(None)
                 
                 hist["Price_change"] = hist["Close"].pct_change(fill_method=None).fillna(0)
                 data[t] = hist
-                # Data loaded successfully
             except Exception as e:
-                # Error loading ticker data
                 invalid_tickers.append(t)
         # Display invalid ticker warnings in Streamlit UI
         if invalid_tickers:
