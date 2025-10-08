@@ -1,3 +1,4 @@
+# CACHED VERSION - Optimized with @st.cache_data decorators for better performance
 import streamlit as st
 from datetime import datetime, timedelta, time, date
 import numpy as np
@@ -637,7 +638,7 @@ def apply_daily_leverage(price_data: pd.DataFrame, leverage: float) -> pd.DataFr
     
     return leveraged_data
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(show_spinner=False)
 def get_gold_complete_data(period="max"):
     """Get complete gold data from our custom gold ticker"""
     try:
@@ -934,7 +935,7 @@ def resolve_ticker_alias(ticker):
     return aliases.get(upper_ticker, upper_ticker)
 
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data_cached(base_ticker, leverage, expense_ratio, period="max", auto_adjust=False):
     """Cache ticker data with proper cache keys including all parameters"""
     # Resolve ticker alias if it exists
@@ -978,7 +979,7 @@ def get_ticker_data_cached(base_ticker, leverage, expense_ratio, period="max", a
         
     return hist
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
     """Cache ticker data to improve performance across multiple tabs
     
