@@ -425,9 +425,9 @@ def parse_leverage_ticker(ticker_symbol: str) -> tuple[str, float]:
     base_ticker, leverage, _ = parse_ticker_parameters(ticker_symbol)
     return base_ticker, leverage
 
-def apply_daily_leverage(price_data: pd.DataFrame, leverage: float) -> pd.DataFrame:
+def apply_daily_leverage(price_data: pd.DataFrame, leverage: float, expense_ratio: float = 0.0) -> pd.DataFrame:
     """
-    Apply daily leverage multiplier to price data, simulating leveraged ETF behavior.
+    Apply daily leverage multiplier and expense ratio to price data, simulating leveraged ETF behavior.
     
     Leveraged ETFs reset daily, so we apply the leverage to daily returns and then
     compound the results to get the leveraged price series. Includes daily cost drag
@@ -652,7 +652,6 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
                 period=period,
                 auto_adjust=auto_adjust,
                 progress=False,
-                show_errors=False,
                 group_by='ticker'
             )
             print(f"[BATCH DEBUG] Batch download result columns: {batch_data.columns.tolist() if not batch_data.empty else 'EMPTY'}")
@@ -1193,8 +1192,8 @@ if 'alloc_portfolio_configs' not in st.session_state:
               'rebalancing_frequency': 'Monthly',
               'start_date_user': None,
               'end_date_user': None,
-              'start_with': 'all',
-              'use_momentum': True,
+              'start_with': 'oldest',
+            'use_momentum': True,
             'momentum_strategy': 'Classic',
             'negative_momentum_strategy': 'Cash',
             'momentum_windows': [
@@ -3244,8 +3243,8 @@ def single_backtest(config, sim_index, reindexed_data):
     vol_window_days = config.get('vol_window_days', 365)
     exclude_days_vol = config.get('exclude_days_vol', 30)
     current_data = {t: reindexed_data[t] for t in tickers + [benchmark_ticker] if t in reindexed_data}
-    # Respect start_with setting: 'all' (default) or 'oldest' (add assets over time)
-    start_with = config.get('start_with', 'all')
+    # Respect start_with setting: 'oldest' (default) or 'all' (wait for all assets)
+    start_with = config.get('start_with', 'oldest')
     # Precompute first-valid dates for each ticker to decide availability
     start_dates_config = {}
     for t in tickers:
@@ -4496,7 +4495,7 @@ def paste_json_callback():
             'rebalancing_frequency': map_frequency(json_data.get('rebalancing_frequency', 'Monthly')),
             'start_date_user': json_data.get('start_date_user'),
             'end_date_user': json_data.get('end_date_user'),
-            'start_with': json_data.get('start_with', 'all'),
+            'start_with': json_data.get('start_with', 'oldest'),
             'use_momentum': json_data.get('use_momentum', True),
             'momentum_strategy': momentum_strategy,
             'negative_momentum_strategy': negative_momentum_strategy,
@@ -5918,7 +5917,7 @@ if st.sidebar.button("🗑️ Clear All Portfolios", key="alloc_clear_all_portfo
         'added_amount': 0,
         'added_frequency': 'none',
         'rebalancing_frequency': 'Monthly',
-        'start_with': 'all',
+        'start_with': 'oldest',
         'first_rebalance_strategy': 'rebalancing_date',
         'use_momentum': False,
         'momentum_strategy': 'Classic',
@@ -6017,9 +6016,9 @@ def calculate_minimum_lookback_days(portfolios):
             if vol_lookback > max_lookback:
                 max_lookback = vol_lookback
     
-    # Add buffer: max lookback + 1 year extra for safety
-    # This ensures we have enough data even with excludes and market holidays
-    total_days_needed = max_lookback + 365
+    # Add buffer: max lookback + 700 days extra for safety
+    # This ensures we have enough data even with excludes, market holidays, and recent tickers
+    total_days_needed = max_lookback + 700
     
     return total_days_needed
 
@@ -6755,7 +6754,7 @@ def paste_all_json_callback():
                                           'rebalancing_frequency': map_frequency(cfg.get('rebalancing_frequency', 'Monthly')),
                       'start_date_user': cfg.get('start_date_user'),
                       'end_date_user': cfg.get('end_date_user'),
-                      'start_with': cfg.get('start_with', 'all'),
+                      'start_with': cfg.get('start_with', 'oldest'),
                       'use_momentum': cfg.get('use_momentum', True),
                     'momentum_strategy': momentum_strategy,
                     'negative_momentum_strategy': negative_momentum_strategy,
