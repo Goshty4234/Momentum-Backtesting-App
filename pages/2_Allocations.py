@@ -1005,7 +1005,6 @@ def get_ticker_info(ticker_symbol):
         leveraged_map = get_leveraged_ticker_underlying()
         if base_ticker.upper() in leveraged_map:
             underlying_ticker = leveraged_map[base_ticker.upper()]
-            print(f"📊 TICKER INFO: Using {underlying_ticker} info for leveraged ticker {base_ticker}")
             resolved_ticker = underlying_ticker
         else:
             # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange)
@@ -1016,6 +1015,69 @@ def get_ticker_info(ticker_symbol):
         return info
     except Exception:
         return {}
+
+@st.cache_data(ttl=7200, show_spinner=False)
+def get_multiple_tickers_info_batch(ticker_list):
+    """
+    Batch download ticker info for multiple tickers to improve performance.
+    
+    This is much faster than calling get_ticker_info() one by one.
+    Uses yf.download() to get basic price data in one call, then fetches
+    individual info only for tickers that need detailed stats.
+    
+    Args:
+        ticker_list: List of ticker symbols
+        
+    Returns:
+        Dict[ticker_symbol, dict]: Info dict for each ticker
+    """
+    if not ticker_list:
+        return {}
+    
+    results = {}
+    
+    # Resolve all tickers first
+    resolved_map = {}  # Maps original ticker -> resolved ticker
+    leveraged_map = get_leveraged_ticker_underlying()
+    
+    for ticker_symbol in ticker_list:
+        base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
+        
+        # Check if leveraged ticker
+        if base_ticker.upper() in leveraged_map:
+            resolved = leveraged_map[base_ticker.upper()]
+        else:
+            resolved = resolve_ticker_alias(base_ticker)
+        
+        resolved_map[ticker_symbol] = resolved
+    
+    # Get unique resolved tickers to minimize API calls
+    unique_resolved = list(set(resolved_map.values()))
+    
+    # Fetch info for all unique tickers in parallel using threading
+    import concurrent.futures
+    
+    def fetch_single_info(resolved_ticker):
+        try:
+            stock = yf.Ticker(resolved_ticker)
+            return resolved_ticker, stock.info
+        except:
+            return resolved_ticker, {}
+    
+    # Use ThreadPoolExecutor for parallel fetching (much faster)
+    info_cache = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(fetch_single_info, resolved) for resolved in unique_resolved]
+        for future in concurrent.futures.as_completed(futures):
+            resolved_ticker, info = future.result()
+            info_cache[resolved_ticker] = info
+    
+    # Map back to original ticker symbols
+    for ticker_symbol in ticker_list:
+        resolved = resolved_map[ticker_symbol]
+        results[ticker_symbol] = info_cache.get(resolved, {})
+    
+    return results
 
 @st.cache_data(ttl=600)  # Cache for 10 minutes
 def calculate_portfolio_metrics(portfolio_config, allocation_data):
@@ -7201,13 +7263,18 @@ if st.session_state.get('alloc_backtest_run', False):
                 tickers = [tk for tk in alloc_dict.keys() if tk != 'CASH']
                 total_tickers = len(tickers)
                 
+                # OPTIMIZATION: Batch fetch all ticker infos at once (much faster!)
+                status_text.text(f"Fetching data for {total_tickers} tickers in batch...")
+                progress_bar.progress(0.1)
+                all_infos = get_multiple_tickers_info_batch(tickers)
+                
                 for i, ticker in enumerate(tickers):
-                    status_text.text(f"Fetching data for {ticker}... ({i+1}/{total_tickers})")
+                    status_text.text(f"Processing {ticker}... ({i+1}/{total_tickers})")
                     progress_bar.progress((i + 1) / total_tickers)
                     
                     try:
-                        # Fetch comprehensive data from Yahoo Finance
-                        info = get_ticker_info(ticker)
+                        # Get info from batch results
+                        info = all_infos.get(ticker, {})
                         
                         # Get current price
                         current_price = info.get('currentPrice', info.get('regularMarketPrice', None))
@@ -7698,17 +7765,39 @@ if st.session_state.get('alloc_backtest_run', False):
                             # Display table
                             st.dataframe(sector_df, use_container_width=True, hide_index=True)
                             
-                            # Create pie chart for sectors
+                            # Create pie chart for sectors (filter out 0% allocations)
                             if len(sector_data) > 0:
-                                fig_sector = px.pie(
-                                    values=sector_data.values,
-                                    names=sector_data.index,
-                                    title="Sector Distribution",
-                                    color_discrete_sequence=px.colors.qualitative.Set3
-                                )
-                                fig_sector.update_traces(textposition='inside', textinfo='percent+label')
-                                fig_sector.update_layout(height=400, showlegend=True)
-                                st.plotly_chart(fig_sector, use_container_width=True)
+                                # Filter out sectors with 0% allocation
+                                sector_data_filtered = sector_data[sector_data > 0]
+                                
+                                if len(sector_data_filtered) > 0:
+                                    fig_sector = px.pie(
+                                        values=sector_data_filtered.values,
+                                        names=sector_data_filtered.index,
+                                        title="Sector Distribution",
+                                        color_discrete_sequence=px.colors.sequential.Viridis,
+                                        hole=0.4  # Donut chart for modern look
+                                    )
+                                    fig_sector.update_traces(
+                                        textposition='outside',
+                                        textinfo='percent+label',
+                                        textfont_size=12,
+                                        marker=dict(line=dict(color='white', width=2))
+                                    )
+                                    fig_sector.update_layout(
+                                        height=500,
+                                        showlegend=True,
+                                        legend=dict(
+                                            orientation="v",
+                                            yanchor="middle",
+                                            y=0.5,
+                                            xanchor="left",
+                                            x=1.05
+                                        ),
+                                        font=dict(size=12),
+                                        title_font_size=16
+                                    )
+                                    st.plotly_chart(fig_sector, use_container_width=True)
                     
                     with col2:
                         # Industry breakdown with table and pie chart
@@ -7724,17 +7813,39 @@ if st.session_state.get('alloc_backtest_run', False):
                             # Display table
                             st.dataframe(industry_df, use_container_width=True, hide_index=True)
                             
-                            # Create pie chart for industries
+                            # Create pie chart for industries (filter out 0% allocations)
                             if len(industry_data) > 0:
-                                fig_industry = px.pie(
-                                    values=industry_data.values,
-                                    names=industry_data.index,
-                                    title="Industry Distribution",
-                                    color_discrete_sequence=px.colors.qualitative.Pastel
-                                )
-                                fig_industry.update_traces(textposition='inside', textinfo='percent+label')
-                                fig_industry.update_layout(height=400, showlegend=True)
-                                st.plotly_chart(fig_industry, use_container_width=True)
+                                # Filter out industries with 0% allocation
+                                industry_data_filtered = industry_data[industry_data > 0]
+                                
+                                if len(industry_data_filtered) > 0:
+                                    fig_industry = px.pie(
+                                        values=industry_data_filtered.values,
+                                        names=industry_data_filtered.index,
+                                        title="Industry Distribution",
+                                        color_discrete_sequence=px.colors.sequential.Plasma,
+                                        hole=0.4  # Donut chart for modern look
+                                    )
+                                    fig_industry.update_traces(
+                                        textposition='outside',
+                                        textinfo='percent+label',
+                                        textfont_size=12,
+                                        marker=dict(line=dict(color='white', width=2))
+                                    )
+                                    fig_industry.update_layout(
+                                        height=500,
+                                        showlegend=True,
+                                        legend=dict(
+                                            orientation="v",
+                                            yanchor="middle",
+                                            y=0.5,
+                                            xanchor="left",
+                                            x=1.05
+                                        ),
+                                        font=dict(size=12),
+                                        title_font_size=16
+                                    )
+                                    st.plotly_chart(fig_industry, use_container_width=True)
                     
                     # Portfolio risk metrics
                     st.markdown("### ⚠️ Portfolio Risk Metrics")
