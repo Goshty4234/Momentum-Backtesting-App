@@ -1,3 +1,4 @@
+# CACHED VERSION - Optimized with @st.cache_data decorators for better performance
 import streamlit as st
 import datetime
 from datetime import timedelta, time
@@ -454,7 +455,7 @@ def apply_leverage_to_hist_data(hist_data, leverage):
     
     return leveraged_data
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False):
     """Get ticker data specifically for valuation tables - converts Canadian USD tickers to CAD
     
@@ -509,7 +510,7 @@ def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False
         st.error(f"Error fetching data for {ticker_symbol}: {str(e)}")
         return None
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
     """Cache ticker data to improve performance across multiple tabs
     
@@ -765,7 +766,7 @@ def get_tbill_complete_data(period="max"):
         except:
             return pd.DataFrame()
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes  
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_info(ticker_symbol):
     """Cache ticker info to improve performance across multiple tabs"""
     try:
