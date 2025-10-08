@@ -1116,6 +1116,122 @@ def get_goldsim_complete_data(period="max"):
             return pd.DataFrame()
 
 @st.cache_data(ttl=7200, show_spinner=False)
+def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
+    """
+    Smart batch download with fallback to individual downloads.
+    
+    Strategy:
+    1. Try batch download (fast - 1 API call for all tickers)
+    2. If batch fails → fallback to individual downloads (reliable)
+    3. Invalid tickers are skipped, others continue
+    
+    Args:
+        ticker_list: List of ticker symbols (can include leverage format)
+        period: Data period
+        auto_adjust: Auto-adjust setting
+    
+    Returns:
+        Dict[ticker_symbol, DataFrame]: Data for each ticker
+    """
+    if not ticker_list:
+        return {}
+    
+    results = {}
+    
+    # Separate tickers into Yahoo-fetchable vs custom
+    yahoo_tickers = []
+    custom_tickers = {}
+    
+    for ticker_symbol in ticker_list:
+        # Parse parameters
+        base_ticker, leverage, expense_ratio = parse_ticker_parameters(ticker_symbol)
+        resolved = resolve_ticker_alias(base_ticker)
+        
+        # Check if it's a custom ticker (local data, no Yahoo call)
+        custom_list = ["ZEROX", "GOLD_COMPLETE", "ZROZ_COMPLETE", "TLT_COMPLETE", 
+                      "BTC_COMPLETE", "IEF_COMPLETE", "KMLM_COMPLETE", "DBMF_COMPLETE",
+                      "TBILL_COMPLETE", "SPYSIM_COMPLETE", "GOLDSIM_COMPLETE"]
+        
+        if resolved in custom_list:
+            # Handle custom tickers individually (they don't use Yahoo)
+            custom_tickers[ticker_symbol] = (resolved, leverage, expense_ratio)
+        else:
+            yahoo_tickers.append((ticker_symbol, resolved, leverage, expense_ratio))
+    
+    # Process custom tickers first (no Yahoo calls)
+    for ticker_symbol, (resolved, leverage, expense_ratio) in custom_tickers.items():
+        try:
+            results[ticker_symbol] = get_ticker_data(ticker_symbol, period, auto_adjust)
+        except:
+            results[ticker_symbol] = pd.DataFrame()
+    
+    # If no Yahoo tickers, return early
+    if not yahoo_tickers:
+        return results
+    
+    # Extract just the resolved tickers for batch download
+    resolved_list = list(set([resolved for _, resolved, _, _ in yahoo_tickers]))
+    
+    try:
+        # BATCH DOWNLOAD - Fast path (1 API call for all)
+        if len(resolved_list) > 1:
+            batch_data = yf.download(
+                resolved_list,
+                period=period,
+                auto_adjust=auto_adjust,
+                progress=False,
+                show_errors=False,
+                group_by='ticker'
+            )
+            
+            # Process batch data
+            if not batch_data.empty:
+                for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
+                    try:
+                        if len(resolved_list) > 1:
+                            # Multi-ticker batch
+                            ticker_data = batch_data[resolved][['Close', 'Dividends']] if resolved in batch_data else pd.DataFrame()
+                        else:
+                            # Single ticker batch
+                            ticker_data = batch_data[['Close', 'Dividends']]
+                        
+                        if not ticker_data.empty:
+                            # Apply leverage/expense if needed
+                            if leverage != 1.0 or expense_ratio != 0.0:
+                                ticker_data = apply_daily_leverage(ticker_data, leverage, expense_ratio)
+                            results[ticker_symbol] = ticker_data
+                        else:
+                            results[ticker_symbol] = pd.DataFrame()
+                    except:
+                        # Individual ticker failed in batch, will retry below
+                        pass
+            else:
+                raise Exception("Batch download returned empty")
+                
+    except Exception:
+        # FALLBACK - Batch failed, download individually (reliable but slower)
+        pass
+    
+    # Download any missing tickers individually (fallback or single ticker)
+    for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
+        if ticker_symbol not in results or results[ticker_symbol].empty:
+            try:
+                ticker = yf.Ticker(resolved)
+                hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
+                
+                if not hist.empty:
+                    # Apply leverage/expense if needed
+                    if leverage != 1.0 or expense_ratio != 0.0:
+                        hist = apply_daily_leverage(hist, leverage, expense_ratio)
+                    results[ticker_symbol] = hist
+                else:
+                    results[ticker_symbol] = pd.DataFrame()
+            except:
+                results[ticker_symbol] = pd.DataFrame()
+    
+    return results
+
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=None):
     """Get ticker data (CACHED version - 2 hours TTL)
     
@@ -10869,20 +10985,29 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             total_downloads = len(all_tickers_to_download) + len(special_tickers)
             download_count = 0
             
-            # Download individual tickers
-            for i, t in enumerate(all_tickers_to_download):
-                # Check for kill request during data download
-                check_kill_request()
+            # OPTIMIZED: Batch download with smart fallback
+            progress_text = f"Downloading data for {len(all_tickers_to_download)} tickers (batch mode)..."
+            progress_bar.progress(0.1, text=progress_text)
+            
+            # Check for kill request before batch
+            check_kill_request()
+            
+            # Use batch download for all regular tickers (much faster!)
+            batch_results = get_multiple_tickers_batch(list(all_tickers_to_download), period="max", auto_adjust=False)
+            
+            # Process batch results
+            for t in all_tickers_to_download:
+                download_count += 1
+                progress_text = f"Processing {t} ({download_count}/{total_downloads})..."
+                progress_bar.progress(download_count / total_downloads, text=progress_text)
+                
+                hist = batch_results.get(t, pd.DataFrame())
+                
+                if hist.empty:
+                    invalid_tickers.append(t)
+                    continue
                 
                 try:
-                    download_count += 1
-                    progress_text = f"Downloading data for {t} ({download_count}/{total_downloads})..."
-                    progress_bar.progress(download_count / total_downloads, text=progress_text)
-                    hist = get_ticker_data(t, period="max", auto_adjust=False)
-                    if hist.empty:
-                        invalid_tickers.append(t)
-                        continue
-                    
                     # Force tz-naive for hist (like Backtest_Engine.py)
                     hist = hist.copy()
                     hist.index = hist.index.tz_localize(None)
