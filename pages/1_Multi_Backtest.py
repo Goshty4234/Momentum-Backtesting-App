@@ -632,7 +632,7 @@ def apply_daily_leverage(price_data: pd.DataFrame, leverage: float, expense_rati
     Returns:
         DataFrame with leveraged price data including cost drag and expense ratio drag
     """
-    if leverage == 1.0:
+    if leverage == 1.0 and expense_ratio == 0.0:
         return price_data.copy()
     
     # Create a copy to avoid modifying original data
@@ -1167,7 +1167,6 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
                 period=period,
                 auto_adjust=auto_adjust,
                 progress=False,
-                show_errors=False,
                 group_by='ticker'
             )
             
