@@ -798,7 +798,7 @@ def resolve_ticker_alias(ticker):
     
     return aliases.get(upper_ticker, upper_ticker)
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(show_spinner=False)
 def generate_zero_return_data(period="max"):
     """Generate synthetic zero return data for ZEROX ticker"""
     try:
@@ -825,7 +825,7 @@ def generate_zero_return_data(period="max"):
         }, index=dates)
         return zero_data
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(show_spinner=False)
 def get_gold_complete_data(period="max"):
     """Get complete gold data from historical CSV and GLD"""
     try:
@@ -1115,9 +1115,9 @@ def get_goldsim_complete_data(period="max"):
         except:
             return pd.DataFrame()
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=None):
-    """Get ticker data (CACHED version - 1 hour TTL)
+    """Get ticker data (CACHED version - 2 hours TTL)
     
     Args:
         ticker_symbol: Stock ticker symbol (supports leverage format like SPY?L=3)
@@ -1189,7 +1189,7 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_info(ticker_symbol):
     """Cache ticker info to improve performance across multiple tabs"""
     try:
