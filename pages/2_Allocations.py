@@ -5856,6 +5856,39 @@ if st.sidebar.button("🚨 EMERGENCY KILL", type="secondary", use_container_widt
     st.toast("🚨 **EMERGENCY KILL** - Force terminating all processes...", icon="💥")
     emergency_kill()
 
+def calculate_minimum_lookback_days(portfolios):
+    """
+    Calculate the minimum data period needed for a backtest.
+    Returns number of days to fetch (instead of period="max").
+    """
+    max_lookback = 0
+    
+    for config in portfolios:
+        # Check momentum windows
+        if config.get('use_momentum') and config.get('momentum_windows'):
+            for window in config['momentum_windows']:
+                lookback = window.get('lookback', 0)
+                if lookback > max_lookback:
+                    max_lookback = lookback
+        
+        # Check beta window
+        if config.get('calc_beta'):
+            beta_lookback = config.get('beta_window_days', 0)
+            if beta_lookback > max_lookback:
+                max_lookback = beta_lookback
+        
+        # Check volatility window
+        if config.get('calc_volatility'):
+            vol_lookback = config.get('vol_window_days', 0)
+            if vol_lookback > max_lookback:
+                max_lookback = vol_lookback
+    
+    # Add buffer: max lookback + 1 year extra for safety
+    # This ensures we have enough data even with excludes and market holidays
+    total_days_needed = max_lookback + 365
+    
+    return total_days_needed
+
 # Move Run Backtest to the first sidebar to make it conspicuous and separate from config
 if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=True):
     # Reset kill request when starting new backtest
@@ -5943,8 +5976,36 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
         # Check for kill request before batch
         check_kill_request()
         
+        # OPTIMIZATION: Calculate minimum lookback period needed
+        min_days_needed = calculate_minimum_lookback_days(portfolio_list)
+        print(f"📊 OPTIMIZATION: Only loading last {min_days_needed} days of data (instead of all history)")
+        print(f"   Max lookback window: {min_days_needed - 365} days + 365 days buffer")
+        
+        # Convert days to period string for yfinance
+        # yfinance accepts: "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"
+        if min_days_needed <= 5:
+            period_to_use = "5d"
+        elif min_days_needed <= 30:
+            period_to_use = "1mo"
+        elif min_days_needed <= 90:
+            period_to_use = "3mo"
+        elif min_days_needed <= 180:
+            period_to_use = "6mo"
+        elif min_days_needed <= 365:
+            period_to_use = "1y"
+        elif min_days_needed <= 730:
+            period_to_use = "2y"
+        elif min_days_needed <= 1825:
+            period_to_use = "5y"
+        elif min_days_needed <= 3650:
+            period_to_use = "10y"
+        else:
+            period_to_use = "max"  # For very long lookback windows
+        
+        print(f"   Using period: '{period_to_use}' for yfinance")
+        
         # Use batch download for all tickers (much faster!)
-        batch_results = get_multiple_tickers_batch(list(all_tickers), period="max", auto_adjust=False)
+        batch_results = get_multiple_tickers_batch(list(all_tickers), period=period_to_use, auto_adjust=False)
         
         # Process batch results
         for i, t in enumerate(all_tickers):
