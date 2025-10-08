@@ -154,6 +154,76 @@ def get_ticker_aliases():
         'FRFHF': 'FFH.TO',          # Fairfax Financial - USD OTC -> Canadian TSX
     }
 
+def get_leveraged_ticker_underlying():
+    """Map leveraged tickers to their underlying tickers for valuation
+    
+    This mapping is used ONLY for valuation tables (P/E, Market Cap, etc.)
+    Backtests still use the leveraged ticker for accurate price/return data.
+    """
+    return {
+        # Berkshire Hathaway
+        'BRKU': 'BRK-B',          # 2x Berkshire Hathaway
+        
+        # Booking
+        'BKNU': 'BKNG',           # 2x Booking
+        
+        # UnitedHealth
+        'UNHG': 'UNH',            # 2x UnitedHealth
+        
+        # Microsoft
+        'MSFU': 'MSFT',           # 2x Microsoft
+        'MSFL': 'MSFT',           # 1.5x Microsoft
+        
+        # Meta
+        'METU': 'META',           # 2x Meta
+        'FBL': 'META',            # 1.5x Meta
+        
+        # Google
+        'GGLL': 'GOOGL',          # 2x Google
+        'ALPU': 'GOOGL',          # 1.5x Google
+        
+        # Taiwan Semiconductor
+        'TSMG': 'TSM',            # 2x Taiwan Semi
+        'TSMU': 'TSM',            # 1.5x Taiwan Semi
+        'TSMX': 'TSM',            # 3x Taiwan Semi
+        
+        # ASML
+        'ASMG': 'ASML',           # 2x ASML
+        
+        # Amazon
+        'AMZU': 'AMZN',           # 2x Amazon
+        
+        # Oracle
+        'ORCX': 'ORCL',           # 2x Oracle
+        
+        # Broadcom
+        'AVGU': 'AVGO',           # 2x Broadcom
+        'AVL': 'AVGO',            # 1.5x Broadcom
+        'AVGG': 'AVGO',           # 3x Broadcom
+        'AVGX': 'AVGO',           # 4x Broadcom
+        
+        # NVIDIA
+        'NVDL': 'NVDA',           # 2x NVIDIA
+        'NVDU': 'NVDA',           # 3x NVIDIA
+        'NVDG': 'NVDA',           # 4x NVIDIA
+        'NVD': 'NVDA',            # Alternative NVIDIA leveraged
+        
+        # Netflix
+        'NFXL': 'NFLX',           # 2x Netflix
+        'NFLU': 'NFLX',           # 1.5x Netflix
+        
+        # Arista Networks
+        'ANEL': 'ANET',           # 2x Arista
+        
+        # Super Micro Computer
+        'SMCX': 'SMCI',           # 2x Super Micro
+        'SMCL': 'SMCI',           # 1.5x Super Micro
+        
+        # Apple
+        'AAPB': 'AAPL',           # 2x Apple
+        'AAPU': 'AAPL',           # 1.5x Apple
+    }
+
 def resolve_ticker_alias(ticker):
     """Resolve ticker alias to actual ticker symbol"""
     aliases = get_ticker_aliases()
@@ -457,7 +527,11 @@ def apply_leverage_to_hist_data(hist_data, leverage):
 
 @st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False):
-    """Get ticker data specifically for valuation tables - converts Canadian USD tickers to CAD
+    """Get ticker data specifically for valuation tables
+    
+    This function handles two special cases:
+    1. Canadian tickers: Converts USD OTC to Canadian exchange (CNSWF → CSU.TO)
+    2. Leveraged tickers: Uses underlying ticker for valuation (NVDL → NVDA)
     
     Args:
         ticker_symbol: Stock ticker symbol
@@ -468,8 +542,15 @@ def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False
         # Parse leverage from ticker symbol
         base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
         
-        # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange)
-        resolved_ticker = resolve_ticker_alias(base_ticker)
+        # Check if this is a leveraged ticker (for valuation stats only)
+        leveraged_map = get_leveraged_ticker_underlying()
+        if base_ticker.upper() in leveraged_map:
+            underlying_ticker = leveraged_map[base_ticker.upper()]
+            print(f"📊 VALUATION: Using {underlying_ticker} stats for leveraged ticker {base_ticker}")
+            resolved_ticker = underlying_ticker
+        else:
+            # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange)
+            resolved_ticker = resolve_ticker_alias(base_ticker)
         
         # Special handling for synthetic complete tickers
         if resolved_ticker == "SPYSIM_COMPLETE":
@@ -556,10 +637,12 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
                         pass
         
         resolved = resolve_ticker_alias(base_ticker)
+        print(f"[BATCH DEBUG] {ticker_symbol} -> base={base_ticker}, resolved={resolved}, L={leverage}, E={expense_ratio}")
         yahoo_tickers.append((ticker_symbol, resolved, leverage, expense_ratio))
     
-    # Extract unique resolved tickers for batch download
-    resolved_list = list(set([resolved for _, resolved, _, _ in yahoo_tickers]))
+    # Extract unique resolved tickers for batch download (exclude _COMPLETE tickers)
+    resolved_list = list(set([resolved for _, resolved, _, _ in yahoo_tickers if not resolved.endswith('_COMPLETE')]))
+    print(f"[BATCH DEBUG] Resolved tickers to download: {resolved_list}")
     
     try:
         # BATCH DOWNLOAD - Fast path (1 API call for all)
@@ -572,24 +655,35 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
                 show_errors=False,
                 group_by='ticker'
             )
+            print(f"[BATCH DEBUG] Batch download result columns: {batch_data.columns.tolist() if not batch_data.empty else 'EMPTY'}")
             
             # Process batch data
             if not batch_data.empty:
                 for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
+                    # Skip _COMPLETE tickers (they will be handled in fallback section)
+                    if resolved.endswith('_COMPLETE'):
+                        continue
+                    
                     try:
                         if len(resolved_list) > 1:
                             ticker_data = batch_data[resolved][['Close', 'Dividends']] if resolved in batch_data else pd.DataFrame()
                         else:
                             ticker_data = batch_data[['Close', 'Dividends']]
                         
+                        print(f"[BATCH DEBUG] Processing {ticker_symbol}: data_empty={ticker_data.empty}, shape={ticker_data.shape if not ticker_data.empty else 'N/A'}")
+                        
                         if not ticker_data.empty:
                             # Apply leverage/expense if needed
                             if leverage != 1.0 or expense_ratio != 0.0:
+                                print(f"[BATCH DEBUG] Applying leverage L={leverage}, E={expense_ratio} to {ticker_symbol}")
                                 ticker_data = apply_daily_leverage(ticker_data, leverage, expense_ratio)
                             results[ticker_symbol] = ticker_data
+                            print(f"[BATCH DEBUG] ✓ {ticker_symbol} added to results")
                         else:
                             results[ticker_symbol] = pd.DataFrame()
-                    except:
+                            print(f"[BATCH DEBUG] ✗ {ticker_symbol} is EMPTY")
+                    except Exception as e:
+                        print(f"[BATCH DEBUG] ✗ Error processing {ticker_symbol} from batch: {e}")
                         pass
             else:
                 raise Exception("Batch download returned empty")
@@ -602,16 +696,40 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
     for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
         if ticker_symbol not in results or results[ticker_symbol].empty:
             try:
-                ticker = yf.Ticker(resolved)
-                hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
+                # Handle special complete tickers
+                if resolved == "SPYSIM_COMPLETE":
+                    hist = get_spysim_complete_data(period)
+                elif resolved == "GOLDSIM_COMPLETE":
+                    hist = get_goldsim_complete_data(period)
+                elif resolved == "GOLD_COMPLETE":
+                    hist = get_gold_complete_data(period)
+                elif resolved == "ZROZ_COMPLETE":
+                    hist = get_zroz_complete_data(period)
+                elif resolved == "TLT_COMPLETE":
+                    hist = get_tlt_complete_data(period)
+                elif resolved == "BTC_COMPLETE":
+                    hist = get_bitcoin_complete_data(period)
+                elif resolved == "KMLM_COMPLETE":
+                    hist = get_kmlm_complete_data(period)
+                elif resolved == "IEF_COMPLETE":
+                    hist = get_ief_complete_data(period)
+                elif resolved == "DBMF_COMPLETE":
+                    hist = get_dbmf_complete_data(period)
+                elif resolved == "TBILL_COMPLETE":
+                    hist = get_tbill_complete_data(period)
+                else:
+                    # Regular Yahoo Finance ticker
+                    ticker = yf.Ticker(resolved)
+                    hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
                 
-                if not hist.empty:
+                if hist is not None and not hist.empty:
                     if leverage != 1.0 or expense_ratio != 0.0:
                         hist = apply_daily_leverage(hist, leverage, expense_ratio)
                     results[ticker_symbol] = hist
                 else:
                     results[ticker_symbol] = pd.DataFrame()
-            except:
+            except Exception as e:
+                print(f"Error downloading {ticker_symbol}: {e}")
                 results[ticker_symbol] = pd.DataFrame()
     
     return results
@@ -874,10 +992,26 @@ def get_tbill_complete_data(period="max"):
 
 @st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_info(ticker_symbol):
-    """Cache ticker info to improve performance across multiple tabs"""
+    """Cache ticker info to improve performance across multiple tabs
+    
+    This function handles two special cases:
+    1. Canadian tickers: Converts USD OTC to Canadian exchange (CNSWF → CSU.TO)
+    2. Leveraged tickers: Uses underlying ticker for info (NVDL → NVDA)
+    """
     try:
-        # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange)
-        resolved_ticker = resolve_ticker_alias(ticker_symbol)
+        # Parse leverage from ticker symbol
+        base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
+        
+        # Check if this is a leveraged ticker (for valuation stats only)
+        leveraged_map = get_leveraged_ticker_underlying()
+        if base_ticker.upper() in leveraged_map:
+            underlying_ticker = leveraged_map[base_ticker.upper()]
+            print(f"📊 TICKER INFO: Using {underlying_ticker} info for leveraged ticker {base_ticker}")
+            resolved_ticker = underlying_ticker
+        else:
+            # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange)
+            resolved_ticker = resolve_ticker_alias(base_ticker)
+        
         stock = yf.Ticker(resolved_ticker)
         info = stock.info
         return info
@@ -7079,11 +7213,11 @@ if st.session_state.get('alloc_backtest_run', False):
                         # Get current price
                         current_price = info.get('currentPrice', info.get('regularMarketPrice', None))
                         if current_price is None:
-                            # Try to get from historical data
-                            stock = yf.Ticker(ticker)
-                            hist = stock.history(period='1d')
-                            if not hist.empty:
-                                current_price = hist['Close'].iloc[-1]
+                            # Try to get from historical data using get_ticker_data_for_valuation
+                            # This ensures leveraged tickers (NVDL) use underlying data (NVDA) for price
+                            hist_data = get_ticker_data_for_valuation(ticker, period='1d')
+                            if hist_data is not None and not hist_data.empty:
+                                current_price = hist_data['Close'].iloc[-1]
                         
                         # Calculate allocation values
                         alloc_pct = float(alloc_dict.get(ticker, 0))
