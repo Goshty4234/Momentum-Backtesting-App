@@ -1,4 +1,4 @@
-# CACHED VERSION - Optimized with @st.cache_data decorators for better performance
+# NO CACHE VERSION - ALL @st.cache_data decorators removed - ZERO CACHE ANYWHERE
 import streamlit as st
 import datetime
 from datetime import timedelta, time
@@ -512,7 +512,6 @@ def apply_leverage_to_hist_data(hist_data, leverage):
     
     return leveraged_data
 
-@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False):
     """Get ticker data specifically for valuation tables
     
@@ -578,7 +577,6 @@ def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False
         st.error(f"Error fetching data for {ticker_symbol}: {str(e)}")
         return None
 
-@st.cache_data(ttl=7200, show_spinner=False)
 def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
     """
     Smart batch download with fallback to individual downloads.
@@ -720,14 +718,13 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
     
     return results
 
-@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
-    """Cache ticker data to improve performance across multiple tabs
+    """Get ticker data (NO CACHE for maximum freshness)
     
     Args:
         ticker_symbol: Stock ticker symbol (supports leverage format like SPY?L=3)
-        period: Data period (used in cache key to prevent conflicts)
-        auto_adjust: Auto-adjust setting (used in cache key to prevent conflicts)
+        period: Data period
+        auto_adjust: Auto-adjust setting
     """
     try:
         # Parse leverage from ticker symbol
@@ -976,9 +973,8 @@ def get_tbill_complete_data(period="max"):
         except:
             return pd.DataFrame()
 
-@st.cache_data(ttl=7200, show_spinner=False)
 def get_ticker_info(ticker_symbol):
-    """Cache ticker info to improve performance across multiple tabs
+    """Get ticker info (NO CACHE for maximum freshness)
     
     This function handles two special cases:
     1. Canadian tickers: Converts USD OTC to Canadian exchange (CNSWF → CSU.TO)
@@ -1003,7 +999,6 @@ def get_ticker_info(ticker_symbol):
     except Exception:
         return {}
 
-@st.cache_data(ttl=7200, show_spinner=False)
 def get_multiple_tickers_info_batch(ticker_list):
     """
     Batch download ticker info for multiple tickers to improve performance.
@@ -1052,24 +1047,23 @@ def get_multiple_tickers_info_batch(ticker_list):
             return resolved_ticker, {}
     
     # Use ThreadPoolExecutor for parallel fetching (much faster)
-    info_cache = {}
+    info_results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(fetch_single_info, resolved) for resolved in unique_resolved]
         for future in concurrent.futures.as_completed(futures):
             resolved_ticker, info = future.result()
-            info_cache[resolved_ticker] = info
+            info_results[resolved_ticker] = info
     
     # Map back to original ticker symbols
     for ticker_symbol in ticker_list:
         resolved = resolved_map[ticker_symbol]
-        results[ticker_symbol] = info_cache.get(resolved, {})
+        results[ticker_symbol] = info_results.get(resolved, {})
     
     return results
 
-@st.cache_data(ttl=600)  # Cache for 10 minutes
 def calculate_portfolio_metrics(portfolio_config, allocation_data):
-    """Cache heavy portfolio calculations to improve performance"""
-    # This will cache the results of expensive portfolio calculations
+    """Calculate portfolio metrics (NO CACHE for maximum freshness)"""
+    # This will calculate portfolio metrics fresh every time
     # Note: The actual calculation logic remains unchanged
     return portfolio_config, allocation_data  # Placeholder - will be filled in by calling functions
 
@@ -1093,26 +1087,25 @@ def optimize_data_loading():
     
     return st.session_state[f'{page_prefix}data_loaded']
 
-def create_safe_cache_key(data):
-    """Create a safe, consistent cache key from complex data structures"""
+def create_safe_hash_key(data):
+    """Create a safe, consistent hash key from complex data structures"""
     import hashlib
     import json
     try:
-        # Convert to JSON string and hash for consistent cache keys
+        # Convert to JSON string and hash for consistent hash keys
         json_str = json.dumps(data, sort_keys=True, default=str)
         return hashlib.md5(json_str.encode()).hexdigest()
     except Exception:
         # Fallback to string representation
         return hashlib.md5(str(data).encode()).hexdigest()
 
-@st.cache_data(ttl=1800)  # Cache for 30 minutes - expensive backtest calculations
-def run_cached_backtest(portfolios_config_hash, start_date_str, end_date_str, benchmark_str, page_id="allocations"):
-    """Cache expensive backtest calculations with proper invalidation
+def run_fresh_backtest(portfolios_config_hash, start_date_str, end_date_str, benchmark_str, page_id="allocations"):
+    """Run fresh backtest calculations (NO CACHE for maximum freshness)
     
     Args:
         portfolios_config_hash: Hash of portfolio configurations to detect changes
-        start_date_str: Start date as string for consistent cache key
-        end_date_str: End date as string for consistent cache key  
+        start_date_str: Start date as string
+        end_date_str: End date as string  
         benchmark_str: Benchmark ticker as string
         page_id: Page identifier to prevent cross-page conflicts
     """
@@ -6009,7 +6002,7 @@ def clear_all_outputs():
         if key.startswith("processing_portfolio_"):
             del st.session_state[key]
     
-    # Clear any cached data
+    # Clear any stored data
     if 'raw_data' in st.session_state:
         del st.session_state['raw_data']
     
@@ -8004,28 +7997,12 @@ if st.session_state.get('alloc_backtest_run', False):
                     for period_name in periods.keys():
                         historical_returns[period_name] = 'N/A'
                 
-                # Get portfolio PE from session state (already calculated)
+                # Get REAL PE value from session state
                 portfolio_pe_calculated = 'N/A'
                 try:
-                    pe_value = st.session_state.portfolio_pe
-                    if pd.notna(pe_value) and pe_value > 0:
+                    pe_value = getattr(st.session_state, 'portfolio_pe', None)
+                    if pe_value is not None and pd.notna(pe_value) and pe_value > 0:
                         portfolio_pe_calculated = f"{pe_value:.2f}"
-                    else:
-                        # Fallback: calculate PE from available ticker data
-                        pe_sum = 0
-                        pe_count = 0
-                        for ticker, weight in today_weights.items():
-                            if ticker != 'CASH' and weight > 0 and ticker in raw_data:
-                                try:
-                                    # Try to get PE from yfinance info
-                                    ticker_info = raw_data[ticker].attrs.get('info', {})
-                                    if ticker_info and 'trailingPE' in ticker_info and ticker_info['trailingPE'] is not None:
-                                        pe_sum += ticker_info['trailingPE'] * weight
-                                        pe_count += weight
-                                except:
-                                    pass
-                        if pe_count > 0:
-                            portfolio_pe_calculated = f"{pe_sum / pe_count:.2f}"
                 except Exception:
                     pass
                 
@@ -8299,7 +8276,7 @@ if st.session_state.get('alloc_backtest_run', False):
         # Add Benchmark Comparison Table
         st.markdown("### 📊 **Benchmark Comparison**")
         
-        def calculate_benchmark_returns(available_data=None):
+        def calculate_benchmark_returns(available_data=None, preloaded_info=None):
             """Calculate returns for benchmark tickers"""
             try:
                 # Use the same active_name as Portfolio Weighted Returns
@@ -8323,6 +8300,10 @@ if st.session_state.get('alloc_backtest_run', False):
                 
                 # Benchmark tickers to compare (in specific order)
                 benchmark_tickers = ['SPY', 'QQQ', 'SPMO', 'VTI', 'VT', 'SSO', 'QLD']
+                
+                # Use preloaded info if available (for performance)
+                if preloaded_info is None:
+                    preloaded_info = {}
                 
                 benchmark_data = []
                 
@@ -8379,32 +8360,16 @@ if st.session_state.get('alloc_backtest_run', False):
                 # Add PORTFOLIO as first row
                 portfolio_returns_dict['Ticker'] = 'PORTFOLIO'
                 
-                # Get portfolio PE, Volatility, and Beta from session state (already calculated)
+                # Get REAL PE value from session state
                 portfolio_pe_calculated = 'N/A'
-                portfolio_volatility_calculated = 'N/A'
-                portfolio_beta_calculated = 'N/A'
                 try:
-                    pe_value = st.session_state.portfolio_pe
-                    if pd.notna(pe_value) and pe_value > 0:
+                    pe_value = getattr(st.session_state, 'portfolio_pe', None)
+                    if pe_value is not None and pd.notna(pe_value) and pe_value > 0:
                         portfolio_pe_calculated = f"{pe_value:.2f}"
-                    else:
-                        # Fallback: calculate PE from available ticker data
-                        pe_sum = 0
-                        pe_count = 0
-                        for ticker, weight in today_weights.items():
-                            if ticker != 'CASH' and weight > 0 and ticker in available_data:
-                                try:
-                                    # Try to get PE from yfinance info
-                                    ticker_info = available_data[ticker].attrs.get('info', {})
-                                    if ticker_info and 'trailingPE' in ticker_info and ticker_info['trailingPE'] is not None:
-                                        pe_sum += ticker_info['trailingPE'] * weight
-                                        pe_count += weight
-                                except:
-                                    pass
-                        if pe_count > 0:
-                            portfolio_pe_calculated = f"{pe_sum / pe_count:.2f}"
                 except Exception:
                     pass
+                portfolio_volatility_calculated = 'N/A'
+                portfolio_beta_calculated = 'N/A'
                 
                 # Get Volatility and Beta from historical portfolio results (last 252 trading days / ~1 year)
                 try:
@@ -8465,13 +8430,11 @@ if st.session_state.get('alloc_backtest_run', False):
                     
                     ticker_returns = {'Ticker': ticker}
                     
-                    # Get PE ratio for this benchmark ticker
+                    # Get PE ratio for this benchmark ticker from preloaded info
                     ticker_pe = 'N/A'
                     try:
-                        import yfinance as yf
-                        ticker_obj = yf.Ticker(ticker)
-                        info = ticker_obj.info
-                        if 'trailingPE' in info and info['trailingPE'] is not None:
+                        info = preloaded_info.get(ticker, {})
+                        if info and 'trailingPE' in info and info['trailingPE'] is not None:
                             ticker_pe = f"{info['trailingPE']:.2f}"
                     except Exception:
                         pass
@@ -8549,7 +8512,12 @@ if st.session_state.get('alloc_backtest_run', False):
                 pass
                 return None
         
-        benchmark_df = calculate_benchmark_returns(available_data)
+        # Preload benchmark ticker info BEFORE calculating returns to ensure PE ratios are available immediately
+        # NUCLEAR OPTION: Portfolio PE is already calculated and stored in session state, no need to preload portfolio tickers!
+        benchmark_tickers_to_preload = ['SPY', 'QQQ', 'SPMO', 'VTI', 'VT', 'SSO', 'QLD']
+        preloaded_benchmark_info = get_multiple_tickers_info_batch(benchmark_tickers_to_preload)
+        
+        benchmark_df = calculate_benchmark_returns(available_data, preloaded_benchmark_info)
         if benchmark_df is not None and not benchmark_df.empty:
             # Style the dataframe
             styled_benchmark = benchmark_df.style
