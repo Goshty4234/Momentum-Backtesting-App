@@ -8010,6 +8010,22 @@ if st.session_state.get('alloc_backtest_run', False):
                     pe_value = st.session_state.portfolio_pe
                     if pd.notna(pe_value) and pe_value > 0:
                         portfolio_pe_calculated = f"{pe_value:.2f}"
+                    else:
+                        # Fallback: calculate PE from available ticker data
+                        pe_sum = 0
+                        pe_count = 0
+                        for ticker, weight in today_weights.items():
+                            if ticker != 'CASH' and weight > 0 and ticker in raw_data:
+                                try:
+                                    # Try to get PE from yfinance info
+                                    ticker_info = raw_data[ticker].attrs.get('info', {})
+                                    if ticker_info and 'trailingPE' in ticker_info and ticker_info['trailingPE'] is not None:
+                                        pe_sum += ticker_info['trailingPE'] * weight
+                                        pe_count += weight
+                                except:
+                                    pass
+                        if pe_count > 0:
+                            portfolio_pe_calculated = f"{pe_sum / pe_count:.2f}"
                 except Exception:
                     pass
                 
@@ -8371,6 +8387,22 @@ if st.session_state.get('alloc_backtest_run', False):
                     pe_value = st.session_state.portfolio_pe
                     if pd.notna(pe_value) and pe_value > 0:
                         portfolio_pe_calculated = f"{pe_value:.2f}"
+                    else:
+                        # Fallback: calculate PE from available ticker data
+                        pe_sum = 0
+                        pe_count = 0
+                        for ticker, weight in today_weights.items():
+                            if ticker != 'CASH' and weight > 0 and ticker in available_data:
+                                try:
+                                    # Try to get PE from yfinance info
+                                    ticker_info = available_data[ticker].attrs.get('info', {})
+                                    if ticker_info and 'trailingPE' in ticker_info and ticker_info['trailingPE'] is not None:
+                                        pe_sum += ticker_info['trailingPE'] * weight
+                                        pe_count += weight
+                                except:
+                                    pass
+                        if pe_count > 0:
+                            portfolio_pe_calculated = f"{pe_sum / pe_count:.2f}"
                 except Exception:
                     pass
                 
