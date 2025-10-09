@@ -8909,11 +8909,13 @@ if st.session_state.get('alloc_backtest_run', False):
                 labels = []
                 values = []
                 for k, v in sorted(d.items(), key=lambda x: (-x[1], x[0])):
-                    labels.append(k)
                     try:
-                        values.append(float(v) * 100)
+                        val = float(v) * 100
+                        if val > 0:  # Only include tickers with allocation > 0%
+                            labels.append(k)
+                            values.append(val)
                     except Exception:
-                        values.append(0.0)
+                        pass  # Skip invalid values
                 return labels, values
 
             labels_final, vals_final = prepare_bar_data(final_alloc)
