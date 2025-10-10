@@ -3321,9 +3321,9 @@ if 'multi_backtest_page_initialized' not in st.session_state:
             'vol_window_days': 365,
             'exclude_days_vol': 30,
             'use_minimal_threshold': False,
-            'minimal_threshold_percent': 2.0,
+            'minimal_threshold_percent': 4.0,
             'use_max_allocation': False,
-            'max_allocation_percent': 10.0,
+            'max_allocation_percent': 20.0,
         },
         # 2) Momentum-based portfolio using SPY, QQQ, GLD, TLT
         {
@@ -3359,9 +3359,9 @@ if 'multi_backtest_page_initialized' not in st.session_state:
             'vol_window_days': 365,
             'exclude_days_vol': 30,
             'use_minimal_threshold': False,
-            'minimal_threshold_percent': 2.0,
+            'minimal_threshold_percent': 4.0,
             'use_max_allocation': False,
-            'max_allocation_percent': 10.0,
+            'max_allocation_percent': 20.0,
         },
         # 3) Equal weight (No Momentum) using the same tickers
         {
@@ -3393,9 +3393,9 @@ if 'multi_backtest_page_initialized' not in st.session_state:
             'vol_window_days': 365,
             'exclude_days_vol': 30,
             'use_minimal_threshold': False,
-            'minimal_threshold_percent': 2.0,
+            'minimal_threshold_percent': 4.0,
             'use_max_allocation': False,
-            'max_allocation_percent': 10.0,
+            'max_allocation_percent': 20.0,
         },
     ]
     st.session_state.multi_backtest_active_portfolio_index = 0
@@ -6900,9 +6900,9 @@ def add_portfolio_callback():
         'vol_window_days': 365,
         'exclude_days_vol': 30,
         'use_minimal_threshold': False,
-        'minimal_threshold_percent': 2.0,
+        'minimal_threshold_percent': 4.0,
         'use_max_allocation': False,
-        'max_allocation_percent': 10.0,
+        'max_allocation_percent': 20.0,
         'collect_dividends_as_cash': False,
         'start_date_user': None,
         'end_date_user': None,
@@ -7876,9 +7876,9 @@ if st.sidebar.button("🗑️ Clear All Portfolios", key="multi_backtest_clear_a
         'vol_window_days': 365,
         'exclude_days_vol': 30,
         'use_minimal_threshold': False,
-        'minimal_threshold_percent': 2.0,
+        'minimal_threshold_percent': 4.0,
         'use_max_allocation': False,
-        'max_allocation_percent': 10.0,
+        'max_allocation_percent': 20.0,
         'collect_dividends_as_cash': False,
         'start_date_user': None,
         'end_date_user': None,
@@ -9793,9 +9793,9 @@ for i in range(len(active_portfolio['stocks'])):
     col_t, col_a, col_d, col_b = st.columns([0.2, 0.2, 0.3, 0.15])
     with col_t:
         ticker_key = f"multi_backtest_ticker_{st.session_state.multi_backtest_active_portfolio_index}_{i}"
-        # FORCE the text_input to display the resolved ticker from portfolio config
-        # Using VALUE parameter ensures the widget shows the resolved ticker immediately
-        st.text_input("Ticker", value=stock['ticker'], key=ticker_key, label_visibility="visible", on_change=update_stock_ticker, args=(i,))
+        # Always sync the session state with the portfolio config to show resolved ticker
+        st.session_state[ticker_key] = stock['ticker']
+        st.text_input("Ticker", key=ticker_key, label_visibility="visible", on_change=update_stock_ticker, args=(i,))
     with col_a:
         use_mom = st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.get('use_momentum', True))
         if not use_mom:
@@ -9813,13 +9813,14 @@ for i in range(len(active_portfolio['stocks'])):
         if 'include_dividends' not in stock:
             stock['include_dividends'] = True
         
-        # Auto-disable dividends for negative leverage (inverse ETFs)
-        if '?L=-' in stock['ticker']:
+        # Auto-disable dividends for negative leverage (inverse ETFs) ONLY on first display
+        # Don't override if user has explicitly set a value
+        if '?L=-' in stock['ticker'] and div_key not in st.session_state:
             stock['include_dividends'] = False
         
         if div_key not in st.session_state:
             st.session_state[div_key] = stock['include_dividends']
-        st.checkbox("Include Dividends", key=div_key)
+        st.checkbox("Reinvest Dividends", key=div_key)
         if st.session_state[div_key] != stock['include_dividends']:
             st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][i]['include_dividends'] = st.session_state[div_key]
         
