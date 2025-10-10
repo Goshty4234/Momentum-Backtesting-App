@@ -247,6 +247,52 @@ def resolve_ticker_alias(ticker):
     else:
         return resolved_base
 
+def resolve_index_to_etf_for_stats(ticker):
+    """Convert indices to equivalent ETFs for better statistics data
+    
+    This function converts raw indices (like ^SP500-45) to their equivalent ETFs (like XLK)
+    for statistics calculations, as ETFs have more comprehensive market data.
+    """
+    # Extract base ticker before any parameters (e.g., ^IXIC?L=3?E=0.95 -> ^IXIC)
+    base_ticker = ticker.split('?')[0].upper()
+    
+    # Mapping from indices to equivalent ETFs
+    index_to_etf_mapping = {
+        # S&P 500 Sector Indices -> Sector ETFs
+        '^SP500-45': 'XLK',    # Technology
+        '^SP500-35': 'XLV',    # Healthcare
+        '^SP500-30': 'XLP',    # Consumer Staples
+        '^SP500-40': 'XLF',    # Financials
+        '^SP500-10': 'XLE',    # Energy
+        '^SP500-20': 'XLI',    # Industrials
+        '^SP500-25': 'XLY',    # Consumer Discretionary
+        '^SP500-15': 'XLB',    # Materials
+        '^SP500-55': 'XLU',    # Utilities
+        '^SP500-60': 'XLRE',   # Real Estate
+        '^SP500-50': 'XLC',    # Communication Services
+        
+        # Major Indices -> Major ETFs
+        '^IXIC': 'QQQ',        # NASDAQ Composite -> NASDAQ-100 ETF
+        '^NDX': 'QQQ',         # NASDAQ-100 -> NASDAQ-100 ETF
+        '^GSPC': 'SPY',        # S&P 500 -> S&P 500 ETF
+        '^SP500TR': 'SPY',     # S&P 500 Total Return -> S&P 500 ETF
+        '^DJI': 'DIA',         # Dow Jones -> Dow Jones ETF
+    }
+    
+    # Check if this is an index that should be converted to ETF
+    if base_ticker in index_to_etf_mapping:
+        etf_ticker = index_to_etf_mapping[base_ticker]
+        
+        # If we have parameters (like leverage), add them back to the ETF
+        if '?' in ticker:
+            parameters = ticker.split('?', 1)[1]  # Get everything after the first ?
+            return f"{etf_ticker}?{parameters}"
+        else:
+            return etf_ticker
+    
+    # If not an index or no mapping found, return original ticker
+    return ticker
+
 # =============================================================================
 # PERFORMANCE OPTIMIZATION: CACHING FUNCTIONS
 # =============================================================================
@@ -535,8 +581,8 @@ def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False
             print(f"📊 VALUATION: Using {underlying_ticker} stats for leveraged ticker {base_ticker}")
             resolved_ticker = underlying_ticker
         else:
-            # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange)
-            resolved_ticker = resolve_ticker_alias(base_ticker)
+            # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange, indices to ETFs)
+            resolved_ticker = resolve_index_to_etf_for_stats(resolve_ticker_alias(base_ticker))
         
         # Special handling for synthetic complete tickers
         if resolved_ticker == "SPYSIM_COMPLETE":
@@ -621,7 +667,7 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
                     except:
                         pass
         
-        resolved = resolve_ticker_alias(base_ticker)
+        resolved = resolve_index_to_etf_for_stats(resolve_ticker_alias(base_ticker))
         print(f"[BATCH DEBUG] {ticker_symbol} -> base={base_ticker}, resolved={resolved}, L={leverage}, E={expense_ratio}")
         yahoo_tickers.append((ticker_symbol, resolved, leverage, expense_ratio))
     
@@ -990,8 +1036,8 @@ def get_ticker_info(ticker_symbol):
             underlying_ticker = leveraged_map[base_ticker.upper()]
             resolved_ticker = underlying_ticker
         else:
-            # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange)
-            resolved_ticker = resolve_ticker_alias(base_ticker)
+            # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange, indices to ETFs)
+            resolved_ticker = resolve_index_to_etf_for_stats(resolve_ticker_alias(base_ticker))
         
         stock = yf.Ticker(resolved_ticker)
         info = stock.info
@@ -1029,7 +1075,7 @@ def get_multiple_tickers_info_batch(ticker_list):
         if base_ticker.upper() in leveraged_map:
             resolved = leveraged_map[base_ticker.upper()]
         else:
-            resolved = resolve_ticker_alias(base_ticker)
+            resolved = resolve_index_to_etf_for_stats(resolve_ticker_alias(base_ticker))
         
         resolved_map[ticker_symbol] = resolved
     
@@ -2074,7 +2120,7 @@ def generate_allocations_pdf(custom_name=""):
                 ])
         
         # Add tickers with enhanced information
-        tickers_data = [['Ticker', 'Allocation %', 'Include Dividends']]
+        tickers_data = [['Ticker', 'Allocation %', 'Reinvest Dividends']]
         for ticker_config in active_portfolio.get('stocks', []):
             tickers_data.append([
                 ticker_config['ticker'],
@@ -2124,7 +2170,7 @@ def generate_allocations_pdf(custom_name=""):
             story.append(Paragraph("Note: Momentum strategy is enabled - ticker allocations are calculated dynamically based on momentum scores.", styles['Normal']))
             
             # Create modified table without Allocation % column for momentum strategies
-            tickers_data_momentum = [['Ticker', 'Include Dividends']]
+            tickers_data_momentum = [['Ticker', 'Reinvest Dividends']]
             for ticker_config in active_portfolio.get('stocks', []):
                 tickers_data_momentum.append([
                     ticker_config['ticker'],
@@ -4465,8 +4511,10 @@ def paste_json_callback():
                                 # Already in decimal format, use as is
                                 allocation = alloc_value
                         
+                        # Resolve the alias to the actual Yahoo ticker
+                        resolved_ticker = resolve_ticker_alias(tickers[i].strip())
                         stock = {
-                            'ticker': tickers[i].strip(),
+                            'ticker': resolved_ticker,  # Use resolved ticker
                             'allocation': allocation,
                             'include_dividends': bool(divs[i]) if i < len(divs) and divs[i] is not None else True
                         }
@@ -4753,21 +4801,30 @@ def update_stock_ticker(index):
         elif upper_val == 'BRK.A':
             upper_val = 'BRK-A'
         
-        # CRITICAL: Resolve ticker alias BEFORE storing in portfolio config
-        resolved_ticker = resolve_ticker_alias(upper_val)
-
-        # Update the portfolio configuration with the resolved ticker (with leverage/expense)
-        st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][index]['ticker'] = resolved_ticker
+        # List of Canadian tickers that should NOT be auto-converted (keep US OTC version)
+        canadian_tickers_us_otc = ['CNSWF', 'MDALF', 'KRKNF', 'TOITF', 'LMGIF', 'DLMAF', 'FRFHF']
         
-        # Update the text box's state to show the resolved ticker (with leverage/expense visible)
-        st.session_state[key] = resolved_ticker
+        # AUTO-CONVERSION: Convert alias to real ticker for UI display
+        # BUT: Do NOT convert Canadian tickers (keep US OTC version for UI/backtests)
+        if upper_val in canadian_tickers_us_otc:
+            # Keep Canadian tickers as-is (US OTC version)
+            final_ticker = upper_val
+        else:
+            # Convert other aliases: SPYTR -> ^SP500TR, TQQQND -> ^NDX?L=3?E=0.95, etc.
+            final_ticker = resolve_ticker_alias(upper_val)
+        
+        # Update the portfolio configuration with the converted ticker
+        st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][index]['ticker'] = final_ticker
         
         # Auto-disable dividends for negative leverage (inverse ETFs)
-        if '?L=-' in resolved_ticker:
+        if '?L=-' in final_ticker:
             st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][index]['include_dividends'] = False
             # Also update the checkbox UI state
             div_key = f"alloc_div_{st.session_state.alloc_active_portfolio_index}_{index}"
             st.session_state[div_key] = False
+        
+        # Use the rerun flag system (can't use st.rerun() in a callback)
+        st.session_state.alloc_rerun_flag = True
 
     except Exception:
         # Defensive: if portfolio index or structure changed, skip silently
@@ -4792,8 +4849,8 @@ for i in range(len(active_portfolio['stocks'])):
     col_t, col_a, col_d, col_b = st.columns([0.2, 0.2, 0.3, 0.15])
     with col_t:
         ticker_key = f"alloc_ticker_{st.session_state.alloc_active_portfolio_index}_{i}"
-        if ticker_key not in st.session_state:
-            st.session_state[ticker_key] = stock['ticker']
+        # Always sync the session state with the portfolio config to show resolved ticker
+        st.session_state[ticker_key] = stock['ticker']
         st.text_input("Ticker", key=ticker_key, label_visibility="visible", on_change=update_stock_ticker, args=(i,))
     with col_a:
         use_mom = st.session_state.get('alloc_active_use_momentum', active_portfolio.get('use_momentum', True))
@@ -4808,9 +4865,18 @@ for i in range(len(active_portfolio['stocks'])):
             st.write("")
     with col_d:
         div_key = f"alloc_div_{st.session_state.alloc_active_portfolio_index}_{i}"
+        # Ensure include_dividends key exists with default value
+        if 'include_dividends' not in stock:
+            stock['include_dividends'] = True
+        
+        # Auto-disable dividends for negative leverage (inverse ETFs) ONLY on first display
+        # Don't override if user has explicitly set a value
+        if '?L=-' in stock['ticker'] and div_key not in st.session_state:
+            stock['include_dividends'] = False
+        
         if div_key not in st.session_state:
             st.session_state[div_key] = stock['include_dividends']
-        st.checkbox("Include Dividends", key=div_key)
+        st.checkbox("Reinvest Dividends", key=div_key)
         if st.session_state[div_key] != stock['include_dividends']:
             st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][i]['include_dividends'] = st.session_state[div_key]
         
@@ -5052,109 +5118,133 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
     # Get the actual ticker aliases from the function
     aliases = get_ticker_aliases()
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown("**📈 Stock Indices**")
-        stock_tickers = {
-            'S&P 500 (Price) (1927+)': '^GSPC',
-            'S&P 500 (Total Return) (1988+)': '^SP500TR', 
-            'NASDAQ Composite (1971+)': '^IXIC',
-            'NASDAQ 100 (1985+)': '^NDX',
-            'Dow Jones (1992+)': '^DJI'
+        stock_mapping = {
+            'S&P 500 (No Dividend) (1927+)': ('SPYND', '^GSPC'),
+            'S&P 500 (Total Return) (1988+)': ('SPYTR', '^SP500TR'), 
+            'NASDAQ (No Dividend) (1971+)': ('QQQND', '^IXIC'),
+            'NASDAQ 100 (1985+)': ('NDX', '^NDX'),
+            'Dow Jones (1992+)': ('DOW', '^DJI')
         }
         
-        for name, ticker in stock_tickers.items():
-            if st.button(f"➕ {name}", key=f"add_stock_{ticker}", help=f"Add {ticker}"):
+        for name, (alias, ticker) in stock_mapping.items():
+            if st.button(f"➕ {name}", key=f"add_stock_{ticker}", help=f"Add {alias} → {ticker}"):
+                # Ensure portfolio configs exist
+                if 'alloc_portfolio_configs' not in st.session_state:
+                    st.session_state.alloc_portfolio_configs = default_configs
+                if 'alloc_active_portfolio_index' not in st.session_state:
+                    st.session_state.alloc_active_portfolio_index = 0
+                
                 portfolio_index = st.session_state.alloc_active_portfolio_index
+                # Resolve the alias to the actual Yahoo ticker before storing
+                resolved_ticker = resolve_ticker_alias(alias)
                 st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
-                    'ticker': ticker, 
+                    'ticker': resolved_ticker,  # Add the resolved Yahoo ticker
                     'allocation': 0.0, 
                     'include_dividends': True
                 })
-                st.session_state.alloc_rerun_flag = True
+                st.rerun()
     
     with col2:
-        st.markdown("**🏛️ Treasury Bonds & T-Bills**")
-        bond_tickers = {
-            '10Y Treasury Yield (1962+)': '^TNX',
-            '30Y Treasury Yield (1977+)': '^TYX',
-            '5Y Treasury Yield (1962+)': '^FVX',
-            '3M Treasury Yield (1960+)': '^IRX',
-            '20+ Year Treasury ETF (2002+)': 'TLT',
-            '7-10 Year Treasury ETF (2002+)': 'IEF',
-            '25+ Year Zero Coupon (2009+)': 'ZROZ',
-            '25+ Year Treasury STRIPS (2020+)': 'GOVZ',
-            'Extended Duration Treasury ETF (2008+)': 'EDV',
-            '1-3 Year Treasury ETF (2002+)': 'SHY',
-            '1-3 Month T-Bill ETF (2007+)': 'BIL',
-            '0-3 Month T-Bill ETF (2020+)': 'SGOV',
-            'Cash (Zero Return)': 'ZEROX'
+        st.markdown("**🏭 Sector Indices**")
+        sector_mapping = {
+            'Technology (XLK) (1990+)': ('XLKND', '^SP500-45'),
+            'Healthcare (XLV) (1990+)': ('XLVND', '^SP500-35'),
+            'Consumer Staples (XLP) (1990+)': ('XLPND', '^SP500-30'),
+            'Financials (XLF) (1990+)': ('XLFND', '^SP500-40'),
+            'Energy (XLE) (1990+)': ('XLEND', '^SP500-10'),
+            'Industrials (XLI) (1990+)': ('XLIND', '^SP500-20'),
+            'Consumer Discretionary (XLY) (1990+)': ('XLYND', '^SP500-25'),
+            'Materials (XLB) (1990+)': ('XLBND', '^SP500-15'),
+            'Utilities (XLU) (1990+)': ('XLUND', '^SP500-55'),
+            'Real Estate (XLRE) (1990+)': ('XLREND', '^SP500-60'),
+            'Communication Services (XLC) (1990+)': ('XLCND', '^SP500-50')
         }
         
-        for name, ticker in bond_tickers.items():
-            if st.button(f"➕ {name}", key=f"add_bond_{ticker}", help=f"Add {ticker}"):
-                portfolio_index = st.session_state.alloc_active_portfolio_index
-                st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
-                    'ticker': ticker, 
-                    'allocation': 0.0, 
-                    'include_dividends': True
-                })
-                st.session_state.alloc_rerun_flag = True
+        for name, (alias, ticker) in sector_mapping.items():
+            if st.button(f"➕ {name}", key=f"add_sector_{ticker}", help=f"Add {alias} → {ticker}"):
+                 # Ensure portfolio configs exist
+                 if 'alloc_portfolio_configs' not in st.session_state:
+                     st.session_state.alloc_portfolio_configs = default_configs
+                 if 'alloc_active_portfolio_index' not in st.session_state:
+                     st.session_state.alloc_active_portfolio_index = 0
+                 
+                 portfolio_index = st.session_state.alloc_active_portfolio_index
+                 # Resolve the alias to the actual Yahoo ticker before storing
+                 resolved_ticker = resolve_ticker_alias(alias)
+                 st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
+                     'ticker': resolved_ticker,  # Add the resolved Yahoo ticker
+                     'allocation': 0.0, 
+                     'include_dividends': True
+                 })
+                 st.rerun()
     
     with col3:
-        st.markdown("**🥇 Gold & Commodities**")
-        commodity_tickers = {
-            'Gold Futures (2000+)': 'GC=F',
-            'SPDR Gold ETF (2004+)': 'GLD',
-            'iShares Gold ETF (2005+)': 'IAU',
-            'Gold & Silver Index (1983+)': '^XAU'
-        }
-        
-        for name, ticker in commodity_tickers.items():
-            if st.button(f"➕ {name}", key=f"add_commodity_{ticker}", help=f"Add {ticker}"):
-                portfolio_index = st.session_state.alloc_active_portfolio_index
-                st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
-                    'ticker': ticker, 
-                    'allocation': 0.0, 
-                    'include_dividends': True
-                })
-                st.session_state.alloc_rerun_flag = True
-    
-    with col4:
         st.markdown("**🔬 Synthetic Tickers**")
         synthetic_tickers = {
-            'Complete SPY Dataset (1927+)': 'SPYSIM_COMPLETE',
-            'Complete Gold Dataset (1970+)': 'GOLDSIM_COMPLETE',
-            'Complete ZROZ Dataset (1952+)': 'ZROZ_COMPLETE',
-            'Complete TLT Dataset (1952+)': 'TLT_COMPLETE',
-            'Complete IEF Dataset (1952+)': 'IEF_COMPLETE',
-            'Complete T-Bill Dataset (1952+)': 'TBILL_COMPLETE',
-            'Complete KMLM Dataset (1992+)': 'KMLM_COMPLETE',
-            'Complete DBMF Dataset (2000+)': 'DBMF_COMPLETE',
-            'Complete Bitcoin Dataset (2010+)': 'BTC_COMPLETE',
+            # Ordered by asset class: Stocks → Bonds → Gold → Managed Futures → Bitcoin
+            'Complete S&P 500 Simulation (1885+)': ('SPYSIM', 'SPYSIM_COMPLETE'),
+            'Dynamic S&P 500 Top 20 (Historical)': ('SP500TOP20', 'SP500TOP20'),
+            'Complete TBILL Dataset (1948+)': ('TBILL', 'TBILL_COMPLETE'),
+            'Complete IEF Dataset (1962+)': ('IEFTR', 'IEF_COMPLETE'),
+            'Complete TLT Dataset (1962+)': ('TLTTR', 'TLT_COMPLETE'),
+            'Complete ZROZ Dataset (1962+)': ('ZROZX', 'ZROZ_COMPLETE'),
+            'Complete Gold Simulation (1968+)': ('GOLDSIM', 'GOLDSIM_COMPLETE'),
+            'Complete Gold Dataset (1975+)': ('GOLDX', 'GOLD_COMPLETE'),
+            'Complete KMLM Dataset (1992+)': ('KMLMX', 'KMLM_COMPLETE'),
+            'Complete DBMF Dataset (2000+)': ('DBMFX', 'DBMF_COMPLETE'),
+            'Complete Bitcoin Dataset (2010+)': ('BITCOINX', 'BTC_COMPLETE'),
             
-            # Leveraged & Inverse ETFs (Synthetic)
-            'Simulated TQQQ (3x QQQ)': '^IXIC?L=3?E=0.95',
-            'Simulated SPXL (3x SPY)': '^SP500TR?L=3?E=1.00',
-            'Simulated UPRO (3x SPY)': '^SP500TR?L=3?E=0.91',
-            'Simulated QLD (2x QQQ)': '^IXIC?L=2?E=0.95',
-            'Simulated SSO (2x SPY)': '^SP500TR?L=2?E=0.91',
-            'Simulated SH (-1x SPY)': '^GSPC?L=-1?E=0.89',
-            'Simulated PSQ (-1x QQQ)': '^IXIC?L=-1?E=0.95',
-            'Simulated SDS (-2x SPY)': '^GSPC?L=-2?E=0.91',
-            'Simulated QID (-2x QQQ)': '^IXIC?L=-2?E=0.95',
-            'Simulated SPXU (-3x SPY)': '^GSPC?L=-3?E=1.00',
-            'Simulated SQQQ (-3x QQQ)': '^IXIC?L=-3?E=0.95'
+            # Leveraged & Inverse ETFs (Synthetic) - NASDAQ-100 versions
+            'Simulated TQQQ (3x QQQ) (1985+)': ('TQQQND', '^NDX?L=3?E=0.95'),
+            'Simulated QLD (2x QQQ) (1985+)': ('QLDND', '^NDX?L=2?E=0.95'),
+            'Simulated PSQ (-1x QQQ) (1985+)': ('PSQND', '^NDX?L=-1?E=0.95'),
+            'Simulated QID (-2x QQQ) (1985+)': ('QIDND', '^NDX?L=-2?E=0.95'),
+            'Simulated SQQQ (-3x QQQ) (1985+)': ('SQQQND', '^NDX?L=-3?E=0.95'),
+            
+            # Leveraged & Inverse ETFs (Synthetic) - NASDAQ Composite versions (longer history)
+            'Simulated TQQQ-IXIC (3x IXIC) (1971+)': ('TQQQIXIC', '^IXIC?L=3?E=0.95'),
+            'Simulated QLD-IXIC (2x IXIC) (1971+)': ('QLDIXIC', '^IXIC?L=2?E=0.95'),
+            'Simulated PSQ-IXIC (-1x IXIC) (1971+)': ('PSQIXIC', '^IXIC?L=-1?E=0.95'),
+            'Simulated QID-IXIC (-2x IXIC) (1971+)': ('QIDIXIC', '^IXIC?L=-2?E=0.95'),
+            'Simulated SQQQ-IXIC (-3x IXIC) (1971+)': ('SQQQIXIC', '^IXIC?L=-3?E=0.95'),
+            
+            # S&P 500 leveraged/inverse (unchanged)
+            'Simulated SPXL (3x SPY) (1988+)': ('SPXLTR', '^SP500TR?L=3?E=1.00'),
+            'Simulated UPRO (3x SPY) (1988+)': ('UPROTR', '^SP500TR?L=3?E=0.91'),
+            'Simulated SSO (2x SPY) (1988+)': ('SSOTR', '^SP500TR?L=2?E=0.91'),
+            'Simulated SH (-1x SPY) (1927+)': ('SHND', '^GSPC?L=-1?E=0.89'),
+            'Simulated SDS (-2x SPY) (1927+)': ('SDSND', '^GSPC?L=-2?E=0.91'),
+            'Simulated SPXU (-3x SPY) (1927+)': ('SPXUND', '^GSPC?L=-3?E=1.00')
         }
         
-        for name, ticker in synthetic_tickers.items():
-            if st.button(f"➕ {name}", key=f"add_synthetic_{ticker}", help=f"Add {ticker}"):
+        for name, (alias, ticker) in synthetic_tickers.items():
+            # Custom help text for different ticker types
+            if alias == 'SP500TOP20':
+                help_text = "Add SP500TOP20 → SP500TOP20 - BETA ticker: Dynamic portfolio of top 20 S&P 500 companies rebalanced annually based on historical market cap data"
+            elif 'IXIC' in ticker:
+                # Special warning for IXIC versions
+                help_text = f"Add {alias} → {ticker} ⚠️ WARNING: This tracks NASDAQ Composite (broader index), NOT NASDAQ-100 like the real ETF!"
+            else:
+                help_text = f"Add {alias} → {ticker}"
+            
+            if st.button(f"➕ {name}", key=f"add_synthetic_{ticker}", help=help_text):
+                # Ensure portfolio configs exist
+                if 'alloc_portfolio_configs' not in st.session_state:
+                    st.session_state.alloc_portfolio_configs = default_configs
+                if 'alloc_active_portfolio_index' not in st.session_state:
+                    st.session_state.alloc_active_portfolio_index = 0
+                
                 portfolio_index = st.session_state.alloc_active_portfolio_index
+                # Resolve the alias to the actual ticker before storing
+                resolved_ticker = resolve_ticker_alias(alias)
                 # Auto-disable dividends for negative leverage (inverse ETFs)
-                include_divs = False if '?L=-' in ticker else True
+                include_divs = False if '?L=-' in resolved_ticker else True
                 st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
-                    'ticker': ticker,
+                    'ticker': resolved_ticker,  # Add the resolved ticker
                     'allocation': 0.0, 
                     'include_dividends': include_divs
                 })
@@ -5268,17 +5358,19 @@ with st.expander("📝 Bulk Ticker Input", expanded=False):
                 new_stocks = []
                 
                 for i, ticker in enumerate(ticker_list):
+                    # Resolve the alias to the actual Yahoo ticker
+                    resolved_ticker = resolve_ticker_alias(ticker)
                     if i < len(current_stocks):
                         # Use existing allocation if available
                         new_stocks.append({
-                            'ticker': ticker,
+                            'ticker': resolved_ticker,  # Use resolved ticker
                             'allocation': current_stocks[i]['allocation'],
                             'include_dividends': current_stocks[i]['include_dividends']
                         })
                     else:
                         # New tickers get 0% allocation
                         new_stocks.append({
-                            'ticker': ticker,
+                            'ticker': resolved_ticker,  # Use resolved ticker
                             'allocation': 0.0,
                             'include_dividends': True
                         })
@@ -5323,11 +5415,13 @@ with st.expander("📝 Bulk Ticker Input", expanded=False):
                     
                     # Add new tickers to existing ones
                     for ticker in ticker_list:
+                        # Resolve the alias to the actual Yahoo ticker
+                        resolved_ticker = resolve_ticker_alias(ticker)
                         # Check if ticker already exists
-                        ticker_exists = any(stock['ticker'] == ticker for stock in current_stocks)
+                        ticker_exists = any(stock['ticker'] == resolved_ticker for stock in current_stocks)
                         if not ticker_exists:
                             current_stocks.append({
-                                'ticker': ticker,
+                                'ticker': resolved_ticker,  # Use resolved ticker
                                 'allocation': 0.0,
                                 'include_dividends': True
                             })
@@ -6603,6 +6697,70 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             # Save portfolio index -> unique key mapping so UI selectors can reference results reliably
             st.session_state.alloc_portfolio_key_map = portfolio_key_map
             st.session_state.alloc_backtest_run = True
+            
+            # ===================================================================
+            # Calculate and store PE immediately after backtest
+            # ===================================================================
+            try:
+                # Get the today_weights for the active portfolio
+                active_name = active_portfolio.get('name')
+                if active_name in today_weights_map:
+                    today_weights = today_weights_map[active_name]
+                    
+                    # Get portfolio value
+                    active_idx = st.session_state.alloc_active_portfolio_index
+                    portfolio_value = float(st.session_state.get('alloc_active_initial', active_portfolio.get('initial_value', 0) or 0))
+                    
+                    # Get ticker info in batch
+                    tickers = [tk for tk in today_weights.keys() if tk != 'CASH']
+                    if tickers:
+                        all_infos = get_multiple_tickers_info_batch(tickers)
+                        
+                        # Build rows with PE data
+                        rows = []
+                        for ticker in tickers:
+                            info = all_infos.get(ticker, {})
+                            alloc_pct = float(today_weights.get(ticker, 0))
+                            allocation_value = portfolio_value * alloc_pct
+                            total_val = allocation_value
+                            pct_of_portfolio = (total_val / portfolio_value * 100) if portfolio_value > 0 else 0
+                            
+                            rows.append({
+                                'Ticker': ticker,
+                                'P/E Ratio': info.get('trailingPE'),
+                                'Forward P/E': info.get('forwardPE'),
+                                'Beta': info.get('beta'),
+                                '% of Portfolio': pct_of_portfolio
+                            })
+                        
+                        if rows:
+                            df_temp = pd.DataFrame(rows)
+                            
+                            # Calculate weighted averages
+                            def weighted_average(df, column, weight_column='% of Portfolio'):
+                                if column not in df.columns or weight_column not in df.columns:
+                                    return None
+                                valid_mask = df[column].notna() & df[weight_column].notna()
+                                if 'P/E' in column or 'PE' in column:
+                                    valid_mask = valid_mask & (df[column] > 0) & (df[column] <= 1000)
+                                elif column == 'Beta':
+                                    valid_mask = valid_mask & (df[column] >= -5) & (df[column] <= 5)
+                                if valid_mask.sum() == 0:
+                                    return None
+                                valid_df = df[valid_mask]
+                                result = (valid_df[column] * valid_df[weight_column] / 100).sum() / (valid_df[weight_column].sum() / 100)
+                                return result
+                            
+                            # Calculate and store PE, Forward PE, and Beta
+                            st.session_state.portfolio_pe = weighted_average(df_temp, 'P/E Ratio')
+                            st.session_state.portfolio_forward_pe = weighted_average(df_temp, 'Forward P/E')
+                            st.session_state.portfolio_beta = weighted_average(df_temp, 'Beta')
+                            
+                            # Store snapshot of tickers for photo fixe
+                            st.session_state.backtest_stocks_snapshot = tickers
+                    
+            except Exception as e:
+                pass
 
 # Sidebar JSON export/import for ALL portfolios
 def paste_all_json_callback():
@@ -6699,8 +6857,10 @@ def paste_all_json_callback():
                                         # Already in decimal format, use as is
                                         allocation = alloc_value
                                 
+                                # Resolve the alias to the actual Yahoo ticker
+                                resolved_ticker = resolve_ticker_alias(tickers[i].strip())
                                 stock = {
-                                    'ticker': tickers[i].strip(),
+                                    'ticker': resolved_ticker,  # Use resolved ticker
                                     'allocation': allocation,
                                     'include_dividends': bool(divs[i]) if i < len(divs) and divs[i] is not None else True
                                 }
@@ -6841,6 +7001,7 @@ def paste_all_json_callback():
             st.error('JSON must be a list of portfolio configurations.')
     except Exception as e:
         st.error(f'Failed to parse JSON: {e}')
+
 
 
 
@@ -7927,14 +8088,11 @@ if st.session_state.get('alloc_backtest_run', False):
                     st.markdown("- **Source**: Direct calculation using Yahoo Finance data")
                     st.markdown("- **Realistic ranges**: <1.0 (undervalued), 1.0-1.5 (fair), >2.0 (overvalued)")
             
-
-
         
         # Add Portfolio Weighted Returns before Shares table
         st.markdown("### 📈 **Portfolio Weighted Returns**")
         
-        # Warning about PE reliability
-        st.warning("⚠️ **ATTENTION:** Le P/E affiché n'est PAS fiable et peut être incorrect. Pour avoir le bon P/E, vous devez rafraîchir la page complètement.")
+        # PE is now calculated directly and always up-to-date - no warning needed
         
         def calculate_portfolio_weighted_returns(available_data=None):
             """Calculate weighted portfolio returns for different periods"""
@@ -8000,14 +8158,108 @@ if st.session_state.get('alloc_backtest_run', False):
                     for period_name in periods.keys():
                         historical_returns[period_name] = 'N/A'
                 
-                # Get REAL PE value from session state
+                # NUCLEAR OPTION: Use backtest results directly (same as performance calculations)
                 portfolio_pe_calculated = 'N/A'
                 try:
-                    pe_value = getattr(st.session_state, 'portfolio_pe', None)
-                    if pe_value is not None and pd.notna(pe_value) and pe_value > 0:
-                        portfolio_pe_calculated = f"{pe_value:.2f}"
-                except Exception:
+                    print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Using backtest results directly (same as performance)...")
+                    
+                    # Use the SAME data source as performance calculations: alloc_all_results
+                    all_results = st.session_state.get('alloc_all_results', {})
+                    if active_name in all_results:
+                        # Get portfolio info directly from backtest results
+                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Found backtest results for {active_name}")
+                        
+                        # Try to get PE from session state (calculated during backtest)
+                        session_pe = getattr(st.session_state, 'portfolio_pe', None)
+                        if session_pe is not None and not pd.isna(session_pe):
+                            portfolio_pe_calculated = f"{session_pe:.2f}"
+                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Using session state PE: {portfolio_pe_calculated}")
+                        else:
+                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No session state PE available")
+                            
+                            # EMERGENCY FALLBACK: Calculate PE directly from portfolio config (like performance does)
+                            if active_portfolio and 'stocks' in active_portfolio:
+                                print(f"[NUCLEAR PE DEBUG - Portfolio Returns] EMERGENCY: Calculating PE directly from config...")
+                                portfolio_tickers = [stock['ticker'] for stock in active_portfolio['stocks'] if stock.get('ticker')]
+                                portfolio_allocations = {stock['ticker']: stock.get('allocation', 0) for stock in active_portfolio['stocks'] if stock.get('ticker')}
+                                
+                                if portfolio_tickers:
+                                    # Fetch fresh info for portfolio tickers
+                                    portfolio_info = get_multiple_tickers_info_batch(portfolio_tickers)
+                                    
+                                    # Calculate weighted PE
+                                    total_weighted_pe = 0.0
+                                    total_weight = 0.0
+                                    valid_pe_count = 0
+                                    
+                                    for ticker in portfolio_tickers:
+                                        weight = portfolio_allocations.get(ticker, 0)
+                                        if weight <= 0:
+                                            continue
+                                            
+                                        info = portfolio_info.get(ticker, {})
+                                        pe = info.get('trailingPE')
+                                        
+                                        if pe is not None and pe > 0 and pe <= 1000:
+                                            total_weighted_pe += pe * weight
+                                            total_weight += weight
+                                            valid_pe_count += 1
+                                    
+                                    if total_weight > 0 and valid_pe_count > 0:
+                                        weighted_pe = total_weighted_pe / total_weight
+                                        portfolio_pe_calculated = f"{weighted_pe:.2f}"
+                                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] EMERGENCY: Calculated PE: {portfolio_pe_calculated}")
+                    else:
+                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No backtest results found for {active_name}")
+                    
+                    # Fallback to df_comprehensive if available (but this is secondary)
+                    if portfolio_pe_calculated == 'N/A' and hasattr(st.session_state, 'df_comprehensive') and st.session_state.df_comprehensive is not None:
+                        df_comp = st.session_state.df_comprehensive
+                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Using backtest data, shape: {df_comp.shape}")
+                        
+                        if not df_comp.empty and 'P/E Ratio' in df_comp.columns and '% of Portfolio' in df_comp.columns:
+                            # Convert PE Ratio to numeric, replacing 'N/A' with NaN
+                            pe_numeric = pd.to_numeric(df_comp['P/E Ratio'], errors='coerce')
+                            
+                            # Convert % of Portfolio to numeric, handling percentage strings like '24.83%'
+                            portfolio_pct_str = df_comp['% of Portfolio'].astype(str)
+                            portfolio_pct_numeric = portfolio_pct_str.str.replace('%', '').apply(pd.to_numeric, errors='coerce')
+                            
+                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] PE values: {pe_numeric.tolist()}")
+                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Portfolio % values: {portfolio_pct_numeric.tolist()}")
+                            
+                            # Apply same logic as weighted_average function
+                            valid_mask = pe_numeric.notna() & portfolio_pct_numeric.notna()
+                            valid_mask = valid_mask & (pe_numeric > 0) & (pe_numeric <= 1000)
+                            
+                            if valid_mask.sum() > 0:
+                                valid_pe_numeric = pe_numeric[valid_mask]
+                                valid_portfolio_pct = portfolio_pct_numeric[valid_mask]
+                                
+                                # Calculate weighted average (weights are already in percentage)
+                                weighted_pe = (valid_pe_numeric * valid_portfolio_pct / 100).sum() / (valid_portfolio_pct.sum() / 100)
+                                portfolio_pe_calculated = f"{weighted_pe:.2f}"
+                                print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Calculated PE from backtest data: {portfolio_pe_calculated}")
+                            else:
+                                print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No valid PE values in backtest data!")
+                        else:
+                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Backtest data missing required columns!")
+                    else:
+                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No backtest data available - keeping PE as N/A")
+                        # TEMPORARY: Check if we have session state PE as fallback
+                        session_pe = getattr(st.session_state, 'portfolio_pe', None)
+                        if session_pe is not None and not pd.isna(session_pe):
+                            portfolio_pe_calculated = f"{session_pe:.2f}"
+                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Using session state PE as fallback: {portfolio_pe_calculated}")
+                        else:
+                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No session state PE either - keeping N/A")
+                except Exception as e:
+                    print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Error: {e}")
+                    import traceback
+                    traceback.print_exc()
                     pass
+                
+                print(f"[NUCLEAR PE DEBUG - Portfolio Returns] FINAL portfolio_pe_calculated: {portfolio_pe_calculated}")
                 
                 # Calculate Volatility and Beta for historical portfolio (last 252 trading days / ~1 year)
                 portfolio_volatility = 'N/A'
@@ -8279,8 +8531,7 @@ if st.session_state.get('alloc_backtest_run', False):
         # Add Benchmark Comparison Table
         st.markdown("### 📊 **Benchmark Comparison**")
         
-        # Warning about PE reliability
-        st.warning("⚠️ **ATTENTION:** Le P/E affiché n'est PAS fiable et peut être incorrect. Pour avoir le bon P/E, vous devez rafraîchir la page complètement.")
+        # PE is now calculated directly and always up-to-date - no warning needed
         
         def calculate_benchmark_returns(available_data=None, preloaded_info=None):
             """Calculate returns for benchmark tickers"""
@@ -8366,13 +8617,105 @@ if st.session_state.get('alloc_backtest_run', False):
                 # Add PORTFOLIO as first row
                 portfolio_returns_dict['Ticker'] = 'PORTFOLIO'
                 
-                # Get REAL PE value from session state
+                # NUCLEAR OPTION: Use backtest results directly (same as performance calculations)
                 portfolio_pe_calculated = 'N/A'
                 try:
-                    pe_value = getattr(st.session_state, 'portfolio_pe', None)
-                    if pe_value is not None and pd.notna(pe_value) and pe_value > 0:
-                        portfolio_pe_calculated = f"{pe_value:.2f}"
-                except Exception:
+                    print(f"[NUCLEAR PE DEBUG - Benchmark] Using backtest results directly (same as performance)...")
+                    
+                    # Use the SAME data source as performance calculations: alloc_all_results
+                    all_results = st.session_state.get('alloc_all_results', {})
+                    if active_name in all_results:
+                        # Get portfolio info directly from backtest results
+                        print(f"[NUCLEAR PE DEBUG - Benchmark] Found backtest results for {active_name}")
+                        
+                        # Try to get PE from session state (calculated during backtest)
+                        session_pe = getattr(st.session_state, 'portfolio_pe', None)
+                        if session_pe is not None and not pd.isna(session_pe):
+                            portfolio_pe_calculated = f"{session_pe:.2f}"
+                            print(f"[NUCLEAR PE DEBUG - Benchmark] Using session state PE: {portfolio_pe_calculated}")
+                        else:
+                            print(f"[NUCLEAR PE DEBUG - Benchmark] No session state PE available")
+                            
+                            # EMERGENCY FALLBACK: Calculate PE directly from portfolio config (like performance does)
+                            if active_portfolio and 'stocks' in active_portfolio:
+                                print(f"[NUCLEAR PE DEBUG - Benchmark] EMERGENCY: Calculating PE directly from config...")
+                                portfolio_tickers = [stock['ticker'] for stock in active_portfolio['stocks'] if stock.get('ticker')]
+                                portfolio_allocations = {stock['ticker']: stock.get('allocation', 0) for stock in active_portfolio['stocks'] if stock.get('ticker')}
+                                
+                                if portfolio_tickers:
+                                    # Fetch fresh info for portfolio tickers
+                                    portfolio_info = get_multiple_tickers_info_batch(portfolio_tickers)
+                                    
+                                    # Calculate weighted PE
+                                    total_weighted_pe = 0.0
+                                    total_weight = 0.0
+                                    valid_pe_count = 0
+                                    
+                                    for ticker in portfolio_tickers:
+                                        weight = portfolio_allocations.get(ticker, 0)
+                                        if weight <= 0:
+                                            continue
+                                            
+                                        info = portfolio_info.get(ticker, {})
+                                        pe = info.get('trailingPE')
+                                        
+                                        if pe is not None and pe > 0 and pe <= 1000:
+                                            total_weighted_pe += pe * weight
+                                            total_weight += weight
+                                            valid_pe_count += 1
+                                    
+                                    if total_weight > 0 and valid_pe_count > 0:
+                                        weighted_pe = total_weighted_pe / total_weight
+                                        portfolio_pe_calculated = f"{weighted_pe:.2f}"
+                                        print(f"[NUCLEAR PE DEBUG - Benchmark] EMERGENCY: Calculated PE: {portfolio_pe_calculated}")
+                    else:
+                        print(f"[NUCLEAR PE DEBUG - Benchmark] No backtest results found for {active_name}")
+                    
+                    # Fallback to df_comprehensive if available (but this is secondary)
+                    if portfolio_pe_calculated == 'N/A' and hasattr(st.session_state, 'df_comprehensive') and st.session_state.df_comprehensive is not None:
+                        df_comp = st.session_state.df_comprehensive
+                        print(f"[NUCLEAR PE DEBUG - Benchmark] Using backtest data, shape: {df_comp.shape}")
+                        
+                        if not df_comp.empty and 'P/E Ratio' in df_comp.columns and '% of Portfolio' in df_comp.columns:
+                            # Convert PE Ratio to numeric, replacing 'N/A' with NaN
+                            pe_numeric = pd.to_numeric(df_comp['P/E Ratio'], errors='coerce')
+                            
+                            # Convert % of Portfolio to numeric, handling percentage strings like '24.83%'
+                            portfolio_pct_str = df_comp['% of Portfolio'].astype(str)
+                            portfolio_pct_numeric = portfolio_pct_str.str.replace('%', '').apply(pd.to_numeric, errors='coerce')
+                            
+                            print(f"[NUCLEAR PE DEBUG - Benchmark] PE values: {pe_numeric.tolist()}")
+                            print(f"[NUCLEAR PE DEBUG - Benchmark] Portfolio % values: {portfolio_pct_numeric.tolist()}")
+                            
+                            # Apply same logic as weighted_average function
+                            valid_mask = pe_numeric.notna() & portfolio_pct_numeric.notna()
+                            valid_mask = valid_mask & (pe_numeric > 0) & (pe_numeric <= 1000)
+                            
+                            if valid_mask.sum() > 0:
+                                valid_pe_numeric = pe_numeric[valid_mask]
+                                valid_portfolio_pct = portfolio_pct_numeric[valid_mask]
+                                
+                                # Calculate weighted average (weights are already in percentage)
+                                weighted_pe = (valid_pe_numeric * valid_portfolio_pct / 100).sum() / (valid_portfolio_pct.sum() / 100)
+                                portfolio_pe_calculated = f"{weighted_pe:.2f}"
+                                print(f"[NUCLEAR PE DEBUG - Benchmark] Calculated PE from backtest data: {portfolio_pe_calculated}")
+                            else:
+                                print(f"[NUCLEAR PE DEBUG - Benchmark] No valid PE values in backtest data!")
+                        else:
+                            print(f"[NUCLEAR PE DEBUG - Benchmark] Backtest data missing required columns!")
+                    else:
+                        print(f"[NUCLEAR PE DEBUG - Benchmark] No backtest data available - keeping PE as N/A")
+                        # TEMPORARY: Check if we have session state PE as fallback
+                        session_pe = getattr(st.session_state, 'portfolio_pe', None)
+                        if session_pe is not None and not pd.isna(session_pe):
+                            portfolio_pe_calculated = f"{session_pe:.2f}"
+                            print(f"[NUCLEAR PE DEBUG - Benchmark] Using session state PE as fallback: {portfolio_pe_calculated}")
+                        else:
+                            print(f"[NUCLEAR PE DEBUG - Benchmark] No session state PE either - keeping N/A")
+                except Exception as e:
+                    print(f"[NUCLEAR PE DEBUG - Benchmark] Error: {e}")
+                    import traceback
+                    traceback.print_exc()
                     pass
                 portfolio_volatility_calculated = 'N/A'
                 portfolio_beta_calculated = 'N/A'
@@ -8442,7 +8785,11 @@ if st.session_state.get('alloc_backtest_run', False):
                         info = preloaded_info.get(ticker, {})
                         if info and 'trailingPE' in info and info['trailingPE'] is not None:
                             ticker_pe = f"{info['trailingPE']:.2f}"
-                    except Exception:
+                        else:
+                            # Debug: Check what info we actually have for this ticker
+                            print(f"[BENCHMARK PE DEBUG] {ticker}: trailingPE = {info.get('trailingPE', 'NOT_FOUND')}")
+                    except Exception as e:
+                        print(f"[BENCHMARK PE DEBUG] {ticker}: Error = {e}")
                         pass
                     
                     ticker_returns['PE'] = ticker_pe
@@ -9056,14 +9403,13 @@ if st.session_state.get('alloc_backtest_run', False):
                             if 'Close' not in df.columns:
                                 continue
                             
-                            # Calculate different period returns
+                            # Calculate different period returns (using trading days approximation - same as Benchmark Comparison)
                             periods = {
-                                '1W': 7,
-                                '1M': 30,
-                                '3M': 90,
-                                '6M': 180,
-                                'YTD': (today - pd.Timestamp(today.year, 1, 1).date()).days,
-                                '1Y': 365
+                                '1W': 5,      # 5 trading days
+                                '1M': 21,     # ~21 trading days per month
+                                '3M': 63,     # ~63 trading days per quarter
+                                '6M': 126,    # ~126 trading days per half year
+                                '1Y': 252     # ~252 trading days per year
                             }
                             
                             current_price = df['Close'].iloc[-1]
@@ -9092,39 +9438,107 @@ if st.session_state.get('alloc_backtest_run', False):
                         # Sort by ticker name
                         df_returns = df_returns.sort_values('Ticker').reset_index(drop=True)
                         
-                        # Add weighted portfolio return row
-                        weighted_row = {'Ticker': 'PORTFOLIO'}
+                        # Add weighted portfolio return row - use same backtest data as Benchmark Comparison
+                        weighted_row = {'Ticker': 'PORTFOLIO HISTORICAL'}
                         
-                        for period_name, days in periods.items():
-                            try:
-                                weighted_return = 0.0
-                                valid_weights = 0.0
-                                
-                                for _, row in df_returns.iterrows():
-                                    ticker = row['Ticker']
-                                    return_str = row[period_name]
+                        # Use backtest results directly for portfolio returns (same as Benchmark Comparison)
+                        try:
+                            active_name = active_portfolio.get('name') if active_portfolio else None
+                            all_results = st.session_state.get('alloc_all_results', {})
+                            
+                            if active_name in all_results:
+                                portfolio_result = all_results[active_name]
+                                if 'no_additions' in portfolio_result:
+                                    portfolio_values = portfolio_result['no_additions']
                                     
-                                    if return_str != 'N/A' and ticker in final_alloc:
+                                    for period_name, days in periods.items():
                                         try:
-                                            # Parse return percentage
-                                            return_pct = float(return_str.replace('%', '').replace('+', ''))
-                                            # Get allocation weight
-                                            weight = final_alloc[ticker]
-                                            # Add weighted return
-                                            weighted_return += return_pct * weight
-                                            valid_weights += weight
-                                        except (ValueError, KeyError):
-                                            continue
-                                
-                                if valid_weights > 0:
-                                    # Normalize by actual weights used
-                                    final_weighted_return = weighted_return / valid_weights
-                                    weighted_row[period_name] = f"{final_weighted_return:+.2f}%"
+                                            # Ensure we have enough data points
+                                            if len(portfolio_values) < days + 1:
+                                                weighted_row[period_name] = 'N/A'
+                                                continue
+                                            
+                                            # Get current and past values safely
+                                            current_value = portfolio_values.iloc[-1]
+                                            past_value = portfolio_values.iloc[-(days + 1)]
+                                            
+                                            if past_value > 0:
+                                                return_pct = ((current_value - past_value) / past_value) * 100
+                                                weighted_row[period_name] = f"{return_pct:+.2f}%"
+                                            else:
+                                                weighted_row[period_name] = 'N/A'
+                                                
+                                        except (IndexError, KeyError):
+                                            weighted_row[period_name] = 'N/A'
                                 else:
+                                    # Fallback to weighted calculation if no backtest data
+                                    for period_name, days in periods.items():
+                                        try:
+                                            weighted_return = 0.0
+                                            valid_weights = 0.0
+                                            
+                                            for _, row in df_returns.iterrows():
+                                                ticker = row['Ticker']
+                                                return_str = row[period_name]
+                                                
+                                                if return_str != 'N/A' and ticker in final_alloc:
+                                                    try:
+                                                        # Parse return percentage
+                                                        return_pct = float(return_str.replace('%', '').replace('+', ''))
+                                                        # Get allocation weight
+                                                        weight = final_alloc[ticker]
+                                                        # Add weighted return
+                                                        weighted_return += return_pct * weight
+                                                        valid_weights += weight
+                                                    except (ValueError, KeyError):
+                                                        continue
+                                            
+                                            if valid_weights > 0:
+                                                # Normalize by actual weights used
+                                                final_weighted_return = weighted_return / valid_weights
+                                                weighted_row[period_name] = f"{final_weighted_return:+.2f}%"
+                                            else:
+                                                weighted_row[period_name] = 'N/A'
+                                                
+                                        except Exception:
+                                            weighted_row[period_name] = 'N/A'
+                            else:
+                                # Fallback: all N/A if no portfolio data
+                                for period_name in periods.keys():
                                     weighted_row[period_name] = 'N/A'
+                        except Exception as e:
+                            print(f"[RETURNS SUMMARY DEBUG] Error getting backtest results: {e}")
+                            # Fallback to weighted calculation
+                            for period_name, days in periods.items():
+                                try:
+                                    weighted_return = 0.0
+                                    valid_weights = 0.0
                                     
-                            except Exception:
-                                weighted_row[period_name] = 'N/A'
+                                    for _, row in df_returns.iterrows():
+                                        ticker = row['Ticker']
+                                        return_str = row[period_name]
+                                        
+                                        if return_str != 'N/A' and ticker in final_alloc:
+                                            try:
+                                                # Parse return percentage
+                                                return_pct = float(return_str.replace('%', '').replace('+', ''))
+                                                # Get allocation weight
+                                                weight = final_alloc[ticker]
+                                                # Add weighted return
+                                                weighted_return += return_pct * weight
+                                                valid_weights += weight
+                                            except (ValueError, KeyError):
+                                                continue
+                                    
+                                    if valid_weights > 0:
+                                        # Normalize by actual weights used
+                                        final_weighted_return = weighted_return / valid_weights
+                                        weighted_row[period_name] = f"{final_weighted_return:+.2f}%"
+                                    else:
+                                        weighted_row[period_name] = 'N/A'
+                                        
+                                except Exception:
+                                    weighted_row[period_name] = 'N/A'
                         
                         # Add weighted row at the end
                         df_returns = pd.concat([df_returns, pd.DataFrame([weighted_row])], ignore_index=True)
