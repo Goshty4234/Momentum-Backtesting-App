@@ -1525,9 +1525,9 @@ default_configs = [
                     'vol_window_days': 365,
             'exclude_days_vol': 30,
             'use_minimal_threshold': False,
-            'minimal_threshold_percent': 2.0,
+            'minimal_threshold_percent': 4.0,
             'use_max_allocation': False,
-            'max_allocation_percent': 10.0,
+            'max_allocation_percent': 20.0,
         },
 ]
 
@@ -6061,9 +6061,9 @@ if st.sidebar.button("🗑️ Clear All Portfolios", key="alloc_clear_all_portfo
         'vol_window_days': 365,
         'exclude_days_vol': 30,
         'use_minimal_threshold': False,
-        'minimal_threshold_percent': 2.0,
+        'minimal_threshold_percent': 4.0,
         'use_max_allocation': False,
-        'max_allocation_percent': 10.0,
+        'max_allocation_percent': 20.0,
         'collect_dividends_as_cash': False,
         'start_date_user': None,
         'end_date_user': None,
@@ -8161,25 +8161,17 @@ if st.session_state.get('alloc_backtest_run', False):
                 # NUCLEAR OPTION: Use backtest results directly (same as performance calculations)
                 portfolio_pe_calculated = 'N/A'
                 try:
-                    print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Using backtest results directly (same as performance)...")
-                    
                     # Use the SAME data source as performance calculations: alloc_all_results
                     all_results = st.session_state.get('alloc_all_results', {})
                     if active_name in all_results:
                         # Get portfolio info directly from backtest results
-                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Found backtest results for {active_name}")
-                        
                         # Try to get PE from session state (calculated during backtest)
                         session_pe = getattr(st.session_state, 'portfolio_pe', None)
                         if session_pe is not None and not pd.isna(session_pe):
                             portfolio_pe_calculated = f"{session_pe:.2f}"
-                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Using session state PE: {portfolio_pe_calculated}")
                         else:
-                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No session state PE available")
-                            
                             # EMERGENCY FALLBACK: Calculate PE directly from portfolio config (like performance does)
                             if active_portfolio and 'stocks' in active_portfolio:
-                                print(f"[NUCLEAR PE DEBUG - Portfolio Returns] EMERGENCY: Calculating PE directly from config...")
                                 portfolio_tickers = [stock['ticker'] for stock in active_portfolio['stocks'] if stock.get('ticker')]
                                 portfolio_allocations = {stock['ticker']: stock.get('allocation', 0) for stock in active_portfolio['stocks'] if stock.get('ticker')}
                                 
@@ -8208,15 +8200,12 @@ if st.session_state.get('alloc_backtest_run', False):
                                     if total_weight > 0 and valid_pe_count > 0:
                                         weighted_pe = total_weighted_pe / total_weight
                                         portfolio_pe_calculated = f"{weighted_pe:.2f}"
-                                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] EMERGENCY: Calculated PE: {portfolio_pe_calculated}")
                     else:
-                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No backtest results found for {active_name}")
+                        pass
                     
                     # Fallback to df_comprehensive if available (but this is secondary)
                     if portfolio_pe_calculated == 'N/A' and hasattr(st.session_state, 'df_comprehensive') and st.session_state.df_comprehensive is not None:
                         df_comp = st.session_state.df_comprehensive
-                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Using backtest data, shape: {df_comp.shape}")
-                        
                         if not df_comp.empty and 'P/E Ratio' in df_comp.columns and '% of Portfolio' in df_comp.columns:
                             # Convert PE Ratio to numeric, replacing 'N/A' with NaN
                             pe_numeric = pd.to_numeric(df_comp['P/E Ratio'], errors='coerce')
@@ -8224,9 +8213,6 @@ if st.session_state.get('alloc_backtest_run', False):
                             # Convert % of Portfolio to numeric, handling percentage strings like '24.83%'
                             portfolio_pct_str = df_comp['% of Portfolio'].astype(str)
                             portfolio_pct_numeric = portfolio_pct_str.str.replace('%', '').apply(pd.to_numeric, errors='coerce')
-                            
-                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] PE values: {pe_numeric.tolist()}")
-                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Portfolio % values: {portfolio_pct_numeric.tolist()}")
                             
                             # Apply same logic as weighted_average function
                             valid_mask = pe_numeric.notna() & portfolio_pct_numeric.notna()
@@ -8239,27 +8225,21 @@ if st.session_state.get('alloc_backtest_run', False):
                                 # Calculate weighted average (weights are already in percentage)
                                 weighted_pe = (valid_pe_numeric * valid_portfolio_pct / 100).sum() / (valid_portfolio_pct.sum() / 100)
                                 portfolio_pe_calculated = f"{weighted_pe:.2f}"
-                                print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Calculated PE from backtest data: {portfolio_pe_calculated}")
                             else:
-                                print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No valid PE values in backtest data!")
+                                pass
                         else:
-                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Backtest data missing required columns!")
+                            pass
                     else:
-                        print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No backtest data available - keeping PE as N/A")
                         # TEMPORARY: Check if we have session state PE as fallback
                         session_pe = getattr(st.session_state, 'portfolio_pe', None)
                         if session_pe is not None and not pd.isna(session_pe):
                             portfolio_pe_calculated = f"{session_pe:.2f}"
-                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Using session state PE as fallback: {portfolio_pe_calculated}")
                         else:
-                            print(f"[NUCLEAR PE DEBUG - Portfolio Returns] No session state PE either - keeping N/A")
+                            pass
                 except Exception as e:
-                    print(f"[NUCLEAR PE DEBUG - Portfolio Returns] Error: {e}")
                     import traceback
                     traceback.print_exc()
                     pass
-                
-                print(f"[NUCLEAR PE DEBUG - Portfolio Returns] FINAL portfolio_pe_calculated: {portfolio_pe_calculated}")
                 
                 # Calculate Volatility and Beta for historical portfolio (last 252 trading days / ~1 year)
                 portfolio_volatility = 'N/A'
@@ -8620,25 +8600,17 @@ if st.session_state.get('alloc_backtest_run', False):
                 # NUCLEAR OPTION: Use backtest results directly (same as performance calculations)
                 portfolio_pe_calculated = 'N/A'
                 try:
-                    print(f"[NUCLEAR PE DEBUG - Benchmark] Using backtest results directly (same as performance)...")
-                    
                     # Use the SAME data source as performance calculations: alloc_all_results
                     all_results = st.session_state.get('alloc_all_results', {})
                     if active_name in all_results:
                         # Get portfolio info directly from backtest results
-                        print(f"[NUCLEAR PE DEBUG - Benchmark] Found backtest results for {active_name}")
-                        
                         # Try to get PE from session state (calculated during backtest)
                         session_pe = getattr(st.session_state, 'portfolio_pe', None)
                         if session_pe is not None and not pd.isna(session_pe):
                             portfolio_pe_calculated = f"{session_pe:.2f}"
-                            print(f"[NUCLEAR PE DEBUG - Benchmark] Using session state PE: {portfolio_pe_calculated}")
                         else:
-                            print(f"[NUCLEAR PE DEBUG - Benchmark] No session state PE available")
-                            
                             # EMERGENCY FALLBACK: Calculate PE directly from portfolio config (like performance does)
                             if active_portfolio and 'stocks' in active_portfolio:
-                                print(f"[NUCLEAR PE DEBUG - Benchmark] EMERGENCY: Calculating PE directly from config...")
                                 portfolio_tickers = [stock['ticker'] for stock in active_portfolio['stocks'] if stock.get('ticker')]
                                 portfolio_allocations = {stock['ticker']: stock.get('allocation', 0) for stock in active_portfolio['stocks'] if stock.get('ticker')}
                                 
@@ -8667,15 +8639,12 @@ if st.session_state.get('alloc_backtest_run', False):
                                     if total_weight > 0 and valid_pe_count > 0:
                                         weighted_pe = total_weighted_pe / total_weight
                                         portfolio_pe_calculated = f"{weighted_pe:.2f}"
-                                        print(f"[NUCLEAR PE DEBUG - Benchmark] EMERGENCY: Calculated PE: {portfolio_pe_calculated}")
                     else:
-                        print(f"[NUCLEAR PE DEBUG - Benchmark] No backtest results found for {active_name}")
+                        pass
                     
                     # Fallback to df_comprehensive if available (but this is secondary)
                     if portfolio_pe_calculated == 'N/A' and hasattr(st.session_state, 'df_comprehensive') and st.session_state.df_comprehensive is not None:
                         df_comp = st.session_state.df_comprehensive
-                        print(f"[NUCLEAR PE DEBUG - Benchmark] Using backtest data, shape: {df_comp.shape}")
-                        
                         if not df_comp.empty and 'P/E Ratio' in df_comp.columns and '% of Portfolio' in df_comp.columns:
                             # Convert PE Ratio to numeric, replacing 'N/A' with NaN
                             pe_numeric = pd.to_numeric(df_comp['P/E Ratio'], errors='coerce')
@@ -8683,9 +8652,6 @@ if st.session_state.get('alloc_backtest_run', False):
                             # Convert % of Portfolio to numeric, handling percentage strings like '24.83%'
                             portfolio_pct_str = df_comp['% of Portfolio'].astype(str)
                             portfolio_pct_numeric = portfolio_pct_str.str.replace('%', '').apply(pd.to_numeric, errors='coerce')
-                            
-                            print(f"[NUCLEAR PE DEBUG - Benchmark] PE values: {pe_numeric.tolist()}")
-                            print(f"[NUCLEAR PE DEBUG - Benchmark] Portfolio % values: {portfolio_pct_numeric.tolist()}")
                             
                             # Apply same logic as weighted_average function
                             valid_mask = pe_numeric.notna() & portfolio_pct_numeric.notna()
@@ -8698,22 +8664,18 @@ if st.session_state.get('alloc_backtest_run', False):
                                 # Calculate weighted average (weights are already in percentage)
                                 weighted_pe = (valid_pe_numeric * valid_portfolio_pct / 100).sum() / (valid_portfolio_pct.sum() / 100)
                                 portfolio_pe_calculated = f"{weighted_pe:.2f}"
-                                print(f"[NUCLEAR PE DEBUG - Benchmark] Calculated PE from backtest data: {portfolio_pe_calculated}")
                             else:
-                                print(f"[NUCLEAR PE DEBUG - Benchmark] No valid PE values in backtest data!")
+                                pass
                         else:
-                            print(f"[NUCLEAR PE DEBUG - Benchmark] Backtest data missing required columns!")
+                            pass
                     else:
-                        print(f"[NUCLEAR PE DEBUG - Benchmark] No backtest data available - keeping PE as N/A")
                         # TEMPORARY: Check if we have session state PE as fallback
                         session_pe = getattr(st.session_state, 'portfolio_pe', None)
                         if session_pe is not None and not pd.isna(session_pe):
                             portfolio_pe_calculated = f"{session_pe:.2f}"
-                            print(f"[NUCLEAR PE DEBUG - Benchmark] Using session state PE as fallback: {portfolio_pe_calculated}")
                         else:
-                            print(f"[NUCLEAR PE DEBUG - Benchmark] No session state PE either - keeping N/A")
+                            pass
                 except Exception as e:
-                    print(f"[NUCLEAR PE DEBUG - Benchmark] Error: {e}")
                     import traceback
                     traceback.print_exc()
                     pass
