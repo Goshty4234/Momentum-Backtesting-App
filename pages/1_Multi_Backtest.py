@@ -5741,7 +5741,6 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                                     for t in filtered_tickers:
                                         rebalance_allocations[t] = equal_allocation
                     
-                    print(f"🔍 DEBUG MA FILTER: After redistribution - rebalance_allocations: {rebalance_allocations}")
                 
                 if use_max_allocation and rebalance_allocations:
                     max_allocation_decimal = max_allocation_percent / 100.0
@@ -8107,18 +8106,34 @@ def update_ma_reference_ticker(stock_index):
     ma_ref_key = f"multi_backtest_ma_reference_{st.session_state.multi_backtest_active_portfolio_index}_{stock_index}"
     new_value = st.session_state.get(ma_ref_key, '').strip()
     
-    # Convert to uppercase (like regular tickers)
+    # Apply EXACTLY the same transformations as regular tickers
+    # Convert commas to dots for decimal separators
+    new_value = new_value.replace(",", ".")
+    
+    # Convert to uppercase
     new_value = new_value.upper()
     
-    # Update session state with uppercase value for display
-    st.session_state[ma_ref_key] = new_value
+    # Special conversion for Berkshire Hathaway tickers for Yahoo Finance compatibility
+    if new_value == 'BRK.B':
+        new_value = 'BRK-B'
+    elif new_value == 'BRK.A':
+        new_value = 'BRK-A'
+    
+    # CRITICAL: Resolve ticker alias (GOLDX → GOLD_COMPLETE, SPYTR → ^SP500TR, etc.)
+    if new_value:  # Only resolve if not empty
+        resolved_value = resolve_ticker_alias(new_value)
+    else:
+        resolved_value = new_value
+    
+    # Update session state with resolved value for display
+    st.session_state[ma_ref_key] = resolved_value
     
     # Update the stock config
     portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
     if stock_index < len(portfolio['stocks']):
         old_value = portfolio['stocks'][stock_index].get('ma_reference_ticker', '')
-        if new_value != old_value:
-            portfolio['stocks'][stock_index]['ma_reference_ticker'] = new_value
+        if resolved_value != old_value:
+            portfolio['stocks'][stock_index]['ma_reference_ticker'] = resolved_value
             st.session_state.multi_backtest_rerun_flag = True
 
 def update_use_targeted_rebalancing():
@@ -10408,6 +10423,10 @@ def update_stock_ticker(index):
         # Update the portfolio configuration with the resolved ticker (with leverage/expense)
         st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['ticker'] = resolved_ticker
         
+        # IMPORTANT: Force UI update by setting the widget's session_state value
+        # This ensures the resolved ticker is displayed immediately in the text_input
+        st.session_state[key] = resolved_ticker
+        
         # Auto-disable dividends for negative leverage (inverse ETFs)
         if '?L=-' in resolved_ticker:
             st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][index]['include_dividends'] = False
@@ -10504,8 +10523,8 @@ for i in range(len(active_portfolio['stocks'])):
             if 'ma_reference_ticker' not in stock:
                 stock['ma_reference_ticker'] = ""  # Empty = use own ticker
             
-            if ma_ref_key not in st.session_state:
-                st.session_state[ma_ref_key] = stock.get('ma_reference_ticker', '')
+            # Always sync the session state with the portfolio config to show resolved ticker
+            st.session_state[ma_ref_key] = stock.get('ma_reference_ticker', '')
             
             st.text_input(
                 "MA Reference Ticker",
