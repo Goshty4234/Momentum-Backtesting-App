@@ -1287,6 +1287,8 @@ def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False
             resolved_ticker = resolve_index_to_etf_for_stats(resolve_ticker_alias(base_ticker))
         
         # Special handling for synthetic complete tickers
+        if resolved_ticker == "ZEROX":
+            return generate_zero_return_data(period)
         if resolved_ticker == "SPYSIM_COMPLETE":
             return get_spysim_complete_data(period)
         if resolved_ticker == "GOLDSIM_COMPLETE":
@@ -1373,8 +1375,8 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
         print(f"[BATCH DEBUG] {ticker_symbol} -> base={base_ticker}, resolved={resolved}, L={leverage}, E={expense_ratio}")
         yahoo_tickers.append((ticker_symbol, resolved, leverage, expense_ratio))
     
-    # Extract unique resolved tickers for batch download (exclude _COMPLETE tickers)
-    resolved_list = list(set([resolved for _, resolved, _, _ in yahoo_tickers if not resolved.endswith('_COMPLETE')]))
+    # Extract unique resolved tickers for batch download (exclude _COMPLETE tickers and ZEROX)
+    resolved_list = list(set([resolved for _, resolved, _, _ in yahoo_tickers if not resolved.endswith('_COMPLETE') and resolved != 'ZEROX']))
     print(f"[BATCH DEBUG] Resolved tickers to download: {resolved_list}")
     
     try:
@@ -1392,8 +1394,8 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
             # Process batch data
             if not batch_data.empty:
                 for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
-                    # Skip _COMPLETE tickers (they will be handled in fallback section)
-                    if resolved.endswith('_COMPLETE'):
+                    # Skip _COMPLETE tickers and ZEROX (they will be handled in fallback section)
+                    if resolved.endswith('_COMPLETE') or resolved == 'ZEROX':
                         continue
                     
                     try:
@@ -1429,7 +1431,9 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
         if ticker_symbol not in results or results[ticker_symbol].empty:
             try:
                 # Handle special complete tickers
-                if resolved == "SPYSIM_COMPLETE":
+                if resolved == "ZEROX":
+                    hist = generate_zero_return_data(period)
+                elif resolved == "SPYSIM_COMPLETE":
                     hist = get_spysim_complete_data(period)
                 elif resolved == "GOLDSIM_COMPLETE":
                     hist = get_goldsim_complete_data(period)
@@ -1482,6 +1486,8 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
         resolved_ticker = base_ticker
         
         # Special handling for synthetic complete tickers
+        if resolved_ticker == "ZEROX":
+            return generate_zero_return_data(period)
         if resolved_ticker == "SPYSIM_COMPLETE":
             return get_spysim_complete_data(period)
         if resolved_ticker == "GOLDSIM_COMPLETE":
@@ -1560,6 +1566,32 @@ def get_goldsim_complete_data(period="max"):
             return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
         except:
             return pd.DataFrame()
+
+def generate_zero_return_data(period="max"):
+    """Generate synthetic zero return data for ZEROX ticker"""
+    try:
+        ref_ticker = yf.Ticker("SPY")
+        ref_hist = ref_ticker.history(period=period)
+        if ref_hist.empty:
+            end_date = pd.Timestamp.now()
+            start_date = end_date - pd.Timedelta(days=365)
+            dates = pd.date_range(start=start_date, end=end_date, freq='D')
+        else:
+            dates = ref_hist.index
+        zero_data = pd.DataFrame({
+            'Close': [100.0] * len(dates),
+            'Dividends': [0.0] * len(dates)
+        }, index=dates)
+        return zero_data
+    except Exception:
+        end_date = pd.Timestamp.now()
+        start_date = end_date - pd.Timedelta(days=30)
+        dates = pd.date_range(start=start_date, end=end_date, freq='D')
+        zero_data = pd.DataFrame({
+            'Close': [100.0] * len(dates),
+            'Dividends': [0.0] * len(dates)
+        }, index=dates)
+        return zero_data
 
 def get_gold_complete_data(period="max"):
     """Get complete gold data from our custom gold ticker"""
@@ -6398,6 +6430,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
             # Ordered by asset class: Stocks → Bonds → Gold → Managed Futures → Bitcoin
             'Complete S&P 500 Simulation (1885+)': ('SPYSIM', 'SPYSIM_COMPLETE'),
             'Dynamic S&P 500 Top 20 (Historical)': ('SP500TOP20', 'SP500TOP20'),
+            'Cash Simulator (ZEROX)': ('ZEROX', 'ZEROX'),
             'Complete TBILL Dataset (1948+)': ('TBILL', 'TBILL_COMPLETE'),
             'Complete IEF Dataset (1962+)': ('IEFTR', 'IEF_COMPLETE'),
             'Complete TLT Dataset (1962+)': ('TLTTR', 'TLT_COMPLETE'),
@@ -6435,6 +6468,8 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
             # Custom help text for different ticker types
             if alias == 'SP500TOP20':
                 help_text = "Add SP500TOP20 → SP500TOP20 - BETA ticker: Dynamic portfolio of top 20 S&P 500 companies rebalanced annually based on historical market cap data"
+            elif alias == 'ZEROX':
+                help_text = "Add ZEROX → ZEROX - Cash Simulator: Simulates a cash position that does nothing (no price movement, no dividends)"
             elif 'IXIC' in ticker:
                 # Special warning for IXIC versions
                 help_text = f"Add {alias} → {ticker} ⚠️ WARNING: This tracks NASDAQ Composite (broader index), NOT NASDAQ-100 like the real ETF!"
