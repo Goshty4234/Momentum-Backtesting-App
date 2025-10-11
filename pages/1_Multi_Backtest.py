@@ -10385,10 +10385,17 @@ def update_stock_dividends(index):
 # Update active_portfolio
 active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]
 
-if "multi_backtest_active_use_sma_filter" not in st.session_state:
-    st.session_state["multi_backtest_active_use_sma_filter"] = active_portfolio.get('use_sma_filter', False)
-if "multi_backtest_active_sma_window" not in st.session_state:
-    st.session_state["multi_backtest_active_sma_window"] = active_portfolio.get('sma_window', 200)
+# Initialize MA filter state - SPECIFIC TO EACH PORTFOLIO
+ma_filter_key = f"multi_backtest_active_use_sma_filter_{st.session_state.multi_backtest_active_portfolio_index}"
+ma_window_key = f"multi_backtest_active_ma_window_{st.session_state.multi_backtest_active_portfolio_index}"
+ma_type_key = f"multi_backtest_active_ma_type_{st.session_state.multi_backtest_active_portfolio_index}"
+
+if ma_filter_key not in st.session_state:
+    st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
+if ma_window_key not in st.session_state:
+    st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
+if ma_type_key not in st.session_state:
+    st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
 
 for i in range(len(active_portfolio['stocks'])):
     stock = active_portfolio['stocks'][i]
@@ -10428,7 +10435,8 @@ for i in range(len(active_portfolio['stocks'])):
     
     with col_sma:
         # SMA Filter selection - EXACT SAME LOGIC AS DIVIDENDS
-        if st.session_state.get("multi_backtest_active_use_sma_filter", False):
+        ma_filter_key = f"multi_backtest_active_use_sma_filter_{st.session_state.multi_backtest_active_portfolio_index}"
+        if st.session_state.get(ma_filter_key, False):
             sma_key = f"multi_backtest_include_sma_{st.session_state.multi_backtest_active_portfolio_index}_{i}"
             # Ensure include_in_sma_filter key exists with default value
             if 'include_in_sma_filter' not in stock:
