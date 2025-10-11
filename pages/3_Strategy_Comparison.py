@@ -794,7 +794,7 @@ def get_bitcoin_complete_data(period="max"):
         
         # Convert to the expected format
         result = pd.DataFrame({
-            'Close': bitcoin_data,
+            'Close': bitcoin_data['Close'],
             'Dividends': [0.0] * len(bitcoin_data)  # Bitcoin doesn't pay dividends
         }, index=bitcoin_data.index)
         
@@ -826,8 +826,10 @@ def get_spysim_complete_data(period="max"):
             return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
         
         # Convert to the expected format
+        # Handle both DataFrame and Series
+        close_data = spysim_data['Close'] if isinstance(spysim_data, pd.DataFrame) else spysim_data
         result = pd.DataFrame({
-            'Close': spysim_data,
+            'Close': close_data,
             'Dividends': [0.0] * len(spysim_data)
         }, index=spysim_data.index)
         
@@ -860,8 +862,10 @@ def get_goldsim_complete_data(period="max"):
             return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
         
         # Convert to the expected format
+        # Handle both DataFrame and Series
+        close_data = goldsim_data['Close'] if isinstance(goldsim_data, pd.DataFrame) else goldsim_data
         result = pd.DataFrame({
-            'Close': goldsim_data,
+            'Close': close_data,
             'Dividends': [0.0] * len(goldsim_data)
         }, index=goldsim_data.index)
         
@@ -4386,8 +4390,38 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         # Normalize dates for comparison (remove timezone and time components)
         date_normalized = pd.Timestamp(date).normalize()
         dates_rebal_normalized = {pd.Timestamp(d).normalize() for d in dates_rebal}
+        
         if date_normalized in dates_rebal_normalized and set(tickers):
-            should_rebalance = True
+            # If targeted rebalancing is enabled, check thresholds first - COPIED FROM PAGE 1
+            if config.get('use_targeted_rebalancing', False):
+                # Calculate current allocations as percentages
+                current_total = sum(values[t][-1] for t in tickers) + unallocated_cash[-1] + unreinvested_cash[-1]
+                if current_total > 0:
+                    current_allocations = {t: values[t][-1] / current_total for t in tickers}
+                    
+                    # Check if any ticker exceeds its targeted rebalancing thresholds
+                    targeted_settings = config.get('targeted_rebalancing_settings', {})
+                    threshold_exceeded = False
+                    
+                    for ticker in tickers:
+                        if ticker in targeted_settings and targeted_settings[ticker].get('enabled', False):
+                            current_allocation_pct = current_allocations.get(ticker, 0) * 100
+                            max_threshold = targeted_settings[ticker].get('max_allocation', 100.0)
+                            min_threshold = targeted_settings[ticker].get('min_allocation', 0.0)
+                            
+                            # Check if allocation exceeds max or falls below min threshold
+                            if current_allocation_pct > max_threshold or current_allocation_pct < min_threshold:
+                                threshold_exceeded = True
+                                break
+                    
+                    # Only rebalance if thresholds are exceeded
+                    should_rebalance = threshold_exceeded
+                else:
+                    # If no current value, don't rebalance
+                    should_rebalance = False
+            else:
+                # Regular rebalancing - always rebalance on scheduled dates
+                should_rebalance = True
         elif rebalancing_frequency in ["Buy & Hold", "Buy & Hold (Target)"] and set(tickers):
             # Buy & Hold: rebalance whenever there's cash available
             total_cash = unallocated_cash[-1] + unreinvested_cash[-1]
@@ -4548,6 +4582,67 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                                     capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
                     
                     rebalance_allocations = capped_allocations
+                
+                # Apply targeted rebalancing if enabled and thresholds are violated - COPIED FROM PAGE 1
+                if config.get('use_targeted_rebalancing', False) and should_rebalance:
+                    targeted_settings = config.get('targeted_rebalancing_settings', {})
+                    current_asset_values = {t: values[t][-1] for t in tickers}
+                    current_total_value = sum(current_asset_values.values())
+                    
+                    if current_total_value > 0:
+                        current_allocations = {t: v / current_total_value for t, v in current_asset_values.items()}
+                        
+                        # For targeted rebalancing, rebalance TO THE THRESHOLD LIMITS, not to base allocations
+                        target_allocations = {}
+                        
+                        # Calculate target allocations based on threshold limits
+                        for t in tickers:
+                            if t in targeted_settings and targeted_settings[t].get('enabled', False):
+                                current_allocation_pct = (values[t][-1] / current_total_value) * 100 if current_total_value > 0 else 0
+                                max_threshold = targeted_settings[t].get('max_allocation', 100.0)
+                                min_threshold = targeted_settings[t].get('min_allocation', 0.0)
+                                
+                                # Rebalance to the threshold limit that was exceeded
+                                if current_allocation_pct > max_threshold:
+                                    target_allocations[t] = max_threshold / 100.0
+                                elif current_allocation_pct < min_threshold:
+                                    target_allocations[t] = min_threshold / 100.0
+                                else:
+                                    # Within bounds - keep current allocation
+                                    target_allocations[t] = current_allocation_pct / 100.0
+                            else:
+                                # Not in targeted settings - use current allocation
+                                target_allocations[t] = (values[t][-1] / current_total_value) if current_total_value > 0 else allocations.get(t, 0)
+                        
+                        # For targeted rebalancing, calculate the remaining allocation for non-targeted tickers
+                        total_targeted = 0
+                        targeted_count = 0
+                        
+                        for t in tickers:
+                            if t in targeted_settings and targeted_settings[t].get('enabled', False):
+                                total_targeted += target_allocations[t]
+                                targeted_count += 1
+                        
+                        # Calculate remaining allocation for non-targeted tickers
+                        remaining_allocation = 1.0 - total_targeted
+                        non_targeted_tickers = [t for t in tickers if t not in targeted_settings or not targeted_settings[t].get('enabled', False)]
+                        
+                        if non_targeted_tickers and remaining_allocation > 0:
+                            # Distribute remaining allocation PROPORTIONALLY to base allocations (not equally)
+                            non_targeted_base_sum = sum(allocations.get(t, 0) for t in non_targeted_tickers)
+                            if non_targeted_base_sum > 0:
+                                # Distribute proportionally to base allocations
+                                for t in non_targeted_tickers:
+                                    base_proportion = allocations.get(t, 0) / non_targeted_base_sum
+                                    target_allocations[t] = base_proportion * remaining_allocation
+                            else:
+                                # If no base allocations, distribute equally
+                                allocation_per_ticker = remaining_allocation / len(non_targeted_tickers)
+                                for t in non_targeted_tickers:
+                                    target_allocations[t] = allocation_per_ticker
+                        
+                        # Use target allocations as rebalance allocations
+                        rebalance_allocations = target_allocations
                 
                 sum_alloc = sum(rebalance_allocations.values())
                 if sum_alloc > 0:
@@ -13958,7 +14053,7 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
                                         dict(step="all")
                                     ])
                                 ),
-                                rangeslider=dict(visible=True),
+                                rangeslider=dict(visible=False),
                                 type="date"
                             )
                         )
@@ -14237,3 +14332,4 @@ if 'strategy_comparison_ran' in st.session_state and st.session_state.strategy_c
         except Exception as e:
             st.error(f"❌ Error generating PDF: {str(e)}")
             st.exception(e)
+
