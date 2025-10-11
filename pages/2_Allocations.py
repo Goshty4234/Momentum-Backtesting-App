@@ -5968,13 +5968,13 @@ st.text_input("Benchmark Ticker (default: ^GSPC, starts 1927-12-30, used for bet
 st.subheader("Tickers")
 col_ticker_buttons = st.columns([0.3, 0.3, 0.3, 0.1])
 with col_ticker_buttons[0]:
-    if st.button("Normalize Tickers %", on_click=normalize_stock_allocations_callback):
+    if st.button("Normalize Tickers %", on_click=normalize_stock_allocations_callback, use_container_width=True):
         pass
 with col_ticker_buttons[1]:
-    if st.button("Equal Allocation %", on_click=equal_stock_allocation_callback):
+    if st.button("Equal Allocation %", on_click=equal_stock_allocation_callback, use_container_width=True):
         pass
 with col_ticker_buttons[2]:
-    if st.button("Reset Tickers", on_click=reset_stock_selection_callback):
+    if st.button("Reset Tickers", on_click=reset_stock_selection_callback, use_container_width=True):
         pass
 
 # Calculate live total ticker allocation
@@ -6243,12 +6243,12 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
     col_quick1, col_quick2 = st.columns([1, 1])
     
     with col_quick1:
-        if st.button("Select All", key="page2_select_all_tickers"):
+        if st.button("Select All", key="page2_select_all_tickers", use_container_width=True):
             st.session_state.bulk_selected_tickers = available_tickers.copy()
             st.rerun()
     
     with col_quick2:
-        if st.button("Clear Selection", key="page2_clear_all_tickers"):
+        if st.button("Clear Selection", key="page2_clear_all_tickers", use_container_width=True):
             st.session_state.bulk_selected_tickers = []
             st.rerun()
     
@@ -7351,7 +7351,7 @@ _ALLOC_TOL = 1.0
 
 # Clear all portfolios button - quick access for single portfolio pages
 if st.sidebar.button("🗑️ Clear All Portfolios", key="alloc_clear_all_portfolios_immediate", 
-                    help="Delete ALL portfolios and create a blank one"):
+                    help="Delete ALL portfolios and create a blank one", use_container_width=True):
     # Clear all portfolios and create a single blank portfolio
     st.session_state.alloc_portfolio_configs = [{
         'name': 'New Portfolio 1',
@@ -7418,18 +7418,18 @@ def clear_all_outputs():
     st.success("✅ All outputs cleared! Portfolio configurations preserved.")
 
 # Clear All Outputs Button
-if st.sidebar.button("🗑️ Clear All Outputs", type="secondary", help="Clear all charts and results while keeping portfolio configurations"):
+if st.sidebar.button("🗑️ Clear All Outputs", type="secondary", help="Clear all charts and results while keeping portfolio configurations", use_container_width=True):
     clear_all_outputs()
     st.rerun()
 
 # Cancel Run Button
-if st.sidebar.button("🛑 Cancel Run", type="secondary", help="Stop current backtest execution gracefully"):
+if st.sidebar.button("🛑 Cancel Run", type="secondary", help="Stop current backtest execution gracefully", use_container_width=True):
     st.session_state.hard_kill_requested = True
     st.toast("🛑 **CANCELLING** - Stopping backtest execution...", icon="⏹️")
     st.rerun()
 
 # Emergency Kill Button
-if st.sidebar.button("🚨 EMERGENCY KILL", type="secondary", help="Force terminate all processes immediately - Use for crashes, freezes, or unresponsive states"):
+if st.sidebar.button("🚨 EMERGENCY KILL", type="secondary", help="Force terminate all processes immediately - Use for crashes, freezes, or unresponsive states", use_container_width=True):
     st.toast("🚨 **EMERGENCY KILL** - Force terminating all processes...", icon="💥")
     emergency_kill()
 
@@ -7467,7 +7467,7 @@ def calculate_minimum_lookback_days(portfolios):
     return total_days_needed
 
 # Move Run Backtest to the first sidebar to make it conspicuous and separate from config
-if st.sidebar.button("🚀 Run Backtest", type="primary"):
+if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=True):
     # Reset kill request when starting new backtest
     st.session_state.hard_kill_requested = False
     print(f"[THRESHOLD DEBUG] Run Backtest button clicked!")
@@ -10987,7 +10987,7 @@ if st.session_state.get('alloc_backtest_run', False):
         key="allocations_custom_report_name"
     )
     
-    if st.button("Generate PDF Report", type="primary", key="alloc_pdf_btn_2"):
+    if st.button("Generate PDF Report", type="primary", key="alloc_pdf_btn_2", use_container_width=True):
         try:
             success = generate_allocations_pdf(custom_report_name)
             if success:
