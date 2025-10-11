@@ -675,6 +675,33 @@ def apply_daily_leverage(price_data: pd.DataFrame, leverage: float, expense_rati
     return leveraged_data
 
 @st.cache_data(show_spinner=False)
+def generate_zero_return_data(period="max"):
+    """Generate synthetic zero return data for ZEROX ticker"""
+    try:
+        ref_ticker = yf.Ticker("SPY")
+        ref_hist = ref_ticker.history(period=period)
+        if ref_hist.empty:
+            end_date = pd.Timestamp.now()
+            start_date = end_date - pd.Timedelta(days=365)
+            dates = pd.date_range(start=start_date, end=end_date, freq='D')
+        else:
+            dates = ref_hist.index
+        zero_data = pd.DataFrame({
+            'Close': [100.0] * len(dates),
+            'Dividends': [0.0] * len(dates)
+        }, index=dates)
+        return zero_data
+    except Exception:
+        end_date = pd.Timestamp.now()
+        start_date = end_date - pd.Timedelta(days=30)
+        dates = pd.date_range(start=start_date, end=end_date, freq='D')
+        zero_data = pd.DataFrame({
+            'Close': [100.0] * len(dates),
+            'Dividends': [0.0] * len(dates)
+        }, index=dates)
+        return zero_data
+
+@st.cache_data(show_spinner=False)
 def get_gold_complete_data(period="max"):
     """Get complete gold data from our custom gold ticker"""
     try:
@@ -1030,6 +1057,10 @@ def get_ticker_data_cached(base_ticker, leverage, expense_ratio, period="max", a
     # Resolve ticker alias if it exists
     resolved_ticker = resolve_ticker_alias(base_ticker)
     
+    # Special handling for ZEROX - generate zero return data
+    if resolved_ticker == "ZEROX":
+        return generate_zero_return_data(period)
+    
     # Special handling for GOLD_COMPLETE - use our custom gold ticker
     if resolved_ticker == "GOLD_COMPLETE":
         return get_gold_complete_data(period)
@@ -1106,8 +1137,8 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
         resolved = resolve_ticker_alias(base_ticker)
         yahoo_tickers.append((ticker_symbol, resolved, leverage, expense_ratio))
     
-    # Extract unique resolved tickers
-    resolved_list = list(set([resolved for _, resolved, _, _ in yahoo_tickers]))
+    # Extract unique resolved tickers (exclude ZEROX and _COMPLETE tickers)
+    resolved_list = list(set([resolved for _, resolved, _, _ in yahoo_tickers if not resolved.endswith('_COMPLETE') and resolved != 'ZEROX']))
     
     try:
         # BATCH DOWNLOAD
@@ -1122,6 +1153,9 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
             
             if not batch_data.empty:
                 for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
+                    # Skip _COMPLETE tickers and ZEROX (they will be handled in fallback section)
+                    if resolved.endswith('_COMPLETE') or resolved == 'ZEROX':
+                        continue
                     try:
                         if len(resolved_list) > 1:
                             ticker_data = batch_data[resolved][['Close', 'Dividends']] if resolved in batch_data else pd.DataFrame()
@@ -1145,8 +1179,12 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
     for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
         if ticker_symbol not in results or results[ticker_symbol].empty:
             try:
-                ticker = yf.Ticker(resolved)
-                hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
+                # Handle special tickers
+                if resolved == "ZEROX":
+                    hist = generate_zero_return_data(period)
+                else:
+                    ticker = yf.Ticker(resolved)
+                    hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
                 
                 if not hist.empty:
                     if leverage != 1.0 or expense_ratio != 0.0:
@@ -7426,6 +7464,7 @@ with st.sidebar.expander("🎯 Special Long-Term Tickers", expanded=False):
             # Ordered by asset class: Stocks → Bonds → Gold → Managed Futures → Bitcoin
             'Complete S&P 500 Simulation (1885+)': ('SPYSIM', 'SPYSIM_COMPLETE'),
             'Dynamic S&P 500 Top 20 (Historical)': ('SP500TOP20', 'SP500TOP20'),
+            'Cash Simulator (ZEROX)': ('ZEROX', 'ZEROX'),
             'Complete TBILL Dataset (1948+)': ('TBILL', 'TBILL_COMPLETE'),
             'Complete IEF Dataset (1962+)': ('IEFTR', 'IEF_COMPLETE'),
             'Complete TLT Dataset (1962+)': ('TLTTR', 'TLT_COMPLETE'),
@@ -7463,6 +7502,8 @@ with st.sidebar.expander("🎯 Special Long-Term Tickers", expanded=False):
             # Custom help text for different ticker types
             if alias == 'SP500TOP20':
                 help_text = "Add SP500TOP20 → SP500TOP20 - BETA ticker: Dynamic portfolio of top 20 S&P 500 companies rebalanced annually based on historical market cap data"
+            elif alias == 'ZEROX':
+                help_text = "Add ZEROX → ZEROX - Cash Simulator: Simulates a cash position that does nothing (no price movement, no dividends)"
             elif 'IXIC' in ticker:
                 # Special warning for IXIC versions
                 help_text = f"Add {alias} → {ticker} ⚠️ WARNING: This tracks NASDAQ Composite (broader index), NOT NASDAQ-100 like the real ETF!"
