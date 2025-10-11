@@ -8654,7 +8654,7 @@ if st.session_state.get('alloc_backtest_run', False):
                 )])
                 fig_today.update_traces(textinfo='percent+label')
                 fig_today.update_layout(template='plotly_dark', margin=dict(t=10), height=600)
-                st.plotly_chart(fig_todaykey=f"alloc_today_chart_{active_name}")
+                st.plotly_chart(fig_today, key=f"alloc_today_chart_{active_name}")
             
             # static shares table
 
