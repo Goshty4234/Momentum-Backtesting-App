@@ -10820,7 +10820,11 @@ with st.expander("📈 Broad Long-Term Tickers", expanded=False):
     """)
 
 # Special Tickers Section
-with st.expander("🎯 Special Long-Term Tickers", expanded=False):
+# Use session state to control expander state
+if 'special_tickers_expanded' not in st.session_state:
+    st.session_state.special_tickers_expanded = False
+
+with st.expander("🎯 Special Long-Term Tickers", expanded=st.session_state.special_tickers_expanded):
     st.markdown("**Quick access to ticker aliases that the system accepts:**")
     
     # Get the actual ticker aliases from the function
@@ -10854,6 +10858,8 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
                     'allocation': 0.0, 
                     'include_dividends': True
                 })
+                # Keep expander open and rerun immediately
+                st.session_state.special_tickers_expanded = True
                 st.rerun()
     
     with col2:
@@ -10888,6 +10894,8 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
                     'allocation': 0.0, 
                     'include_dividends': True
                 })
+                # Keep expander open and rerun immediately
+                st.session_state.special_tickers_expanded = True
                 st.rerun()
     
     with col3:
@@ -10954,6 +10962,8 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=False):
                     'include_divs': include_divs,
                     'include_in_sma_filter': True
                 })
+                # Keep expander open and rerun immediately
+                st.session_state.special_tickers_expanded = True
                 st.rerun()
     
     st.markdown("---")
@@ -11630,6 +11640,11 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     # Update global settings from session state
     cleaned_config['start_with'] = st.session_state.get('multi_backtest_start_with', 'all')
     cleaned_config['first_rebalance_strategy'] = st.session_state.get('multi_backtest_first_rebalance_strategy', 'rebalancing_date')
+    
+    # Update custom dates from global session state if enabled
+    if st.session_state.get('multi_backtest_use_custom_dates', False):
+        cleaned_config['start_date_user'] = st.session_state.get('multi_backtest_start_date')
+        cleaned_config['end_date_user'] = st.session_state.get('multi_backtest_end_date')
     
     # Update targeted rebalancing settings from session state
     cleaned_config['use_targeted_rebalancing'] = st.session_state.get('multi_backtest_active_use_targeted_rebalancing', False)
@@ -13561,6 +13576,11 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
             # Update global settings from session state
             cleaned_config['start_with'] = st.session_state.get('multi_backtest_start_with', 'all')
             cleaned_config['first_rebalance_strategy'] = st.session_state.get('multi_backtest_first_rebalance_strategy', 'rebalancing_date')
+            
+            # Update custom dates from global session state if enabled
+            if st.session_state.get('multi_backtest_use_custom_dates', False):
+                cleaned_config['start_date_user'] = st.session_state.get('multi_backtest_start_date')
+                cleaned_config['end_date_user'] = st.session_state.get('multi_backtest_end_date')
             
             # Ensure threshold settings are included (read from current config)
             cleaned_config['use_minimal_threshold'] = config.get('use_minimal_threshold', False)
