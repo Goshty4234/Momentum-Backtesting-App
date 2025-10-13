@@ -7095,14 +7095,20 @@ if active_portfolio['use_momentum']:
         momentum_key = f"momentum_strategy_{st.session_state.alloc_active_portfolio_index}"
         negative_momentum_key = f"negative_momentum_strategy_{st.session_state.alloc_active_portfolio_index}"
         
-        # FORCE sync with session state if it was updated by JSON import
+        # CRITICAL: Sync session state BEFORE creating selectboxes to avoid double-click issue
         if 'alloc_active_momentum_strategy' in st.session_state:
+            # Update both session state and portfolio config
             st.session_state[momentum_key] = st.session_state['alloc_active_momentum_strategy']
             active_portfolio['momentum_strategy'] = st.session_state['alloc_active_momentum_strategy']
+            # Clear the temp session state to prevent conflicts
+            del st.session_state['alloc_active_momentum_strategy']
         
         if 'alloc_active_negative_momentum_strategy' in st.session_state:
+            # Update both session state and portfolio config
             st.session_state[negative_momentum_key] = st.session_state['alloc_active_negative_momentum_strategy']
             active_portfolio['negative_momentum_strategy'] = st.session_state['alloc_active_negative_momentum_strategy']
+            # Clear the temp session state to prevent conflicts
+            del st.session_state['alloc_active_negative_momentum_strategy']
         
         momentum_strategy = st.selectbox(
             "Momentum strategy when NOT all negative:",
@@ -10216,12 +10222,14 @@ if st.session_state.get('alloc_backtest_run', False):
                         if isinstance(val, str) and val != 'N/A' and not val.endswith('%'):
                             try:
                                 pe_val = float(val)
-                                if pe_val > 30:
-                                    return 'color: #ff4444; font-weight: bold'
-                                elif pe_val > 20:
-                                    return 'color: #ffaa00; font-weight: bold'
+                                if pe_val >= 35:
+                                    return 'color: #ff4444; font-weight: bold'  # Red for PE >= 35 (Overvalued)
+                                elif pe_val >= 25:
+                                    return 'color: #ffaa00; font-weight: bold'  # Orange for PE 25-35 (Expensive)
+                                elif pe_val >= 15:
+                                    return 'color: #00ff00; font-weight: bold'  # Green for PE 15-25 (Fair Value)
                                 else:
-                                    return 'color: #00ff00; font-weight: bold'
+                                    return 'color: #00ff00; font-weight: bold'  # Green for PE < 15 (Undervalued)
                             except:
                                 pass
                         return ''
@@ -10633,12 +10641,14 @@ if st.session_state.get('alloc_backtest_run', False):
                         if isinstance(val, str) and val != 'N/A' and not val.endswith('%'):
                             try:
                                 pe_val = float(val)
-                                if pe_val > 30:
-                                    return 'color: #ff4444; font-weight: bold'
-                                elif pe_val > 20:
-                                    return 'color: #ffaa00; font-weight: bold'
+                                if pe_val >= 35:
+                                    return 'color: #ff4444; font-weight: bold'  # Red for PE >= 35 (Overvalued)
+                                elif pe_val >= 25:
+                                    return 'color: #ffaa00; font-weight: bold'  # Orange for PE 25-35 (Expensive)
+                                elif pe_val >= 15:
+                                    return 'color: #00ff00; font-weight: bold'  # Green for PE 15-25 (Fair Value)
                                 else:
-                                    return 'color: #00ff00; font-weight: bold'
+                                    return 'color: #00ff00; font-weight: bold'  # Green for PE < 15 (Undervalued)
                             except:
                                 pass
                         return ''
