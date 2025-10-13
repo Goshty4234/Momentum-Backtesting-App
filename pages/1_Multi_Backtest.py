@@ -1938,8 +1938,8 @@ def generate_simple_pdf_report(custom_name=""):
                 ['Beta Exclude', f"{config.get('exclude_days_beta', 0)} days", 'Days excluded from beta calculation'],
                 ['Volatility Lookback', f"{config.get('vol_window_days', 0)} days", 'Days for volatility calculation'],
                 ['Volatility Exclude', f"{config.get('exclude_days_vol', 0)} days", 'Days excluded from volatility calculation'],
-                ['Minimal Threshold', f"{config.get('minimal_threshold_percent', 2.0):.1f}%" if config.get('use_minimal_threshold', False) else 'Disabled', 'Minimum allocation percentage threshold'],
-                ['Maximum Allocation', f"{config.get('max_allocation_percent', 10.0):.1f}%" if config.get('use_max_allocation', False) else 'Disabled', 'Maximum allocation percentage per stock']
+                ['Minimal Threshold', f"{config.get('minimal_threshold_percent', 4.0):.1f}%" if config.get('use_minimal_threshold', False) else 'Disabled', 'Minimum allocation percentage threshold'],
+                ['Maximum Allocation', f"{config.get('max_allocation_percent', 20.0):.1f}%" if config.get('use_max_allocation', False) else 'Disabled', 'Maximum allocation percentage per stock']
             ]
             
             # Add momentum windows if they exist
@@ -4975,9 +4975,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
 
         # Apply allocation filters in correct order: Max Allocation -> Min Threshold -> Max Allocation (two-pass system)
         use_max_allocation = config.get('use_max_allocation', False)
-        max_allocation_percent = config.get('max_allocation_percent', 10.0)
+        max_allocation_percent = config.get('max_allocation_percent', 20.0)
         use_threshold = config.get('use_minimal_threshold', False)
-        threshold_percent = config.get('minimal_threshold_percent', 2.0)
+        threshold_percent = config.get('minimal_threshold_percent', 4.0)
         
         # Build dictionary of individual ticker caps from stock configs
         individual_caps = {}
@@ -5202,9 +5202,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         
         # Apply allocation filters in correct order: Max Allocation -> Min Threshold -> Max Allocation (two-pass system)
         use_max_allocation = config.get('use_max_allocation', False)
-        max_allocation_percent = config.get('max_allocation_percent', 10.0)
+        max_allocation_percent = config.get('max_allocation_percent', 20.0)
         use_threshold = config.get('use_minimal_threshold', False)
-        threshold_percent = config.get('minimal_threshold_percent', 2.0)
+        threshold_percent = config.get('minimal_threshold_percent', 4.0)
         
         # Build dictionary of individual ticker caps from stock configs
         individual_caps = {}
@@ -5676,7 +5676,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     else:
                         # Apply max_allocation to momentum weights if enabled
                         use_max_allocation = config.get('use_max_allocation', False)
-                        max_allocation_percent = config.get('max_allocation_percent', 10.0)
+                        max_allocation_percent = config.get('max_allocation_percent', 20.0)
                         
                         # Build dictionary of individual ticker caps from stock configs
                         individual_caps = {}
@@ -6752,11 +6752,11 @@ for portfolio in st.session_state.multi_backtest_portfolio_configs:
     if 'use_minimal_threshold' not in portfolio:
         portfolio['use_minimal_threshold'] = False
     if 'minimal_threshold_percent' not in portfolio:
-        portfolio['minimal_threshold_percent'] = 2.0
+        portfolio['minimal_threshold_percent'] = 4.0
     if 'use_max_allocation' not in portfolio:
         portfolio['use_max_allocation'] = False
     if 'max_allocation_percent' not in portfolio:
-        portfolio['max_allocation_percent'] = 10.0
+        portfolio['max_allocation_percent'] = 20.0
     if 'use_sma_filter' not in portfolio:
         portfolio['use_sma_filter'] = False
     if 'sma_window' not in portfolio:
@@ -7792,7 +7792,7 @@ def paste_json_callback():
         if 'use_minimal_threshold' not in json_data:
             json_data['use_minimal_threshold'] = False
         if 'minimal_threshold_percent' not in json_data:
-            json_data['minimal_threshold_percent'] = 2.0
+            json_data['minimal_threshold_percent'] = 4.0
         # Don't override max_allocation values from JSON - preserve imported values
         # REMOVED: Don't force max_allocation values to preserve JSON values
         
@@ -7924,9 +7924,9 @@ def paste_json_callback():
             'negative_momentum_strategy': negative_momentum_strategy,
             'momentum_windows': momentum_windows,
             'use_minimal_threshold': json_data.get('use_minimal_threshold', False),
-            'minimal_threshold_percent': json_data.get('minimal_threshold_percent', 2.0),
+            'minimal_threshold_percent': json_data.get('minimal_threshold_percent', 4.0),
             'use_max_allocation': json_data.get('use_max_allocation', False),
-            'max_allocation_percent': json_data.get('max_allocation_percent', 10.0),
+            'max_allocation_percent': json_data.get('max_allocation_percent', 20.0),
             'calc_beta': json_data.get('calc_beta', False),
             'calc_volatility': json_data.get('calc_volatility', True),
             'beta_window_days': json_data.get('beta_window_days', 365),
@@ -8056,9 +8056,9 @@ def update_active_portfolio_index():
         # Sync expander state (same pattern as other portfolio parameters)
         st.session_state['multi_backtest_active_variant_expanded'] = active_portfolio.get('variant_expander_expanded', False)
         st.session_state['multi_backtest_active_use_threshold'] = active_portfolio.get('use_minimal_threshold', False)
-        st.session_state['multi_backtest_active_threshold_percent'] = active_portfolio.get('minimal_threshold_percent', 2.0)
+        st.session_state['multi_backtest_active_threshold_percent'] = active_portfolio.get('minimal_threshold_percent', 4.0)
         st.session_state['multi_backtest_active_use_max_allocation'] = active_portfolio.get('use_max_allocation', False)
-        st.session_state['multi_backtest_active_max_allocation_percent'] = active_portfolio.get('max_allocation_percent', 10.0)
+        st.session_state['multi_backtest_active_max_allocation_percent'] = active_portfolio.get('max_allocation_percent', 20.0)
         st.session_state['multi_backtest_active_use_sma_filter'] = active_portfolio.get('use_sma_filter', False)
         st.session_state['multi_backtest_active_sma_window'] = active_portfolio.get('sma_window', 200)
         
@@ -8085,7 +8085,7 @@ def update_active_portfolio_index():
         if 'use_minimal_threshold' not in active_portfolio:
             active_portfolio['use_minimal_threshold'] = False
         if 'minimal_threshold_percent' not in active_portfolio:
-            active_portfolio['minimal_threshold_percent'] = 2.0
+            active_portfolio['minimal_threshold_percent'] = 4.0
         
         print(f"NUCLEAR: Synced momentum widgets for portfolio {active_portfolio.get('name', 'Unknown')}, use_momentum={active_portfolio.get('use_momentum', False)}, windows_count={len(active_portfolio.get('momentum_windows', []))}")
         
@@ -10171,14 +10171,14 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                                     variant["minimal_threshold_percent"] = value
                                 else:
                                     variant["use_minimal_threshold"] = False
-                                    variant["minimal_threshold_percent"] = 2.0
+                                    variant["minimal_threshold_percent"] = 4.0
                             elif param == "max_allocation":
                                 if value is not None:
                                     variant["use_max_allocation"] = True
                                     variant["max_allocation_percent"] = value
                                 else:
                                     variant["use_max_allocation"] = False
-                                    variant["max_allocation_percent"] = 10.0
+                                    variant["max_allocation_percent"] = 20.0
                             elif param == "ma_type":
                                 variant["ma_type"] = value
                             elif param == "ma_windows":
@@ -10298,12 +10298,12 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                     
                     # Add threshold information (only show when enabled)
                     if variant.get('use_minimal_threshold', False):
-                        threshold_percent = variant.get('minimal_threshold_percent', 2.0)
+                        threshold_percent = variant.get('minimal_threshold_percent', 4.0)
                         clear_name_parts.append(f"- Min {threshold_percent:.2f}%")
                     
                     # Add max allocation information (only show when enabled)
                     if variant.get('use_max_allocation', False):
-                        max_allocation_percent = variant.get('max_allocation_percent', 10.0)
+                        max_allocation_percent = variant.get('max_allocation_percent', 20.0)
                         clear_name_parts.append(f"- Max {max_allocation_percent:.2f}%")
                     
                     # Add MA filter information (only show when enabled)
@@ -11547,7 +11547,7 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
     
     # ALWAYS sync threshold settings from portfolio (not just if not present)
     st.session_state["multi_backtest_active_use_threshold"] = active_portfolio.get('use_minimal_threshold', False)
-    st.session_state["multi_backtest_active_threshold_percent"] = active_portfolio.get('minimal_threshold_percent', 2.0)
+    st.session_state["multi_backtest_active_threshold_percent"] = active_portfolio.get('minimal_threshold_percent', 4.0)
     
     st.checkbox(
         "Enable Minimal Threshold Filter", 
@@ -11573,7 +11573,7 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
     
     # ALWAYS sync max allocation settings from portfolio (not just if not present)
     st.session_state["multi_backtest_active_use_max_allocation"] = active_portfolio.get('use_max_allocation', False)
-    st.session_state["multi_backtest_active_max_allocation_percent"] = active_portfolio.get('max_allocation_percent', 10.0)
+    st.session_state["multi_backtest_active_max_allocation_percent"] = active_portfolio.get('max_allocation_percent', 20.0)
     
     st.checkbox(
         "Enable Maximum Allocation Filter", 
@@ -13432,7 +13432,7 @@ def paste_all_json_callback():
                 if 'use_minimal_threshold' not in portfolio:
                     portfolio['use_minimal_threshold'] = False
                 if 'minimal_threshold_percent' not in portfolio:
-                    portfolio['minimal_threshold_percent'] = 2.0
+                    portfolio['minimal_threshold_percent'] = 4.0
                 # Don't override max_allocation values from JSON - preserve imported values like minimal_threshold
                 # REMOVED: Don't force max_allocation values to preserve JSON values
         
@@ -13565,21 +13565,21 @@ def paste_all_json_callback():
                     'stocks': stocks,
                     'benchmark_ticker': cfg.get('benchmark_ticker', '^GSPC'),
                     'initial_value': cfg.get('initial_value', 10000),
-                                          'added_amount': cfg.get('added_amount', 1000),
-                      'added_frequency': map_frequency(cfg.get('added_frequency', 'Monthly')),
-                      'rebalancing_frequency': map_frequency(cfg.get('rebalancing_frequency', 'Monthly')),
-                      'start_date_user': parse_date_from_json(cfg.get('start_date_user')),
-                      'end_date_user': parse_date_from_json(cfg.get('end_date_user')),
-                      'start_with': cfg.get('start_with', 'all'),
-                      'first_rebalance_strategy': cfg.get('first_rebalance_strategy', 'rebalancing_date'),
-                      'use_momentum': cfg.get('use_momentum', True),
+                    'added_amount': cfg.get('added_amount', 1000),
+                    'added_frequency': map_frequency(cfg.get('added_frequency', 'Monthly')),
+                    'rebalancing_frequency': map_frequency(cfg.get('rebalancing_frequency', 'Monthly')),
+                    'start_date_user': parse_date_from_json(cfg.get('start_date_user')),
+                    'end_date_user': parse_date_from_json(cfg.get('end_date_user')),
+                    'start_with': cfg.get('start_with', 'all'),
+                    'first_rebalance_strategy': cfg.get('first_rebalance_strategy', 'rebalancing_date'),
+                    'use_momentum': cfg.get('use_momentum', True),
                     'momentum_strategy': momentum_strategy,
                     'negative_momentum_strategy': negative_momentum_strategy,
                     'momentum_windows': momentum_windows,
                     'use_minimal_threshold': cfg.get('use_minimal_threshold', False),
-                    'minimal_threshold_percent': cfg.get('minimal_threshold_percent', 2.0),
+                    'minimal_threshold_percent': cfg.get('minimal_threshold_percent', 4.0),
                     'use_max_allocation': cfg.get('use_max_allocation', False),
-                    'max_allocation_percent': cfg.get('max_allocation_percent', 10.0),
+                    'max_allocation_percent': cfg.get('max_allocation_percent', 20.0),
                     'calc_beta': cfg.get('calc_beta', False),
                     'calc_volatility': cfg.get('calc_volatility', True),
                     'beta_window_days': cfg.get('beta_window_days', 365),
@@ -13708,9 +13708,9 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
             
             # Ensure threshold settings are included (read from current config)
             cleaned_config['use_minimal_threshold'] = config.get('use_minimal_threshold', False)
-            cleaned_config['minimal_threshold_percent'] = config.get('minimal_threshold_percent', 2.0)
+            cleaned_config['minimal_threshold_percent'] = config.get('minimal_threshold_percent', 4.0)
             cleaned_config['use_max_allocation'] = config.get('use_max_allocation', False)
-            cleaned_config['max_allocation_percent'] = config.get('max_allocation_percent', 10.0)
+            cleaned_config['max_allocation_percent'] = config.get('max_allocation_percent', 20.0)
             cleaned_config['use_sma_filter'] = config.get('use_sma_filter', False)
             cleaned_config['sma_window'] = config.get('sma_window', 200)
             cleaned_config['ma_type'] = config.get('ma_type', 'SMA')
@@ -15660,8 +15660,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 'Volatility Enabled': 'Yes' if cfg.get('calc_volatility', False) else 'No',
                 'Beta Window': f"{cfg.get('beta_window_days', 0)}-{cfg.get('exclude_days_beta', 0)}" if cfg.get('calc_beta', False) else 'N/A',
                 'Volatility Window': f"{cfg.get('vol_window_days', 0)}-{cfg.get('exclude_days_vol', 0)}" if cfg.get('calc_volatility', False) else 'N/A',
-                'Minimal Threshold': f"{cfg.get('minimal_threshold_percent', 2.0):.1f}%" if cfg.get('use_minimal_threshold', False) else 'Disabled',
-                'Maximum Allocation': f"{cfg.get('max_allocation_percent', 10.0):.1f}%" if cfg.get('use_max_allocation', False) else 'Disabled'
+                'Minimal Threshold': f"{cfg.get('minimal_threshold_percent', 4.0):.1f}%" if cfg.get('use_minimal_threshold', False) else 'Disabled',
+                'Maximum Allocation': f"{cfg.get('max_allocation_percent', 20.0):.1f}%" if cfg.get('use_max_allocation', False) else 'Disabled'
             }
         
         config_df = pd.DataFrame(config_data).T
