@@ -3308,7 +3308,7 @@ if 'multi_backtest_page_initialized' not in st.session_state:
         {
             'name': 'Benchmark Only (SPY)',
             'stocks': [
-                {'ticker': 'SPY', 'allocation': 1.0, 'include_dividends': True, 'include_in_sma_filter': True},
+                {'ticker': 'SPY', 'allocation': 1.0, 'include_dividends': True, 'include_in_sma_filter': True, 'max_allocation_percent': None},
             ],
             'benchmark_ticker': '^GSPC',
             'initial_value': 10000,
@@ -3377,10 +3377,10 @@ if 'multi_backtest_page_initialized' not in st.session_state:
         {
             'name': 'Equal Weight Portfolio (No Momentum)',
             'stocks': [
-                {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True, 'include_in_sma_filter': True},
-                {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True, 'include_in_sma_filter': True},
-                {'ticker': 'GLD', 'allocation': 0.25, 'include_dividends': True, 'include_in_sma_filter': True},
-                {'ticker': 'TLT', 'allocation': 0.25, 'include_dividends': True, 'include_in_sma_filter': True},
+                {'ticker': 'SPY', 'allocation': 0.25, 'include_dividends': True, 'include_in_sma_filter': True, 'max_allocation_percent': None},
+                {'ticker': 'QQQ', 'allocation': 0.25, 'include_dividends': True, 'include_in_sma_filter': True, 'max_allocation_percent': None},
+                {'ticker': 'GLD', 'allocation': 0.25, 'include_dividends': True, 'include_in_sma_filter': True, 'max_allocation_percent': None},
+                {'ticker': 'TLT', 'allocation': 0.25, 'include_dividends': True, 'include_in_sma_filter': True, 'max_allocation_percent': None},
             ],
             'benchmark_ticker': '^GSPC',
             'initial_value': 10000,
@@ -3415,6 +3415,11 @@ if 'multi_backtest_portfolio_configs' in st.session_state:
     for config in st.session_state.multi_backtest_portfolio_configs:
         config.pop('use_relative_momentum', None)
         config.pop('equal_if_all_negative', None)
+        
+        # Ensure all stocks have max_allocation_percent field
+        for stock in config.get('stocks', []):
+            if 'max_allocation_percent' not in stock:
+                stock['max_allocation_percent'] = None
 
 st.set_page_config(layout="wide", page_title="Multi-Portfolio Analysis", page_icon="📈")
 
@@ -4968,7 +4973,16 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         use_threshold = config.get('use_minimal_threshold', False)
         threshold_percent = config.get('minimal_threshold_percent', 2.0)
         
-        if use_max_allocation and weights:
+        # Build dictionary of individual ticker caps from stock configs
+        individual_caps = {}
+        for stock in config.get('stocks', []):
+            ticker = stock.get('ticker', '')
+            individual_cap = stock.get('max_allocation_percent', None)
+            if individual_cap is not None and individual_cap > 0:
+                individual_caps[ticker] = individual_cap / 100.0
+        
+        # Apply caps if either global cap is enabled OR any individual caps exist
+        if (use_max_allocation or individual_caps) and weights:
             max_allocation_decimal = max_allocation_percent / 100.0
             
             # FIRST PASS: Apply maximum allocation filter (EXCLUDE CASH from max_allocation limit)
@@ -4979,19 +4993,29 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 # CASH is exempt from max_allocation limit to prevent money loss
                 if ticker == 'CASH':
                     capped_weights[ticker] = weight
-                elif weight > max_allocation_decimal:
-                    # Cap the weight and collect excess
-                    capped_weights[ticker] = max_allocation_decimal
-                    excess_weight += (weight - max_allocation_decimal)
                 else:
-                    # Keep original weight
-                    capped_weights[ticker] = weight
+                    # Use individual cap if available, otherwise use global cap
+                    ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                    
+                    if weight > ticker_cap:
+                        # Cap the weight and collect excess
+                        capped_weights[ticker] = ticker_cap
+                        excess_weight += (weight - ticker_cap)
+                    else:
+                        # Keep original weight
+                        capped_weights[ticker] = weight
             
             # Redistribute excess weight proportionally among stocks that are below the cap
             if excess_weight > 0:
-                # Find stocks that can receive more weight (below the cap) - include CASH as eligible
-                eligible_stocks = {ticker: weight for ticker, weight in capped_weights.items() 
-                                 if ticker == 'CASH' or weight < max_allocation_decimal}
+                # Find stocks that can receive more weight (below their individual cap) - include CASH as eligible
+                eligible_stocks = {}
+                for ticker, weight in capped_weights.items():
+                    if ticker == 'CASH':
+                        eligible_stocks[ticker] = weight
+                    else:
+                        ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                        if weight < ticker_cap:
+                            eligible_stocks[ticker] = weight
                 
                 if eligible_stocks:
                     # Calculate total weight of eligible stocks
@@ -5008,8 +5032,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             if ticker == 'CASH':
                                 capped_weights[ticker] = new_weight
                             else:
-                                # Make sure we don't exceed the cap
-                                capped_weights[ticker] = min(new_weight, max_allocation_decimal)
+                                # Make sure we don't exceed the individual ticker's cap
+                                ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                                capped_weights[ticker] = min(new_weight, ticker_cap)
             
             weights = capped_weights
             
@@ -5041,7 +5066,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 weights = weights
         
         # SECOND PASS: Apply maximum allocation filter again (in case normalization created new excess)
-        if use_max_allocation and weights:
+        if (use_max_allocation or individual_caps) and weights:
             max_allocation_decimal = max_allocation_percent / 100.0
             
             # Check if any stocks exceed the cap after threshold filtering and normalization
@@ -5052,19 +5077,29 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 # CASH is exempt from max_allocation limit to prevent money loss
                 if ticker == 'CASH':
                     capped_weights[ticker] = weight
-                elif weight > max_allocation_decimal:
-                    # Cap the weight and collect excess
-                    capped_weights[ticker] = max_allocation_decimal
-                    excess_weight += (weight - max_allocation_decimal)
                 else:
-                    # Keep original weight
-                    capped_weights[ticker] = weight
+                    # Use individual cap if available, otherwise use global cap
+                    ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                    
+                    if weight > ticker_cap:
+                        # Cap the weight and collect excess
+                        capped_weights[ticker] = ticker_cap
+                        excess_weight += (weight - ticker_cap)
+                    else:
+                        # Keep original weight
+                        capped_weights[ticker] = weight
             
             # Redistribute excess weight proportionally among stocks that are below the cap
             if excess_weight > 0:
-                # Find stocks that can receive more weight (below the cap) - include CASH as eligible
-                eligible_stocks = {ticker: weight for ticker, weight in capped_weights.items() 
-                                 if ticker == 'CASH' or weight < max_allocation_decimal}
+                # Find stocks that can receive more weight (below their individual cap) - include CASH as eligible
+                eligible_stocks = {}
+                for ticker, weight in capped_weights.items():
+                    if ticker == 'CASH':
+                        eligible_stocks[ticker] = weight
+                    else:
+                        ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                        if weight < ticker_cap:
+                            eligible_stocks[ticker] = weight
                 
                 if eligible_stocks:
                     # Calculate total weight of eligible stocks
@@ -5081,8 +5116,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             if ticker == 'CASH':
                                 capped_weights[ticker] = new_weight
                             else:
-                                # Make sure we don't exceed the cap
-                                capped_weights[ticker] = min(new_weight, max_allocation_decimal)
+                                # Make sure we don't exceed the individual ticker's cap
+                                ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                                capped_weights[ticker] = min(new_weight, ticker_cap)
             
             weights = capped_weights
             
@@ -5164,7 +5200,16 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         use_threshold = config.get('use_minimal_threshold', False)
         threshold_percent = config.get('minimal_threshold_percent', 2.0)
         
-        if use_max_allocation and current_allocations:
+        # Build dictionary of individual ticker caps from stock configs
+        individual_caps = {}
+        for stock in config.get('stocks', []):
+            ticker = stock.get('ticker', '')
+            individual_cap = stock.get('max_allocation_percent', None)
+            if individual_cap is not None and individual_cap > 0:
+                individual_caps[ticker] = individual_cap / 100.0
+        
+        # Apply caps if either global cap is enabled OR any individual caps exist
+        if (use_max_allocation or individual_caps) and current_allocations:
             max_allocation_decimal = max_allocation_percent / 100.0
             
             # FIRST PASS: Apply maximum allocation filter (EXCLUDE CASH from max_allocation limit)
@@ -5175,19 +5220,29 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 # CASH is exempt from max_allocation limit to prevent money loss
                 if ticker == 'CASH':
                     capped_allocations[ticker] = allocation
-                elif allocation > max_allocation_decimal:
-                    # Cap the allocation and collect excess
-                    capped_allocations[ticker] = max_allocation_decimal
-                    excess_allocation += (allocation - max_allocation_decimal)
                 else:
-                    # Keep original allocation
-                    capped_allocations[ticker] = allocation
+                    # Use individual cap if available, otherwise use global cap
+                    ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                    
+                    if allocation > ticker_cap:
+                        # Cap the allocation and collect excess
+                        capped_allocations[ticker] = ticker_cap
+                        excess_allocation += (allocation - ticker_cap)
+                    else:
+                        # Keep original allocation
+                        capped_allocations[ticker] = allocation
             
             # Redistribute excess allocation proportionally among stocks that are below the cap
             if excess_allocation > 0:
-                # Find stocks that can receive more allocation (below the cap) - include CASH as eligible
-                eligible_stocks = {ticker: allocation for ticker, allocation in capped_allocations.items() 
-                                 if ticker == 'CASH' or allocation < max_allocation_decimal}
+                # Find stocks that can receive more allocation (below their individual cap) - include CASH as eligible
+                eligible_stocks = {}
+                for ticker, allocation in capped_allocations.items():
+                    if ticker == 'CASH':
+                        eligible_stocks[ticker] = allocation
+                    else:
+                        ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                        if allocation < ticker_cap:
+                            eligible_stocks[ticker] = allocation
                 
                 if eligible_stocks:
                     # Calculate total allocation of eligible stocks
@@ -5204,8 +5259,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             if ticker == 'CASH':
                                 capped_allocations[ticker] = new_allocation
                             else:
-                                # Make sure we don't exceed the cap
-                                capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
+                                # Make sure we don't exceed the individual ticker's cap
+                                ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                                capped_allocations[ticker] = min(new_allocation, ticker_cap)
             
             current_allocations = capped_allocations
         
@@ -5232,7 +5288,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 current_allocations = current_allocations
         
         # SECOND PASS: Apply maximum allocation filter again (in case normalization created new excess)
-        if use_max_allocation and current_allocations:
+        if (use_max_allocation or individual_caps) and current_allocations:
             max_allocation_decimal = max_allocation_percent / 100.0
             
             # Check if any stocks exceed the cap after threshold filtering and normalization
@@ -5243,19 +5299,29 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 # CASH is exempt from max_allocation limit to prevent money loss
                 if ticker == 'CASH':
                     capped_allocations[ticker] = allocation
-                elif allocation > max_allocation_decimal:
-                    # Cap the allocation and collect excess
-                    capped_allocations[ticker] = max_allocation_decimal
-                    excess_allocation += (allocation - max_allocation_decimal)
                 else:
-                    # Keep original allocation
-                    capped_allocations[ticker] = allocation
+                    # Use individual cap if available, otherwise use global cap
+                    ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                    
+                    if allocation > ticker_cap:
+                        # Cap the allocation and collect excess
+                        capped_allocations[ticker] = ticker_cap
+                        excess_allocation += (allocation - ticker_cap)
+                    else:
+                        # Keep original allocation
+                        capped_allocations[ticker] = allocation
             
             # Redistribute excess allocation proportionally among stocks that are below the cap
             if excess_allocation > 0:
-                # Find stocks that can receive more allocation (below the cap) - include CASH as eligible
-                eligible_stocks = {ticker: allocation for ticker, allocation in capped_allocations.items() 
-                                 if ticker == 'CASH' or allocation < max_allocation_decimal}
+                # Find stocks that can receive more allocation (below their individual cap) - include CASH as eligible
+                eligible_stocks = {}
+                for ticker, allocation in capped_allocations.items():
+                    if ticker == 'CASH':
+                        eligible_stocks[ticker] = allocation
+                    else:
+                        ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                        if allocation < ticker_cap:
+                            eligible_stocks[ticker] = allocation
                 
                 if eligible_stocks:
                     # Calculate total allocation of eligible stocks
@@ -5272,8 +5338,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                             if ticker == 'CASH':
                                 capped_allocations[ticker] = new_allocation
                             else:
-                                # Make sure we don't exceed the cap
-                                capped_allocations[ticker] = min(new_allocation, max_allocation_decimal)
+                                # Make sure we don't exceed the individual ticker's cap
+                                ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                                capped_allocations[ticker] = min(new_allocation, ticker_cap)
             
             current_allocations = capped_allocations
     else:
@@ -5605,7 +5672,16 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                         use_max_allocation = config.get('use_max_allocation', False)
                         max_allocation_percent = config.get('max_allocation_percent', 10.0)
                         
-                        if use_max_allocation and weights:
+                        # Build dictionary of individual ticker caps from stock configs
+                        individual_caps = {}
+                        for stock in config.get('stocks', []):
+                            ticker = stock.get('ticker', '')
+                            individual_cap = stock.get('max_allocation_percent', None)
+                            if individual_cap is not None and individual_cap > 0:
+                                individual_caps[ticker] = individual_cap / 100.0
+                        
+                        # Apply caps if either global cap is enabled OR any individual caps exist
+                        if (use_max_allocation or individual_caps) and weights:
                             max_allocation_decimal = max_allocation_percent / 100.0
                             
                             # Apply maximum allocation filter to momentum weights (EXCLUDE CASH from max_allocation limit)
@@ -5616,19 +5692,29 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                                 # CASH is exempt from max_allocation limit to prevent money loss
                                 if ticker == 'CASH':
                                     capped_weights[ticker] = weight
-                                elif weight > max_allocation_decimal:
-                                    # Cap the weight and collect excess
-                                    capped_weights[ticker] = max_allocation_decimal
-                                    excess_weight += (weight - max_allocation_decimal)
                                 else:
-                                    # Keep original weight
-                                    capped_weights[ticker] = weight
+                                    # Use individual cap if available, otherwise use global cap
+                                    ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                                    
+                                    if weight > ticker_cap:
+                                        # Cap the weight and collect excess
+                                        capped_weights[ticker] = ticker_cap
+                                        excess_weight += (weight - ticker_cap)
+                                    else:
+                                        # Keep original weight
+                                        capped_weights[ticker] = weight
                             
                             # Redistribute excess weight proportionally among stocks that are below the cap
                             if excess_weight > 0:
-                                # Find stocks that can receive more weight (below the cap) - include CASH as eligible
-                                eligible_stocks = {ticker: weight for ticker, weight in capped_weights.items() 
-                                                 if ticker == 'CASH' or weight < max_allocation_decimal}
+                                # Find stocks that can receive more weight (below their individual cap) - include CASH as eligible
+                                eligible_stocks = {}
+                                for ticker, weight in capped_weights.items():
+                                    if ticker == 'CASH':
+                                        eligible_stocks[ticker] = weight
+                                    else:
+                                        ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                                        if weight < ticker_cap:
+                                            eligible_stocks[ticker] = weight
                                 
                                 if eligible_stocks:
                                     # Calculate total weight of eligible stocks
@@ -5645,8 +5731,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                                             if ticker == 'CASH':
                                                 capped_weights[ticker] = new_weight
                                             else:
-                                                # Make sure we don't exceed the cap
-                                                capped_weights[ticker] = min(new_weight, max_allocation_decimal)
+                                                # Make sure we don't exceed the individual ticker's cap
+                                                ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                                                capped_weights[ticker] = min(new_weight, ticker_cap)
                             
                             weights = capped_weights
                             
@@ -7401,7 +7488,7 @@ def bulk_delete_portfolios_callback(portfolio_names_to_delete):
     st.session_state.multi_backtest_rerun_flag = True
 
 def add_stock_callback():
-    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'].append({'ticker': '', 'allocation': 0.0, 'include_dividends': True, 'include_in_sma_filter': True})
+    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'].append({'ticker': '', 'allocation': 0.0, 'include_dividends': True, 'include_in_sma_filter': True, 'max_allocation_percent': None})
     # Removed rerun flag - no need to refresh entire page for adding a stock
 
 def remove_stock_callback(index):
@@ -7763,6 +7850,13 @@ def paste_json_callback():
             
             # Debug output
             st.info(f"Converted {len(stocks)} stocks from legacy format: {[s['ticker'] for s in stocks]}")
+        
+        # Ensure all stocks have max_allocation_percent field
+        for stock in stocks:
+            if 'max_allocation_percent' not in stock:
+                stock['max_allocation_percent'] = None
+            if 'include_in_sma_filter' not in stock:
+                stock['include_in_sma_filter'] = True
         
         # Sanitize momentum window weights to prevent StreamlitValueAboveMaxError
         momentum_windows = json_data.get('momentum_windows', [])
@@ -8384,7 +8478,7 @@ if st.sidebar.button("🗑️ Clear All Portfolios", key="multi_backtest_clear_a
     # Clear all portfolios and create a single blank portfolio
     st.session_state.multi_backtest_portfolio_configs = [{
         'name': 'New Portfolio 1',
-        'stocks': [{'ticker': '', 'allocation': 0.0, 'include_dividends': True}],
+        'stocks': [{'ticker': '', 'allocation': 0.0, 'include_dividends': True, 'include_in_sma_filter': True, 'max_allocation_percent': None}],
         'benchmark_ticker': '^GSPC',
         'initial_value': 10000,
         'added_amount': 0,
@@ -10537,7 +10631,31 @@ for i in range(len(active_portfolio['stocks'])):
             if st.session_state[alloc_key] != int(stock['allocation'] * 100):
                 st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][i]['allocation'] = st.session_state[alloc_key] / 100.0
         else:
-            st.write("")
+            # Show Max Cap % field when momentum is active
+            max_cap_key = f"multi_backtest_max_cap_{st.session_state.multi_backtest_active_portfolio_index}_{i}"
+            # Ensure max_allocation_percent key exists
+            if 'max_allocation_percent' not in stock:
+                stock['max_allocation_percent'] = None
+            
+            if max_cap_key not in st.session_state:
+                st.session_state[max_cap_key] = int(stock['max_allocation_percent']) if stock['max_allocation_percent'] is not None else 0
+            
+            max_cap_value = st.number_input(
+                "Max Cap %", 
+                min_value=0, 
+                max_value=100,
+                step=1, 
+                format="%d", 
+                key=max_cap_key, 
+                label_visibility="visible",
+                help="Individual cap for this ticker (0 = no cap, uses global cap if enabled)"
+            )
+            
+            # Update the portfolio config
+            if max_cap_value > 0:
+                st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][i]['max_allocation_percent'] = float(max_cap_value)
+            else:
+                st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['stocks'][i]['max_allocation_percent'] = None
     with col_d:
         div_key = f"multi_backtest_div_{st.session_state.multi_backtest_active_portfolio_index}_{i}"
         # Ensure include_dividends key exists with default value
