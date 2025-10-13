@@ -5067,6 +5067,13 @@ def continuous_duplicate_check():
 continuous_duplicate_check()
 
 def add_portfolio_callback():
+    # Inherit custom dates from current global settings if enabled
+    inherit_start_date = None
+    inherit_end_date = None
+    if st.session_state.get("strategy_comparison_use_custom_dates", False):
+        inherit_start_date = st.session_state.get("strategy_comparison_start_date")
+        inherit_end_date = st.session_state.get("strategy_comparison_end_date")
+    
     # Create a completely blank portfolio with no default tickers and no momentum
     new_portfolio = {
         'name': f"New Portfolio {len(st.session_state.strategy_comparison_portfolio_configs) + 1}",
@@ -5095,8 +5102,8 @@ def add_portfolio_callback():
         'use_max_allocation': False,
         'max_allocation_percent': 20.0,
         'collect_dividends_as_cash': False,
-        'start_date_user': None,
-        'end_date_user': None,
+        'start_date_user': inherit_start_date,
+        'end_date_user': inherit_end_date,
         'fusion_portfolio': {'enabled': False, 'selected_portfolios': [], 'allocations': {}}
     }
     
