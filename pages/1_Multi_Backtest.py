@@ -149,6 +149,9 @@ def get_ticker_aliases():
         'PLATINUM': 'PL=F',      # Platinum Futures (1997+) - No dividends
         'PALLADIUM': 'PA=F',     # Palladium Futures (1998+) - No dividends
         
+        # Cryptocurrency
+        'BITCOIN': 'BTC-USD',    # Bitcoin (2014+) - No dividends
+        
         # Leveraged & Inverse ETFs (Synthetic Aliases) - NASDAQ-100 versions
         'TQQQND': '^NDX?L=3?E=0.95',     # 3x NASDAQ-100 (price only) - 1985+
         'QLDND': '^NDX?L=2?E=0.95',      # 2x NASDAQ-100 (price only) - 1985+
@@ -790,6 +793,9 @@ def get_ticker_aliases():
         'COPPER': 'HG=F',        # Copper Futures (2000+) - No dividends
         'PLATINUM': 'PL=F',      # Platinum Futures (1997+) - No dividends
         'PALLADIUM': 'PA=F',     # Palladium Futures (1998+) - No dividends
+        
+        # Cryptocurrency
+        'BITCOIN': 'BTC-USD',    # Bitcoin (2014+) - No dividends
         
         # Leveraged & Inverse ETFs (Synthetic Aliases) - NASDAQ-100 versions
         'TQQQND': '^NDX?L=3?E=0.95',     # 3x NASDAQ-100 (price only) - 1985+
