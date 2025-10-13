@@ -1,4 +1,4 @@
-# NO CACHE VERSION - ALL @st.cache_data decorators removed - ZERO CACHE ANYWHERE
+# ALLOCATIONS PAGE - WITH CACHE
 import streamlit as st
 import datetime
 from datetime import timedelta, time
@@ -5869,10 +5869,10 @@ def paste_json_callback():
                                 # Already in decimal format, use as is
                                 allocation = alloc_value
                         
-                        # Resolve the alias to the actual Yahoo ticker
-                        resolved_ticker = resolve_ticker_alias(tickers[i].strip())
+                        # Keep original ticker for backtest (don't resolve aliases for portfolio)
+                        original_ticker = tickers[i].strip()
                         stock = {
-                            'ticker': resolved_ticker,  # Use resolved ticker
+                            'ticker': original_ticker,  # Use original ticker for backtest
                             'allocation': allocation,
                             'include_dividends': bool(divs[i]) if i < len(divs) and divs[i] is not None else True
                         }
@@ -6215,18 +6215,18 @@ def update_stock_ticker(index):
         elif upper_val == 'BRK.A':
             upper_val = 'BRK-A'
 
-        # CRITICAL: Resolve ticker alias BEFORE storing in portfolio config
-        resolved_ticker = resolve_ticker_alias(upper_val)
+        # CRITICAL: Keep original ticker for backtest (don't resolve aliases for portfolio)
+        original_ticker = upper_val
         
-        # Update the portfolio configuration with the resolved ticker (with leverage/expense)
-        st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][index]['ticker'] = resolved_ticker
+        # Update the portfolio configuration with the original ticker (with leverage/expense)
+        st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][index]['ticker'] = original_ticker
         
         # IMPORTANT: Force UI update by setting the widget's session_state value
-        # This ensures the resolved ticker is displayed immediately in the text_input
-        st.session_state[key] = resolved_ticker
+        # This ensures the original ticker is displayed immediately in the text_input
+        st.session_state[key] = original_ticker
         
         # Auto-disable dividends for negative leverage (inverse ETFs)
-        if '?L=-' in resolved_ticker:
+        if '?L=-' in original_ticker:
             st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['stocks'][index]['include_dividends'] = False
             # Also update the checkbox UI state
             div_key = f"alloc_div_{st.session_state.alloc_active_portfolio_index}_{index}"
@@ -6258,21 +6258,21 @@ def update_ma_reference_ticker(stock_index):
     elif new_value == 'BRK.A':
         new_value = 'BRK-A'
     
-    # CRITICAL: Resolve ticker alias (GOLDX → GOLD_COMPLETE, SPYTR → ^SP500TR, etc.)
-    if new_value:  # Only resolve if not empty
-        resolved_value = resolve_ticker_alias(new_value)
+    # CRITICAL: Keep original ticker for backtest (don't resolve aliases for portfolio)
+    if new_value:  # Only process if not empty
+        original_value = new_value
     else:
-        resolved_value = new_value
+        original_value = new_value
     
-    # Update session state with resolved value for display
-    st.session_state[ma_ref_key] = resolved_value
+    # Update session state with original value for display
+    st.session_state[ma_ref_key] = original_value
     
     # Update the stock config
     portfolio = st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]
     if stock_index < len(portfolio['stocks']):
         old_value = portfolio['stocks'][stock_index].get('ma_reference_ticker', '')
-        if resolved_value != old_value:
-            portfolio['stocks'][stock_index]['ma_reference_ticker'] = resolved_value
+        if original_value != old_value:
+            portfolio['stocks'][stock_index]['ma_reference_ticker'] = original_value
             st.session_state.alloc_rerun_flag = True
 
 
@@ -6659,10 +6659,10 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=st.session_state.all
                     st.session_state.alloc_active_portfolio_index = 0
                 
                 portfolio_index = st.session_state.alloc_active_portfolio_index
-                # Resolve the alias to the actual Yahoo ticker before storing
-                resolved_ticker = resolve_ticker_alias(alias)
+                # Keep original ticker for backtest (don't resolve aliases for portfolio)
+                original_ticker = alias
                 st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
-                    'ticker': resolved_ticker,  # Add the resolved Yahoo ticker
+                    'ticker': original_ticker,  # Add the original ticker for backtest
                     'allocation': 0.0, 
                     'include_dividends': True,
                     'include_in_sma_filter': True,
@@ -6697,10 +6697,10 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=st.session_state.all
                      st.session_state.alloc_active_portfolio_index = 0
                  
                  portfolio_index = st.session_state.alloc_active_portfolio_index
-                 # Resolve the alias to the actual Yahoo ticker before storing
-                 resolved_ticker = resolve_ticker_alias(alias)
+                 # Keep original ticker for backtest (don't resolve aliases for portfolio)
+                 original_ticker = alias
                  st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
-                     'ticker': resolved_ticker,  # Add the resolved Yahoo ticker
+                     'ticker': original_ticker,  # Add the original ticker for backtest
                      'allocation': 0.0, 
                      'include_dividends': True
                  })
@@ -6766,12 +6766,12 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=st.session_state.all
                     st.session_state.alloc_active_portfolio_index = 0
                 
                 portfolio_index = st.session_state.alloc_active_portfolio_index
-                # Resolve the alias to the actual ticker before storing
-                resolved_ticker = resolve_ticker_alias(alias)
+                # Keep original ticker for backtest (don't resolve aliases for portfolio)
+                original_ticker = alias
                 # Auto-disable dividends for negative leverage (inverse ETFs)
-                include_divs = False if '?L=-' in resolved_ticker else True
+                include_divs = False if '?L=-' in original_ticker else True
                 st.session_state.alloc_portfolio_configs[portfolio_index]['stocks'].append({
-                    'ticker': resolved_ticker,  # Add the resolved ticker
+                    'ticker': original_ticker,  # Add the original ticker
                     'allocation': 0.0, 
                     'include_dividends': include_divs,
                     'include_in_sma_filter': True,
@@ -6889,19 +6889,19 @@ with st.expander("📝 Bulk Ticker Input", expanded=False):
                 new_stocks = []
                 
                 for i, ticker in enumerate(ticker_list):
-                    # Resolve the alias to the actual Yahoo ticker
-                    resolved_ticker = resolve_ticker_alias(ticker)
+                    # Keep original ticker for backtest (don't resolve aliases for portfolio)
+                    original_ticker = ticker
                     if i < len(current_stocks):
                         # Use existing allocation if available
                         new_stocks.append({
-                            'ticker': resolved_ticker,  # Use resolved ticker
+                            'ticker': original_ticker,  # Use original ticker
                             'allocation': current_stocks[i]['allocation'],
                             'include_dividends': current_stocks[i]['include_dividends']
                         })
                     else:
                         # New tickers get 0% allocation
                         new_stocks.append({
-                            'ticker': resolved_ticker,  # Use resolved ticker
+                            'ticker': original_ticker,  # Use original ticker
                             'allocation': 0.0,
                             'include_dividends': True
                         })
@@ -6946,13 +6946,13 @@ with st.expander("📝 Bulk Ticker Input", expanded=False):
                     
                     # Add new tickers to existing ones
                     for ticker in ticker_list:
-                        # Resolve the alias to the actual Yahoo ticker
-                        resolved_ticker = resolve_ticker_alias(ticker)
+                        # Keep original ticker for backtest (don't resolve aliases for portfolio)
+                        original_ticker = ticker
                         # Check if ticker already exists
-                        ticker_exists = any(stock['ticker'] == resolved_ticker for stock in current_stocks)
+                        ticker_exists = any(stock['ticker'] == original_ticker for stock in current_stocks)
                         if not ticker_exists:
                             current_stocks.append({
-                                'ticker': resolved_ticker,  # Use resolved ticker
+                                'ticker': original_ticker,  # Use original ticker
                                 'allocation': 0.0,
                                 'include_dividends': True
                             })
@@ -8572,10 +8572,10 @@ def paste_all_json_callback():
                                         # Already in decimal format, use as is
                                         allocation = alloc_value
                                 
-                                # Resolve the alias to the actual Yahoo ticker
-                                resolved_ticker = resolve_ticker_alias(tickers[i].strip())
+                                # Keep original ticker for backtest (don't resolve aliases for portfolio)
+                                original_ticker = tickers[i].strip()
                                 stock = {
-                                    'ticker': resolved_ticker,  # Use resolved ticker
+                                    'ticker': original_ticker,  # Use original ticker
                                     'allocation': allocation,
                                     'include_dividends': bool(divs[i]) if i < len(divs) and divs[i] is not None else True
                                 }
