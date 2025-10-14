@@ -5005,7 +5005,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     weights = {t: 0.0 for t in rets_keys}
 
         # Post-filtering: multiply weights by inverse vol and inverse |beta| when requested
-        if (calc_volatility or calc_beta) and weights:
+        # BUT NOT for Equal weight strategy (when all negative) - keep true equal weights
+        if (calc_volatility or calc_beta) and weights and not (all_negative and effective_strategy == 'Equal weight'):
             filter_scores = {}
             for t in weights:
                 score = 1.0
@@ -6344,7 +6345,8 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
                     weights = {t: 0.0 for t in rets_keys}
 
         # Post-filtering: multiply weights by inverse vol and inverse |beta| when requested
-        if (calc_volatility or calc_beta) and weights:
+        # BUT NOT for Equal weight strategy (when all negative) - keep true equal weights
+        if (calc_volatility or calc_beta) and weights and not (all_negative and effective_strategy == 'Equal weight'):
             filter_scores = {}
             for t in weights:
                 score = 1.0
