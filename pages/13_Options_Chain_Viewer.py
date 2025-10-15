@@ -30,6 +30,71 @@ st.sidebar.header("🎛️ Controls")
 if 'current_ticker' not in st.session_state:
     st.session_state.current_ticker = ""
 
+# Utility function to clean DataFrames for Arrow serialization
+def clean_dataframe_for_arrow(df):
+    """Clean DataFrame to be Arrow-compatible by converting numpy types to Python native types"""
+    if df is None:
+        return df
+    
+    # Handle Styler objects
+    if hasattr(df, 'data'):
+        df = df.data  # Get underlying DataFrame from Styler
+    
+    if df.empty:
+        return df
+    
+    df_clean = df.copy()
+    
+    # Convert all columns to Python native types
+    for col in df_clean.columns:
+        if df_clean[col].dtype == 'object':
+            # For object columns, try to convert numpy types
+            df_clean[col] = df_clean[col].astype(str)
+        elif 'float' in str(df_clean[col].dtype):
+            # Convert numpy floats to Python floats
+            df_clean[col] = df_clean[col].astype(float)
+        elif 'int' in str(df_clean[col].dtype):
+            # Convert numpy ints to Python ints
+            df_clean[col] = df_clean[col].astype(int)
+    
+    return df_clean
+
+# Utility function to safely convert current_price to float
+def safe_float_price(price):
+    """Convert any price format to safe float for calculations - Cloud compatible"""
+    if price is None:
+        return 0.0
+    
+    # If already a proper float/int
+    if isinstance(price, (int, float)):
+        return float(price)
+    
+    # If string, try to convert
+    if isinstance(price, str):
+        try:
+            return float(price)
+        except ValueError:
+            return 0.0
+    
+    # If numpy/pandas types - convert to Python native
+    try:
+        if hasattr(price, 'item'):  # numpy scalar
+            return float(price.item())
+        elif hasattr(price, 'iloc'):  # pandas scalar
+            return float(price.iloc[0] if len(price) > 0 else 0.0)
+        elif str(type(price)).startswith("<class 'numpy."):
+            return float(price)
+        elif str(type(price)).startswith("<class 'pandas."):
+            return float(price)
+    except (ValueError, TypeError, AttributeError, IndexError):
+        pass
+    
+    # Final fallback - try direct conversion
+    try:
+        return float(price)
+    except (ValueError, TypeError):
+        return 0.0
+
 # Function to convert ticker (same as page 1)
 def convert_ticker_input(ticker):
     if not ticker:
@@ -101,9 +166,9 @@ show_calls = True
 show_puts = True
 
 # Cache functions for performance
-@st.cache_data(persist="disk", max_entries=100)  # Disk persistence with entry limit
+@st.cache_data(persist="disk")  # Disk persistence (TTL ignored when persist is set)
 def get_cached_ticker_info(ticker_symbol):
-    """Cache ticker info (price + expirations) - SERIALIZABLE"""
+    """Cache ticker info (price + expirations) for 24 hours - SERIALIZABLE"""
     ticker = yf.Ticker(ticker_symbol)
     try:
         # Single API call to get both price and options data
@@ -114,7 +179,7 @@ def get_cached_ticker_info(ticker_symbol):
     except Exception as e:
         raise Exception(f"Error fetching {ticker_symbol}: {e}")
 
-@st.cache_data(persist="disk", max_entries=50)  # Disk persistence with entry limit
+@st.cache_data(persist="disk")  # Disk persistence (TTL ignored when persist is set)
 def get_cached_all_options_batch(ticker_symbol, expirations_list):
     """Cache ALL option chains in ONE API call - OPTIMIZED like page 1"""
     ticker = yf.Ticker(ticker_symbol)
@@ -155,9 +220,9 @@ def get_cached_all_options_batch(ticker_symbol, expirations_list):
     except Exception as e:
         raise Exception(f"Error fetching all options for {ticker_symbol}: {e}")
 
-@st.cache_data(persist="disk", max_entries=50)  # Disk persistence with entry limit
+@st.cache_data(persist="disk")  # Disk persistence (TTL ignored when persist is set)
 def get_cached_option_chain(ticker_symbol, expiration):
-    """Cache individual option chain - SERIALIZABLE"""
+    """Cache individual option chain for 8 hours - SERIALIZABLE"""
     ticker = yf.Ticker(ticker_symbol)
     try:
         opt_chain = ticker.option_chain(expiration)
@@ -175,9 +240,9 @@ def get_cached_option_chain(ticker_symbol, expiration):
     except Exception as e:
         raise Exception(f"Error fetching option chain for {expiration}: {e}")
 
-@st.cache_data(persist="disk", max_entries=10)  # Disk persistence with entry limit
+@st.cache_data(persist="disk")  # Disk persistence (TTL ignored when persist is set)
 def get_cached_vix_data(period="max"):
-    """Cache VIX data - SERIALIZABLE"""
+    """Cache VIX data for 4 hours - SERIALIZABLE"""
     vix_ticker = yf.Ticker("^VIX")
     try:
         vix_current = float(vix_ticker.history(period="1d")['Close'].iloc[-1])
@@ -250,6 +315,9 @@ if ticker_symbol:
         # Get ticker info with progress
         with st.spinner(f"🔄 Fetching {ticker_symbol} data..."):
             current_price, expirations, fetch_timestamp = get_cached_ticker_info(ticker_symbol)
+            
+        # Ensure current_price is a safe float for calculations
+        current_price = safe_float_price(current_price)
     except Exception as e:
         st.error(f"❌ **Ticker Error**: {ticker_symbol} is not a valid ticker symbol")
         st.info("💡 **Try these popular tickers:** SPY, QQQ, AAPL, TSLA, MSFT, NVDA")
@@ -261,7 +329,7 @@ if ticker_symbol:
         current_time = datetime.now().strftime("%H:%M:%S")
         st.session_state.debug_messages.append(f"✅ {ticker_symbol} current price: ${current_price:.2f} at {current_time}")
         st.session_state.debug_messages.append(f"📅 Found {len(expirations)} expiration dates at {current_time}")
-        st.session_state.debug_messages.append(f"💾 Cache: Disk persistence with entry limits (ticker: 100, options: 50, VIX: 10)")
+        st.session_state.debug_messages.append(f"💾 Cache TTL: 24 hours (86400 seconds) with disk persistence")
         
         # Filter expirations (remove expired)
         valid_expirations = []
@@ -342,75 +410,27 @@ if ticker_symbol:
             if df is None or df.empty:
                 return df
             safe_df = df.copy()
-            
-            # Only convert display columns to strings, keep calculation columns as numeric
-            display_only_cols = [
+            # Columns that may contain '-' strings alongside floats → cast to str
+            string_like_cols = [
                 'CALL Last','CALL Bid','CALL Ask','CALL Mid','CALL Price %',
                 'PUT Last','PUT Bid','PUT Ask','PUT Mid','PUT Price %',
-                'CALL Extrinsic/Intrinsic','PUT Extrinsic/Intrinsic',
-                'call_moneyness_pct', 'put_moneyness_pct',
-                'call_intrinsic_pct', 'call_extrinsic_pct',
-                'put_intrinsic_pct', 'put_extrinsic_pct'
+                'CALL Extrinsic/Intrinsic','PUT Extrinsic/Intrinsic'
             ]
-            
-            # Keep these columns numeric for calculations
+            for col in string_like_cols:
+                if col in safe_df.columns:
+                    safe_df[col] = safe_df[col].astype(str)
+            # Ensure numeric columns are floats when possible
             numeric_cols = [
-                'strike', 'lastPrice', 'bid', 'ask', 'mid', 'volume', 'openInterest',
-                'impliedVolatility', 'daysToExp', 'expiration',
-                'call_lastPrice', 'put_lastPrice', 'call_bid', 'put_bid',
-                'call_ask', 'put_ask', 'call_mid', 'put_mid',
-                'call_moneyness_dollar', 'put_moneyness_dollar',
-                'call_intrinsic', 'put_intrinsic', 'call_extrinsic', 'put_extrinsic'
+                'strike','lastPrice','bid','ask','mid','volume','openInterest',
+                'impliedVolatility','daysToExp'
             ]
-            
-            for col in safe_df.columns:
-                if col in display_only_cols:
-                    # Convert display columns to strings
+            for col in numeric_cols:
+                if col in safe_df.columns:
                     try:
-                        safe_df[col] = safe_df[col].apply(lambda x: 
-                            str(x.item()) if hasattr(x, 'item') and hasattr(x, 'dtype') 
-                            else str(x) if pd.notna(x) 
-                            else ''
-                        )
+                        safe_df[col] = pd.to_numeric(safe_df[col], errors='coerce')
                     except Exception:
-                        safe_df[col] = safe_df[col].astype(str)
-                elif col in numeric_cols:
-                    # Keep calculation columns as numeric, but handle numpy types
-                    try:
-                        safe_df[col] = safe_df[col].apply(lambda x: 
-                            x.item() if hasattr(x, 'item') and hasattr(x, 'dtype') 
-                            else x if pd.notna(x) 
-                            else None
-                        )
-                        # Ensure numeric type
-                        if col != 'expiration':  # Don't convert expiration to numeric
-                            safe_df[col] = pd.to_numeric(safe_df[col], errors='coerce')
-                    except Exception:
-                        pass  # Keep original type
-                else:
-                    # For other columns, convert to string to avoid PyArrow issues
-                    try:
-                        safe_df[col] = safe_df[col].apply(lambda x: 
-                            str(x.item()) if hasattr(x, 'item') and hasattr(x, 'dtype') 
-                            else str(x) if pd.notna(x) 
-                            else ''
-                        )
-                    except Exception:
-                        safe_df[col] = safe_df[col].astype(str)
-            
+                        pass
             return safe_df
-        
-        def safe_display_dataframe(df, **kwargs):
-            """Safely display DataFrame with PyArrow compatibility"""
-            try:
-                # Clean the dataframe before display
-                clean_df = sanitize_for_arrow(df)
-                st.dataframe(clean_df, **kwargs)
-            except Exception as e:
-                st.error(f"Error displaying dataframe: {e}")
-                # Fallback: display as text
-                st.text("DataFrame content:")
-                st.write(clean_df.to_string())
 
         calls_combined = sanitize_for_arrow(calls_combined)
         puts_combined = sanitize_for_arrow(puts_combined)
@@ -746,11 +766,14 @@ if ticker_symbol:
                                 
                                 return styles
                             
-                            # Apply advanced styling
+                            # Apply advanced styling (but don't use for display due to Arrow compatibility)
                             styled_df = merged_df.style.apply(highlight_options_table, axis=1)
+                            # Note: We'll display the unstyled DataFrame for Arrow compatibility
                             
-                            # Display styled table with increased height
-                            safe_display_dataframe(styled_df, width='stretch', height=800)
+                            # Display styled table with increased height (cleaned for Arrow compatibility)
+                            # styled_df is a Styler object, we need to get the underlying DataFrame
+                            merged_df_clean = clean_dataframe_for_arrow(merged_df)
+                            st.dataframe(merged_df_clean, width='stretch', height=800)
                             
                             # Add legend in dropdown
                             with st.expander("📖 Legend & Color Scheme", expanded=False):
@@ -819,8 +842,9 @@ if ticker_symbol:
                     # Sort by expiration and strike
                     calls_display = calls_display.sort_values(['expiration', 'strike'])
                     
-                    # Display
-                    safe_display_dataframe(calls_display, width='stretch', height=300)
+                    # Display (cleaned for Arrow compatibility)
+                    calls_display_clean = clean_dataframe_for_arrow(calls_display)
+                    st.dataframe(calls_display_clean, width='stretch', height=300)
                 
                 if show_puts and not puts_combined.empty:
                     st.markdown("**📉 PUT Options:**")
@@ -842,8 +866,9 @@ if ticker_symbol:
                     # Sort by expiration and strike
                     puts_display = puts_display.sort_values(['expiration', 'strike'])
                     
-                    # Display
-                    st.dataframe(puts_display, width='stretch', height=300)
+                    # Display (cleaned for Arrow compatibility)
+                    puts_display_clean = clean_dataframe_for_arrow(puts_display)
+                    st.dataframe(puts_display_clean, width='stretch', height=300)
             
             # CALLS ONLY Section
             elif selected_section == "📈 CALLS ONLY":
@@ -879,8 +904,9 @@ if ticker_symbol:
                         # Sort by expiration and strike
                         calls_display = calls_display.sort_values(['expiration', 'strike'])
                         
-                        # Display
-                        st.dataframe(calls_display, width='stretch', height=600)
+                        # Display (cleaned for Arrow compatibility)
+                        calls_display_clean = clean_dataframe_for_arrow(calls_display)
+                        st.dataframe(calls_display_clean, width='stretch', height=600)
                         
                         # Download button
                         csv = calls_display.to_csv(index=False)
@@ -927,8 +953,9 @@ if ticker_symbol:
                         # Sort by expiration and strike
                         puts_display = puts_display.sort_values(['expiration', 'strike'])
                         
-                        # Display
-                        st.dataframe(puts_display, width='stretch', height=600)
+                        # Display (cleaned for Arrow compatibility)
+                        puts_display_clean = clean_dataframe_for_arrow(puts_display)
+                        st.dataframe(puts_display_clean, width='stretch', height=600)
                         
                         # Download button
                         csv = puts_display.to_csv(index=False)
@@ -1109,9 +1136,10 @@ if ticker_symbol:
                                 # Create DataFrame
                                 evolution_df = pd.DataFrame(evolution_data)
                                 
-                                # Display table
+                                # Display table (cleaned for Arrow compatibility)
                                 st.markdown("### 📈 Strike Evolution Table")
-                                st.dataframe(evolution_df, width='stretch', height=400)
+                                evolution_df_clean = clean_dataframe_for_arrow(evolution_df)
+                                st.dataframe(evolution_df_clean, width='stretch', height=400)
                                 
                                 # Create evolution chart
                                 st.markdown("### 📊 Price Evolution Chart")
@@ -1470,7 +1498,8 @@ if ticker_symbol:
                 vix_metrics['Max'] = vix_metrics['Max'].astype(str)
                 
                 st.markdown("**📈 VIX Historical Metrics:**")
-                st.dataframe(vix_metrics, width='stretch')
+                vix_metrics_clean = clean_dataframe_for_arrow(vix_metrics)
+                st.dataframe(vix_metrics_clean, width='stretch')
                 
                 # VIX Chart
                 st.markdown("**📊 VIX Historical Chart:**")
