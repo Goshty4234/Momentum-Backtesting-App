@@ -28,12 +28,12 @@ st.sidebar.header("🎛️ Controls")
 
 # Initialize ticker in session state
 if 'current_ticker' not in st.session_state:
-    st.session_state.current_ticker = "SPY"
+    st.session_state.current_ticker = ""
 
 # Function to convert ticker (same as page 1)
 def convert_ticker_input(ticker):
     if not ticker:
-        return "SPY"
+        return ""
     
     # Convert to uppercase
     converted = ticker.upper()
