@@ -30,6 +30,27 @@ st.sidebar.header("🎛️ Controls")
 if 'current_ticker' not in st.session_state:
     st.session_state.current_ticker = ""
 
+# Force reset any corrupted session state values that might cause errors
+try:
+    # Ensure debug_messages is always a list
+    if not isinstance(st.session_state.get('debug_messages', []), list):
+        st.session_state.debug_messages = []
+    
+    # Ensure current_ticker is always a string
+    if not isinstance(st.session_state.get('current_ticker', ""), str):
+        st.session_state.current_ticker = ""
+        
+    # Ensure persistent_ticker is always a string
+    if not isinstance(st.session_state.get('persistent_ticker', ""), str):
+        st.session_state.persistent_ticker = ""
+        
+except Exception as e:
+    # If any session state is corrupted, reset everything
+    st.session_state.clear()
+    st.session_state.debug_messages = []
+    st.session_state.current_ticker = ""
+    st.session_state.persistent_ticker = ""
+
 # Function to convert ticker (same as page 1)
 def convert_ticker_input(ticker):
     if not ticker:
@@ -95,11 +116,26 @@ if not ticker_symbol or ticker_symbol.strip() == "":
     st.info("💡 **Try these popular tickers:** SPY, QQQ, AAPL, TSLA, MSFT, NVDA")
     st.stop()
 
+# Additional validation for server stability
+if not isinstance(ticker_symbol, str) or len(ticker_symbol) == 0:
+    st.error("❌ **Invalid ticker format**")
+    st.stop()
+
 # Refresh button
 if st.sidebar.button("🔄 Force Refresh Data", help="Clear cache and fetch fresh data"):
     # Clear all caches
     st.cache_data.clear()
     st.session_state.debug_messages.append(f"🔄 Cache cleared and data refreshed at {datetime.now().strftime('%H:%M:%S')}")
+    st.rerun()
+
+# Reset button for server issues
+if st.sidebar.button("🔧 Reset All Data", help="Reset all session state and cache (use if errors occur)"):
+    # Clear all caches and session state
+    st.cache_data.clear()
+    st.session_state.clear()
+    st.session_state.debug_messages = []
+    st.session_state.current_ticker = ""
+    st.session_state.persistent_ticker = ""
     st.rerun()
 
 # Always show both option types
@@ -110,6 +146,10 @@ show_puts = True
 @st.cache_data(persist="disk")  # Disk persistence (TTL ignored when persist is set)
 def get_cached_ticker_info(ticker_symbol):
     """Cache ticker info (price + expirations) for 24 hours - SERIALIZABLE"""
+    # Validate input
+    if not isinstance(ticker_symbol, str) or len(ticker_symbol.strip()) == 0:
+        raise ValueError(f"Invalid ticker symbol: {ticker_symbol}")
+    
     ticker = yf.Ticker(ticker_symbol)
     try:
         # Single API call to get both price and options data
@@ -255,6 +295,10 @@ if ticker_symbol:
     try:
         # Get ticker info with progress
         with st.spinner(f"🔄 Fetching {ticker_symbol} data..."):
+            # Validate ticker_symbol before making API call
+            if not isinstance(ticker_symbol, str) or len(ticker_symbol.strip()) == 0:
+                raise ValueError(f"Invalid ticker symbol: {ticker_symbol}")
+            
             current_price, expirations, fetch_timestamp = get_cached_ticker_info(ticker_symbol)
     except Exception as e:
         st.error(f"❌ **Ticker Error**: {ticker_symbol} is not a valid ticker symbol")
