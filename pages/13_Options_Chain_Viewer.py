@@ -107,7 +107,8 @@ def get_cached_ticker_info(ticker_symbol):
     ticker = yf.Ticker(ticker_symbol)
     try:
         # Single API call to get both price and options data
-        current_price = float(ticker.history(period="1d")['Close'].iloc[-1])
+        price_data = ticker.history(period="1d")['Close'].iloc[-1]
+        current_price = float(price_data) if not pd.isna(price_data) else 0.0
         expirations = list(ticker.options)  # This is cached by yfinance internally
         fetch_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         return current_price, expirations, fetch_timestamp
@@ -250,6 +251,15 @@ if ticker_symbol:
         # Get ticker info with progress
         with st.spinner(f"🔄 Fetching {ticker_symbol} data..."):
             current_price, expirations, fetch_timestamp = get_cached_ticker_info(ticker_symbol)
+            
+        # Ensure current_price is a float
+        if isinstance(current_price, str):
+            try:
+                current_price = float(current_price)
+            except ValueError:
+                current_price = 0.0
+        elif not isinstance(current_price, (int, float)):
+            current_price = 0.0
     except Exception as e:
         st.error(f"❌ **Ticker Error**: {ticker_symbol} is not a valid ticker symbol")
         st.info("💡 **Try these popular tickers:** SPY, QQQ, AAPL, TSLA, MSFT, NVDA")
