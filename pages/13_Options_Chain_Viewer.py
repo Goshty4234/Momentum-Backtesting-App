@@ -36,9 +36,9 @@ def clean_dataframe_for_arrow(df):
     if df is None:
         return df
     
-    # Handle Styler objects
+    # Handle Styler objects - return them as-is for styling preservation
     if hasattr(df, 'data'):
-        df = df.data  # Get underlying DataFrame from Styler
+        return df  # Keep Styler objects intact for colored display
     
     if df.empty:
         return df
@@ -766,14 +766,15 @@ if ticker_symbol:
                                 
                                 return styles
                             
-                            # Apply advanced styling (but don't use for display due to Arrow compatibility)
-                            styled_df = merged_df.style.apply(highlight_options_table, axis=1)
-                            # Note: We'll display the unstyled DataFrame for Arrow compatibility
-                            
-                            # Display styled table with increased height (cleaned for Arrow compatibility)
-                            # styled_df is a Styler object, we need to get the underlying DataFrame
+                            # Clean the DataFrame first for Arrow compatibility
                             merged_df_clean = clean_dataframe_for_arrow(merged_df)
-                            st.dataframe(merged_df_clean, width='stretch', height=800)
+                            
+                            # Apply advanced styling with colors
+                            styled_df = merged_df_clean.style.apply(highlight_options_table, axis=1)
+                            
+                            # Display styled table with increased height
+                            # Use st.dataframe with styling for better visual presentation
+                            st.dataframe(styled_df, width='stretch', height=800)
                             
                             # Add legend in dropdown
                             with st.expander("📖 Legend & Color Scheme", expanded=False):
