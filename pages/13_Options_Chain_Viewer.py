@@ -30,26 +30,32 @@ st.sidebar.header("🎛️ Controls")
 if 'current_ticker' not in st.session_state:
     st.session_state.current_ticker = ""
 
-# Force reset any corrupted session state values that might cause errors
-try:
-    # Ensure debug_messages is always a list
-    if not isinstance(st.session_state.get('debug_messages', []), list):
-        st.session_state.debug_messages = []
+# Utility function to safely convert current_price to float
+def safe_float_price(price):
+    """Convert any price format to safe float for calculations"""
+    if price is None:
+        return 0.0
     
-    # Ensure current_ticker is always a string
-    if not isinstance(st.session_state.get('current_ticker', ""), str):
-        st.session_state.current_ticker = ""
-        
-    # Ensure persistent_ticker is always a string
-    if not isinstance(st.session_state.get('persistent_ticker', ""), str):
-        st.session_state.persistent_ticker = ""
-        
-except Exception as e:
-    # If any session state is corrupted, reset everything
-    st.session_state.clear()
-    st.session_state.debug_messages = []
-    st.session_state.current_ticker = ""
-    st.session_state.persistent_ticker = ""
+    # If already a proper float/int
+    if isinstance(price, (int, float)):
+        return float(price)
+    
+    # If string, try to convert
+    if isinstance(price, str):
+        try:
+            return float(price)
+        except ValueError:
+            return 0.0
+    
+    # If numpy types
+    if hasattr(price, 'item'):  # numpy scalar
+        try:
+            return float(price.item())
+        except:
+            return 0.0
+    
+    # Fallback
+    return 0.0
 
 # Function to convert ticker (same as page 1)
 def convert_ticker_input(ticker):
@@ -110,32 +116,11 @@ ticker_symbol = convert_ticker_input(ticker_input)
 st.session_state.persistent_ticker = ticker_symbol
 st.session_state.current_ticker = ticker_symbol
 
-# Stop execution if no ticker is provided
-if not ticker_symbol or ticker_symbol.strip() == "":
-    st.warning("⚠️ **Please enter a ticker symbol**")
-    st.info("💡 **Try these popular tickers:** SPY, QQQ, AAPL, TSLA, MSFT, NVDA")
-    st.stop()
-
-# Additional validation for server stability
-if not isinstance(ticker_symbol, str) or len(ticker_symbol) == 0:
-    st.error("❌ **Invalid ticker format**")
-    st.stop()
-
 # Refresh button
 if st.sidebar.button("🔄 Force Refresh Data", help="Clear cache and fetch fresh data"):
     # Clear all caches
     st.cache_data.clear()
     st.session_state.debug_messages.append(f"🔄 Cache cleared and data refreshed at {datetime.now().strftime('%H:%M:%S')}")
-    st.rerun()
-
-# Reset button for server issues
-if st.sidebar.button("🔧 Reset All Data", help="Reset all session state and cache (use if errors occur)"):
-    # Clear all caches and session state
-    st.cache_data.clear()
-    st.session_state.clear()
-    st.session_state.debug_messages = []
-    st.session_state.current_ticker = ""
-    st.session_state.persistent_ticker = ""
     st.rerun()
 
 # Always show both option types
@@ -146,16 +131,29 @@ show_puts = True
 @st.cache_data(persist="disk")  # Disk persistence (TTL ignored when persist is set)
 def get_cached_ticker_info(ticker_symbol):
     """Cache ticker info (price + expirations) for 24 hours - SERIALIZABLE"""
-    # Validate input
-    if not isinstance(ticker_symbol, str) or len(ticker_symbol.strip()) == 0:
-        raise ValueError(f"Invalid ticker symbol: {ticker_symbol}")
-    
     ticker = yf.Ticker(ticker_symbol)
     try:
         # Single API call to get both price and options data
-        current_price = float(ticker.history(period="1d")['Close'].iloc[-1])
+        price_data = ticker.history(period="1d")['Close'].iloc[-1]
+        
+        # Robust price conversion for cloud compatibility
+        if pd.isna(price_data):
+            current_price = 0.0
+        else:
+            try:
+                current_price = float(price_data)
+            except (ValueError, TypeError):
+                current_price = 0.0
+        
+        # Ensure it's a proper float, not numpy type
+        current_price = float(current_price)
+        
         expirations = list(ticker.options)  # This is cached by yfinance internally
         fetch_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Debug info for cloud
+        print(f"DEBUG: {ticker_symbol} - price type: {type(current_price)}, value: {current_price}")
+        
         return current_price, expirations, fetch_timestamp
     except Exception as e:
         raise Exception(f"Error fetching {ticker_symbol}: {e}")
@@ -295,11 +293,12 @@ if ticker_symbol:
     try:
         # Get ticker info with progress
         with st.spinner(f"🔄 Fetching {ticker_symbol} data..."):
-            # Validate ticker_symbol before making API call
-            if not isinstance(ticker_symbol, str) or len(ticker_symbol.strip()) == 0:
-                raise ValueError(f"Invalid ticker symbol: {ticker_symbol}")
-            
             current_price, expirations, fetch_timestamp = get_cached_ticker_info(ticker_symbol)
+            
+        # Ensure current_price is a float - robust conversion for cloud
+        print(f"DEBUG: Received current_price type: {type(current_price)}, value: {current_price}")
+        current_price = safe_float_price(current_price)
+        print(f"DEBUG: Final current_price: {current_price} (type: {type(current_price)})")
     except Exception as e:
         st.error(f"❌ **Ticker Error**: {ticker_symbol} is not a valid ticker symbol")
         st.info("💡 **Try these popular tickers:** SPY, QQQ, AAPL, TSLA, MSFT, NVDA")
@@ -601,16 +600,17 @@ if ticker_symbol:
                             merged_df = pd.DataFrame(merged_data)
                             
                             # Add moneyness calculations (both % and $)
-                            merged_df['call_moneyness_pct'] = ((merged_df['strike'] / current_price) - 1) * 100
+                            safe_price = safe_float_price(current_price)
+                            merged_df['call_moneyness_pct'] = ((merged_df['strike'] / safe_price) - 1) * 100
                             merged_df['call_moneyness_pct'] = merged_df['call_moneyness_pct'].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else '-')
-                            merged_df['call_moneyness_dollar'] = merged_df['strike'] - current_price
-                            merged_df['put_moneyness_pct'] = ((merged_df['strike'] / current_price) - 1) * 100
+                            merged_df['call_moneyness_dollar'] = merged_df['strike'] - safe_price
+                            merged_df['put_moneyness_pct'] = ((merged_df['strike'] / safe_price) - 1) * 100
                             merged_df['put_moneyness_pct'] = merged_df['put_moneyness_pct'].apply(lambda x: f"{x:.2f}%" if pd.notna(x) else '-')
-                            merged_df['put_moneyness_dollar'] = merged_df['strike'] - current_price
+                            merged_df['put_moneyness_dollar'] = merged_df['strike'] - safe_price
                             
                             # Add intrinsic and extrinsic values (both $ and %)
                             # Call intrinsic value = max(0, current_price - strike)
-                            merged_df['call_intrinsic'] = np.maximum(0, current_price - merged_df['strike'])
+                            merged_df['call_intrinsic'] = np.maximum(0, safe_price - merged_df['strike'])
                             # Call intrinsic % = (intrinsic / last_price) * 100
                             merged_df['call_intrinsic_pct'] = merged_df.apply(
                                 lambda row: f"{(row['call_intrinsic'] / float(row['call_lastPrice']) * 100):.2f}%" if row['call_lastPrice'] != '-' and pd.notna(row['call_lastPrice']) and float(row['call_lastPrice']) != 0 else '-', axis=1
@@ -625,7 +625,7 @@ if ticker_symbol:
                             )
                             
                             # Put intrinsic value = max(0, strike - current_price)
-                            merged_df['put_intrinsic'] = np.maximum(0, merged_df['strike'] - current_price)
+                            merged_df['put_intrinsic'] = np.maximum(0, merged_df['strike'] - safe_price)
                             # Put intrinsic % = (intrinsic / last_price) * 100
                             merged_df['put_intrinsic_pct'] = merged_df.apply(
                                 lambda row: f"{(row['put_intrinsic'] / float(row['put_lastPrice']) * 100):.2f}%" if row['put_lastPrice'] != '-' and pd.notna(row['put_lastPrice']) and float(row['put_lastPrice']) != 0 else '-', axis=1
@@ -722,8 +722,9 @@ if ticker_symbol:
                                     strike = 0.0
                                 
                                 # Determine ITM/OTM status
-                                call_itm = strike < current_price  # Call is ITM if strike < current price
-                                put_itm = strike > current_price   # Put is ITM if strike > current price
+                                safe_price = safe_float_price(current_price)
+                                call_itm = strike < safe_price  # Call is ITM if strike < current price
+                                put_itm = strike > safe_price   # Put is ITM if strike > current price
                                 
                                 for col in merged_df.columns:
                                     if col.startswith('CALL'):
@@ -972,7 +973,8 @@ if ticker_symbol:
                         # Strike selector - completely rebuilt
                         if all_strikes:
                             # Find the strike closest to current price for this ticker
-                            closest_strike = min(all_strikes, key=lambda x: abs(x - current_price))
+                            safe_price = safe_float_price(current_price)
+                            closest_strike = min(all_strikes, key=lambda x: abs(x - safe_price))
                             
                             # Reset strike when ticker changes - BUT ONLY IF NO MANUAL INPUT
                             if (st.session_state.get('last_ticker_for_strike') != ticker_symbol):
@@ -998,8 +1000,10 @@ if ticker_symbol:
                             
                             with col2:
                                 # Dropdown selector
+                                # Safe calculation with current_price
+                                safe_price = safe_float_price(current_price)
                                 closest_strike_index = min(range(len(all_strikes)), 
-                                                         key=lambda i: abs(all_strikes[i] - current_price))
+                                                         key=lambda i: abs(all_strikes[i] - safe_price))
                                 
                                 dropdown_strike = st.selectbox(
                                     "📋 Or Select from List:",
@@ -1141,7 +1145,8 @@ if ticker_symbol:
                                     if row['Call Last'] != '-':
                                         # Calculate intrinsic/extrinsic for calls
                                         call_price = float(row['Call Last'])
-                                        call_intrinsic = max(0, current_price - selected_strike)
+                                        safe_price = safe_float_price(current_price)
+                                        call_intrinsic = max(0, safe_price - selected_strike)
                                         call_extrinsic = call_price - call_intrinsic
                                         
                                         chart_data.append({
@@ -1158,7 +1163,7 @@ if ticker_symbol:
                                     if row['Put Last'] != '-':
                                         # Calculate intrinsic/extrinsic for puts
                                         put_price = float(row['Put Last'])
-                                        put_intrinsic = max(0, selected_strike - current_price)
+                                        put_intrinsic = max(0, selected_strike - safe_price)
                                         put_extrinsic = put_price - put_intrinsic
                                         
                                         chart_data.append({
@@ -1394,8 +1399,9 @@ if ticker_symbol:
                                             ))
                                     
                                     # Reverse x-axis to show time progression correctly (oldest to newest)
+                                    safe_price = safe_float_price(current_price)
                                     fig.update_layout(
-                                        title=f"Option Price Evolution - Strike ${selected_strike:.2f} | {ticker_symbol}: ${current_price:.2f} | {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                                        title=f"Option Price Evolution - Strike ${selected_strike:.2f} | {ticker_symbol}: ${safe_price:.2f} | {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                                         xaxis_title="Days to Expiration (Left: Far Future → Right: Near Expiration)",
                                         yaxis_title="Option Price ($)",
                                         height=500,
