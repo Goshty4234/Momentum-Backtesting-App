@@ -37,6 +37,34 @@ st.set_page_config(
 if 'debug_messages' not in st.session_state:
     st.session_state.debug_messages = []
 
+# 🛡️ GLOBAL VARIABLE INITIALIZATION - PREVENT REFRESH CRASHES
+# Initialize all section-specific variables to prevent NameError on refresh
+evolution_strike = 400.0
+barbell_strike = 400.0
+spread_strike = 400.0
+multi_strike_strike = 400.0
+
+# 🛡️ ULTIMATE PROTECTION - FORCE GLOBAL DEFINITION
+globals()['barbell_strike'] = 400.0
+globals()['evolution_strike'] = 400.0
+globals()['spread_strike'] = 400.0
+globals()['multi_strike_strike'] = 400.0
+
+# Try to get from session state if available
+if 'persistent_strike' in st.session_state:
+    try:
+        default_strike = float(st.session_state.persistent_strike)
+        evolution_strike = default_strike
+        barbell_strike = default_strike
+        spread_strike = default_strike
+        multi_strike_strike = default_strike
+    except:
+        # ULTIMATE FALLBACK - ALWAYS DEFINED
+        evolution_strike = 400.0
+        barbell_strike = 400.0
+        spread_strike = 400.0
+        multi_strike_strike = 400.0
+
 # Title
 st.title("📊 Options Chain Viewer")
 st.markdown("**Real-time options data for any ticker**")
@@ -91,7 +119,8 @@ def calculate_mid_price(bid, ask, last_price):
     if ('barbell_price_adjustment' in st.session_state and 
         st.session_state.barbell_price_adjustment != 0 and
         'selected_section' in st.session_state and 
-        st.session_state.selected_section == "⚖️ BARBELL STRATEGY"):
+        (st.session_state.selected_section == "⚖️ BARBELL STRATEGY" or 
+         st.session_state.selected_section == "🎯 MULTI-STRIKE BACKTEST")):
         adjustment = st.session_state.barbell_price_adjustment
         adjusted_price = mid_price * (1 + adjustment / 100)
         return max(0.01, adjusted_price)
@@ -1095,7 +1124,9 @@ if ticker_symbol:
                     st.markdown("**Track the same strike across different expirations**")
                     
                     # 🎯 OPTION EVOLUTION - OWN VARIABLES
-                    evolution_strike = None
+                    # Ensure evolution_strike is always defined (global fallback)
+                    if 'evolution_strike' not in globals() or evolution_strike is None:
+                        evolution_strike = None
                     
                     # Try to get from session state if available
                     if 'persistent_strike' in st.session_state:
@@ -1182,38 +1213,38 @@ if ticker_symbol:
                                     try:
                                         # Convert comma to dot for decimal separator
                                         converted_strike = manual_strike.replace(',', '.')
-                                        selected_strike = float(converted_strike)
+                                        evolution_strike = float(converted_strike)
                                         
                                         # Show conversion if different
                                         if converted_strike != manual_strike:
                                             st.info(f"🔄 Converted {manual_strike} to {converted_strike}")
                                         
                                         # Check if strike exists in available options
-                                        if selected_strike not in all_strikes:
-                                            closest_available = min(all_strikes, key=lambda x: abs(x - selected_strike))
-                                            warning_msg = f"⚠️ Strike {selected_strike:.1f} not found. Using closest available strike: {closest_available:.1f}"
+                                        if evolution_strike not in all_strikes:
+                                            closest_available = min(all_strikes, key=lambda x: abs(x - evolution_strike))
+                                            warning_msg = f"⚠️ Strike {evolution_strike:.1f} not found. Using closest available strike: {closest_available:.1f}"
                                             st.warning(warning_msg)
-                                            selected_strike = closest_available
+                                            evolution_strike = closest_available
                                         
                                         # Update session state with the final strike
-                                        st.session_state.persistent_strike = str(selected_strike)
+                                        st.session_state.persistent_strike = str(evolution_strike)
                                         st.session_state.manual_strike_entered = True  # Mark that user entered manually
                                         
                                     except ValueError:
                                         st.error("Please enter a valid number for strike price.")
-                                        selected_strike = closest_strike
+                                        evolution_strike = closest_strike
                                 else:
                                     # Use closest strike as fallback
-                                    selected_strike = closest_strike
+                                    evolution_strike = closest_strike
                         else:
-                            selected_strike = None
+                            evolution_strike = None
                         
-                        if selected_strike:
-                            st.markdown(f"**Tracking Strike: ${selected_strike:.2f}**")
+                        if evolution_strike:
+                            st.markdown(f"**Tracking Strike: ${evolution_strike:.2f}**")
                             
                             # Filter data for selected strike
-                            calls_strike = calls_combined[calls_combined['strike'] == selected_strike] if not calls_combined.empty else pd.DataFrame()
-                            puts_strike = puts_combined[puts_combined['strike'] == selected_strike] if not puts_combined.empty else pd.DataFrame()
+                            calls_strike = calls_combined[calls_combined['strike'] == evolution_strike] if not calls_combined.empty else pd.DataFrame()
+                            puts_strike = puts_combined[puts_combined['strike'] == evolution_strike] if not puts_combined.empty else pd.DataFrame()
                             
                             if not calls_strike.empty or not puts_strike.empty:
                                 # Create evolution data
@@ -1235,7 +1266,7 @@ if ticker_symbol:
                                     row = {
                                         'Expiration': exp,
                                         'Days to Exp': (datetime.strptime(exp, "%Y-%m-%d") - datetime.now()).days,
-                                        'Strike': f"{selected_strike:.0f}" if selected_strike == int(selected_strike) else f"{selected_strike:.2f}"
+                                        'Strike': f"{evolution_strike:.0f}" if evolution_strike == int(evolution_strike) else f"{evolution_strike:.2f}"
                                     }
                                     
                                     # Add call data with MID price calculation
@@ -1428,7 +1459,7 @@ if ticker_symbol:
                                     
                                     if call_price is not None:
                                         safe_price = safe_float_price(current_price)
-                                        call_intrinsic = max(0, safe_price - selected_strike)
+                                        call_intrinsic = max(0, safe_price - evolution_strike)
                                         call_extrinsic = call_price - call_intrinsic
                                         
                                         # Get Call Price % from existing data if available
@@ -1459,7 +1490,7 @@ if ticker_symbol:
                                     
                                     if put_price is not None:
                                         safe_price = safe_float_price(current_price)
-                                        put_intrinsic = max(0, selected_strike - safe_price)
+                                        put_intrinsic = max(0, evolution_strike - safe_price)
                                         put_extrinsic = put_price - put_intrinsic
                                         
                                         # Get Put Price % from existing data if available
@@ -1727,7 +1758,7 @@ if ticker_symbol:
                                     
                                     # Reverse x-axis to show time progression correctly (oldest to newest)
                                     fig.update_layout(
-                                        title=f"Option Price Evolution - Strike ${selected_strike:.2f} | {ticker_symbol}: ${current_price:.2f} | {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+                                        title=f"Option Price Evolution - Strike ${evolution_strike:.2f} | {ticker_symbol}: ${current_price:.2f} | {datetime.now().strftime('%Y-%m-%d %H:%M')}",
                                         xaxis_title="Days to Expiration (Left: Far Future → Right: Near Expiration)",
                                         yaxis_title="Option Price ($)",
                                         height=500,
@@ -1742,7 +1773,7 @@ if ticker_symbol:
                                 else:
                                     st.warning("No price data available for chart")
                             else:
-                                st.warning(f"No options found for strike ${selected_strike:.2f}")
+                                st.warning(f"No options found for strike ${evolution_strike:.2f}")
                 else:
                     st.warning("No options data available")
                 
@@ -1774,7 +1805,7 @@ if ticker_symbol:
                         option1_strike_selected = st.selectbox("Strike Price:", strike_options, key="option1_strike_select")
                         
                         if option1_strike_selected == "Custom":
-                            # Use a default strike if selected_strike is not defined
+                            # Use a default strike if evolution_strike is not defined
                             try:
                                 if 'persistent_strike' in st.session_state:
                                     default_strike = float(st.session_state.persistent_strike)
@@ -1910,7 +1941,7 @@ if ticker_symbol:
                             option2_strike_selected = st.selectbox("Strike Price:", strike_options, key="option2_strike_select")
                             
                             if option2_strike_selected == "Custom":
-                                # Use a default strike if selected_strike is not defined
+                                # Use a default strike if evolution_strike is not defined
                                 try:
                                     if 'persistent_strike' in st.session_state:
                                         default_strike = float(st.session_state.persistent_strike)
@@ -2270,15 +2301,20 @@ if ticker_symbol:
                 st.markdown("**Simulate LEAPS + Cash strategy - View returns based on underlying movement at expiration**")
                 
                 
-                # Initialize selected_strike to avoid undefined variable errors
-                selected_strike = None
+                # 🎯 BARBELL STRATEGY - OWN VARIABLES
+                # 🛡️ ULTIMATE PROTECTION - ALWAYS DEFINE BARBELL_STRIKE
+                try:
+                    if 'barbell_strike' not in globals() or barbell_strike is None:
+                        barbell_strike = 400.0
+                except:
+                    barbell_strike = 400.0
                 
                 # Try to get from session state if available
                 if 'persistent_strike' in st.session_state:
                     try:
-                        selected_strike = float(st.session_state.persistent_strike)
+                        barbell_strike = float(st.session_state.persistent_strike)
                     except:
-                        selected_strike = None
+                        barbell_strike = None
                 
                 # Display current risk-free rate
                 st.info(f"🏦 **Current Risk-Free Rate (10-Year Treasury)**: {risk_free_rate:.2f}% (as of {risk_free_fetch_timestamp})")
@@ -2405,18 +2441,18 @@ if ticker_symbol:
                             help="Enter a custom strike price",
                             key="barbell_custom_strike"
                         )
-                        selected_strike = custom_strike
+                        barbell_strike = custom_strike
                         
                         # Validate custom strike
-                        if selected_strike not in strikes:
-                            closest_strike = min(strikes, key=lambda x: abs(x - selected_strike))
-                            st.warning(f"⚠️ Strike {selected_strike:.0f} not found. Using closest available strike: {closest_strike:.0f}")
-                            selected_strike = closest_strike
+                        if barbell_strike not in strikes:
+                            closest_strike = min(strikes, key=lambda x: abs(x - barbell_strike))
+                            st.warning(f"⚠️ Strike {barbell_strike:.0f} not found. Using closest available strike: {closest_strike:.0f}")
+                            barbell_strike = closest_strike
                     else:
-                        selected_strike = float(barbell_strike_selected.replace('$', ''))
+                        barbell_strike = float(barbell_strike_selected.replace('$', ''))
                     
                     # Save selected strike to session state for persistence
-                    st.session_state.barbell_persistent_strike = selected_strike
+                    st.session_state.barbell_persistent_strike = barbell_strike
                     
                     # 🎯 OPTION PRICE ADJUSTMENT - DROPDOWN + SLIDER
                     st.markdown("---")
@@ -2433,11 +2469,11 @@ if ticker_symbol:
                         # Price adjustment slider with unique key
                         price_adjustment = st.slider(
                             "📈 Price Adjustment (%)",
-                            min_value=-50.0,
-                            max_value=50.0,
+                            min_value=-90.0,
+                            max_value=200.0,
                             value=st.session_state.barbell_price_adjustment,
-                            step=0.5,
-                            help="Positive: Increase all option prices (expecting higher volatility)\nNegative: Decrease all option prices (expecting lower volatility)",
+                            step=1.0,
+                            help="Positive: Increase all option prices (expecting higher volatility)\nNegative: Decrease all option prices (expecting lower volatility)\n\nHigh volatility can cause options to:\n• Triple in value (+200%)\n• Drop significantly (-90%)\n• Experience extreme swings",
                             key="barbell_price_slider"
                         )
                         
@@ -2446,45 +2482,60 @@ if ticker_symbol:
                             st.session_state.barbell_price_adjustment = price_adjustment
                             st.rerun()
                         
+                        # Input box for precise value
+                        col1, col2, col3 = st.columns([2, 1, 1])
+                        with col1:
+                            precise_adjustment = st.number_input(
+                                "📝 Enter precise adjustment (%)",
+                                min_value=-90.0,
+                                max_value=200.0,
+                                value=float(price_adjustment),
+                                step=0.1,
+                                key="precise_price_adjustment"
+                            )
+                        with col2:
+                            if st.button("✅ Apply", key="apply_precise_adjustment"):
+                                st.session_state.barbell_price_adjustment = precise_adjustment
+                                st.rerun()
+                        with col3:
+                            if st.button("🔄 Reset to 0%", key="reset_price_adjustment"):
+                                st.session_state.barbell_price_adjustment = 0.0
+                                st.rerun()
+                        
                         # Show current adjustment
                         if price_adjustment != 0:
                             if price_adjustment > 0:
                                 st.warning(f"📈 All option prices increased by {price_adjustment:.1f}%")
                             else:
                                 st.success(f"📉 All option prices decreased by {abs(price_adjustment):.1f}%")
-                            
-                            # Show example
-                            example_price = 5.00
-                            adjusted_example = example_price * (1 + price_adjustment / 100)
-                            st.markdown(f"**Example:** ${example_price:.2f} → ${adjusted_example:.2f}")
                         else:
                             st.markdown("⚖️ No price adjustment applied")
                     
                     
                     st.markdown("---")
                     
-                    opt = filtered_opts[filtered_opts['strike'] == selected_strike].iloc[0]
+                    opt = filtered_opts[filtered_opts['strike'] == barbell_strike].iloc[0]
                     
                     # Calculate ITM/OTM status (moved here to be accessible everywhere)
                     if option_type == "CALL":
-                        if selected_strike < current_price:
-                            itm_pct = ((current_price - selected_strike) / current_price) * 100
+                        if barbell_strike < current_price:
+                            itm_pct = ((current_price - barbell_strike) / current_price) * 100
                             strike_status = f"ITM {itm_pct:.1f}%"
                             status_color = "🟢"
-                        elif selected_strike > current_price:
-                            otm_pct = ((selected_strike - current_price) / current_price) * 100
+                        elif barbell_strike > current_price:
+                            otm_pct = ((barbell_strike - current_price) / current_price) * 100
                             strike_status = f"OTM {otm_pct:.1f}%"
                             status_color = "🔴"
                         else:
                             strike_status = "ATM"
                             status_color = "🟡"
                     else:  # PUT
-                        if selected_strike > current_price:
-                            itm_pct = ((selected_strike - current_price) / current_price) * 100
+                        if barbell_strike > current_price:
+                            itm_pct = ((barbell_strike - current_price) / current_price) * 100
                             strike_status = f"ITM {itm_pct:.1f}%"
                             status_color = "🟢"
-                        elif selected_strike < current_price:
-                            otm_pct = ((current_price - selected_strike) / current_price) * 100
+                        elif barbell_strike < current_price:
+                            otm_pct = ((current_price - barbell_strike) / current_price) * 100
                             strike_status = f"OTM {otm_pct:.1f}%"
                             status_color = "🔴"
                         else:
@@ -2520,7 +2571,7 @@ if ticker_symbol:
                             table_data = {
                                 "📊 Market Information": [
                                     ["Current Price", f"${current_price:.2f}"],
-                                    ["Strike Price", f"${selected_strike:.2f}"],
+                                    ["Strike Price", f"${barbell_strike:.2f}"],
                                     ["Status", f"{status_color} {strike_status}"],
                                     ["Days to Expiration", f"{days_to_exp} days"]
                                 ],
@@ -2563,7 +2614,7 @@ if ticker_symbol:
                             
                             for mov in movements:
                                 new_px = current_price * (1 + mov / 100)
-                                payoff = max(0, (new_px - selected_strike) if option_type == "CALL" else (selected_strike - new_px))
+                                payoff = max(0, (new_px - barbell_strike) if option_type == "CALL" else (barbell_strike - new_px))
                                 opt_val = contracts * payoff * 100
                                 
                                 # Apply risk-free rate to cash if checkbox is checked
@@ -2576,7 +2627,7 @@ if ticker_symbol:
                                 ret = total_val - total_capital
                                 ret_pct = (ret / total_capital) * 100
                                 # Calculate ITM status for this movement
-                                is_itm = (new_px > selected_strike) if option_type == "CALL" else (new_px < selected_strike)
+                                is_itm = (new_px > barbell_strike) if option_type == "CALL" else (new_px < barbell_strike)
                                 
                                 results.append({'Movement (%)': mov, 'New Price ($)': new_px, 'Option Payoff ($)': payoff, 
                                                'Total Option Value ($)': opt_val, 'Cash ($)': cash_with_return, 'Total Portfolio ($)': total_val,
@@ -2591,7 +2642,7 @@ if ticker_symbol:
                             
                             for mov in fine_movements:
                                 new_px = current_price * (1 + mov / 100)
-                                payoff = max(0, (new_px - selected_strike) if option_type == "CALL" else (selected_strike - new_px))
+                                payoff = max(0, (new_px - barbell_strike) if option_type == "CALL" else (barbell_strike - new_px))
                                 opt_val = contracts * payoff * 100
                                 
                                 # Apply risk-free rate to cash if checkbox is checked
@@ -2603,7 +2654,7 @@ if ticker_symbol:
                                 total_val = opt_val + cash_with_return
                                 ret = total_val - total_capital
                                 ret_pct = (ret / total_capital) * 100
-                                is_itm = (new_px > selected_strike) if option_type == "CALL" else (new_px < selected_strike)
+                                is_itm = (new_px > barbell_strike) if option_type == "CALL" else (new_px < barbell_strike)
                                 
                                 fine_results.append({'Movement (%)': mov, 'New Price ($)': new_px, 'Option Payoff ($)': payoff, 
                                                    'Total Option Value ($)': opt_val, 'Cash ($)': cash_with_return, 'Total Portfolio ($)': total_val,
@@ -2690,7 +2741,7 @@ if ticker_symbol:
                             fig.update_layout(
                                 height=800, 
                                 showlegend=False, 
-                                title_text=f"Barbell Strategy: {ticker_symbol} {option_type} ${selected_strike:.2f}",
+                                title_text=f"Barbell Strategy: {ticker_symbol} {option_type} ${barbell_strike:.2f}",
                                 hovermode='x unified'
                             )
                             fig.update_xaxes(title_text="Movement (%)", row=1, col=1)
@@ -2806,7 +2857,7 @@ if ticker_symbol:
                                 
                                 # Calculate BARBELL return directly with user-defined cash return rate
                                 new_px = current_price * (1 + mov / 100)
-                                payoff = max(0, (new_px - selected_strike) if option_type == "CALL" else (selected_strike - new_px))
+                                payoff = max(0, (new_px - barbell_strike) if option_type == "CALL" else (barbell_strike - new_px))
                                 opt_val = contracts * payoff * 100
                                 
                                 # Apply ONLY the user-defined cash return rate (no risk-free rate)
@@ -3020,7 +3071,8 @@ if ticker_symbol:
                                                     return 'background-color: #ef5350'
                                         except:
                                             pass
-                                return ''
+                                # DEFAULT: Apply neutral background for any unmatched cells
+                                return 'background-color: #2d3748; color: white'
                             
                             # Apply conditional formatting with row-based matching
                             def apply_color_to_row(row):
@@ -3033,6 +3085,7 @@ if ticker_symbol:
                             st.dataframe(
                                 styled_df,
                                 width='stretch',
+                                height=450,  # Optimal height to show all rows without scrolling
                                 column_config={
                                     f"{ticker_symbol} Movement (%)": st.column_config.TextColumn(f"{ticker_symbol} Movement (%)", width="medium"),
                                     "BARBELL Movement (%)": st.column_config.TextColumn("📈 BARBELL Movement (%)", width="medium"),
@@ -3071,10 +3124,23 @@ if ticker_symbol:
                                 st.metric("⚖️ Neutral BARBELL Return", f"0.0%", f"at {zero_movement:.1f}% {ticker_symbol} movement")
                             
                             with col5:
-                                # Find ticker movement where BARBELL = ticker return
+                                # Find ticker movement where BARBELL = ticker return - PRIORITIZE POSITIVE VALUES
                                 return_diffs = np.array(barbell_returns) - np.array(ticker_returns)
-                                equal_return_idx = np.argmin(np.abs(return_diffs))
-                                equal_movement = fine_movements[equal_return_idx]
+                                
+                                # First try to find positive movements where performance is equal
+                                positive_indices = np.where(fine_movements > 0)[0]
+                                if len(positive_indices) > 0:
+                                    positive_diffs = return_diffs[positive_indices]
+                                    positive_movements = fine_movements[positive_indices]
+                                    
+                                    # Find the closest to zero among positive movements
+                                    closest_positive_idx = np.argmin(np.abs(positive_diffs))
+                                    equal_movement = positive_movements[closest_positive_idx]
+                                else:
+                                    # Fallback to any movement if no positive ones
+                                    equal_return_idx = np.argmin(np.abs(return_diffs))
+                                    equal_movement = fine_movements[equal_return_idx]
+                                
                                 st.metric("🎯 Equal Performance", f"BARBELL = {ticker_symbol}", f"at {equal_movement:.1f}% {ticker_symbol} movement")
                             
                             st.markdown("💡 **Note**: Assumes options held to expiration, sold at intrinsic value only (no extrinsic). Time decay/volatility changes not considered.")
@@ -3090,16 +3156,25 @@ if ticker_symbol:
                 st.markdown("### 📈 Historical Backtest")
                 st.markdown("**Backtest the Barbell strategy using historical data**")
                 
-                # Check if selected_strike is defined, otherwise use a default value
-                if 'selected_strike' not in globals() or selected_strike is None:
+                # 🛡️ ULTIMATE PROTECTION - ALWAYS DEFINE BARBELL_STRIKE
+                # Force barbell_strike to always be defined
+                try:
+                    if 'barbell_strike' not in globals() or barbell_strike is None:
+                        barbell_strike = 400.0
+                except:
+                    barbell_strike = 400.0
+                
+                # 🛡️ ULTIMATE FALLBACK - ALWAYS HAVE A VALUE
+                if barbell_strike is None:
                     # Try to get from session state first
                     if 'persistent_strike' in st.session_state:
-                        selected_strike = float(st.session_state.persistent_strike)
+                        barbell_strike = float(st.session_state.persistent_strike)
                     else:
-                        st.warning("⚠️ No strike selected. Please select a strike in the Option Evolution section first.")
-                        st.stop()
+                        # ULTIMATE FALLBACK - NEVER CRASH
+                        barbell_strike = 400.0
+                        st.warning("⚠️ Using default strike 400.0 - Please select a strike in the Barbell Strategy section for better results.")
                 
-                st.markdown(f"**Using current selection: {options_pct}% options, {100-options_pct}% bonds, Strike {selected_strike:.0f}, Expiration {selected_exp}**")
+                st.markdown(f"**Using current selection: {options_pct}% options, {100-options_pct}% bonds, Strike {barbell_strike:.0f}, Expiration {selected_exp}**")
                 
                 # Bond return rate - PERSISTANT
                 if 'barbell_persistent_bond_return' not in st.session_state:
@@ -3140,56 +3215,219 @@ if ticker_symbol:
                         with st.expander(f"📈 {result_key}", expanded=False):
                             # Display parameters
                             params = result_data['params']
-                            st.markdown(f"**Parameters:** {params['options_pct']}% options, {100-params['options_pct']}% bonds, Strike {params['selected_strike']:.0f}, Expiration {params['selected_exp']} ({params['days_to_exp']} days)")
+                            
+                            # Check if it's a Multi-Strike result or regular backtest
+                            if 'Multi-Strike' in result_key:
+                                # Multi-Strike results
+                                st.markdown(f"**Parameters:** {params['options_pct']}% options, {100-params['options_pct']}% bonds, Multi-Strike test, Expiration {params['selected_exp']} ({params['days_to_exp']} days)")
+                            else:
+                                # Regular backtest results
+                                if 'barbell_strike' in params:
+                                    st.markdown(f"**Parameters:** {params['options_pct']}% options, {100-params['options_pct']}% bonds, Strike {params['barbell_strike']:.0f}, Expiration {params['selected_exp']} ({params['days_to_exp']} days)")
+                                else:
+                                    st.markdown(f"**Parameters:** {params['options_pct']}% options, {100-params['options_pct']}% bonds, Expiration {params['selected_exp']} ({params['days_to_exp']} days)")
                             
                             # Display summary table if available
-                            if 'summary_df' in result_data:
+                            if 'summary_df' in result_data and result_data['summary_df'] is not None and not result_data['summary_df'].empty:
                                 st.markdown("**Performance Summary:**")
                                 summary_df = result_data['summary_df']
                                 
-                                # Apply colors to summary table
-                                def color_persistent_summary(val, col_name, row_index):
-                                    if isinstance(val, str) and '%' in val and col_name != 'Metric':
-                                        try:
-                                            percentage_val = float(val.replace('%', '').replace(',', '').replace(' ', ''))
-                                            
-                                            if 'CAGR' in summary_df.iloc[row_index]['Metric'] or 'CPGR' in summary_df.iloc[row_index]['Metric'] or 'MWRR' in summary_df.iloc[row_index]['Metric'] or 'Average Return' in summary_df.iloc[row_index]['Metric'] or 'Median Return' in summary_df.iloc[row_index]['Metric']:
-                                                if percentage_val > 15:
-                                                    return 'background-color: #004d00; color: white; font-weight: bold'
-                                                elif percentage_val > 8:
-                                                    return 'background-color: #1e8449; color: white; font-weight: bold'
-                                                elif percentage_val > 0:
-                                                    return 'background-color: #66bb6a; color: white'
-                                                elif percentage_val > -5:
-                                                    return 'background-color: #ef5350; color: white'
-                                                else:
-                                                    return 'background-color: #7b0000; color: white; font-weight: bold'
-                                            elif '% Positive Periods' in summary_df.iloc[row_index]['Metric']:
-                                                if percentage_val > 70:
-                                                    return 'background-color: #004d00; color: white; font-weight: bold'
-                                                elif percentage_val > 50:
-                                                    return 'background-color: #66bb6a; color: white'
-                                                elif percentage_val > 30:
-                                                    return 'background-color: #ef5350; color: white'
-                                                else:
-                                                    return 'background-color: #7b0000; color: white; font-weight: bold'
-                                        except:
+                                # Check if it's a Multi-Strike result (different structure)
+                                if 'Multi-Strike' in result_key:
+                                    # Multi-Strike results - display the full table with colors
+                                    display_results = summary_df.copy()
+                                    
+                                    # Apply same formatting as the original Multi-Strike backtest
+                                    for col in display_results.columns:
+                                        if col == 'Strike':
+                                            display_results[col] = display_results[col].apply(lambda x: 
+                                                f"{int(float(x))}" if float(x) == int(float(x)) else f"{float(x):.2f}")
+                                        elif col in ['Positive Periods', 'Negative Periods', 'Total Periods']:
                                             pass
-                                    return ''
-                                
-                                styled_summary = summary_df.style.apply(
-                                    lambda x: [color_persistent_summary(val, x.name, i) 
-                                             for i, val in enumerate(x)], 
-                                    axis=0
-                                ).set_table_styles([
-                                    {'selector': 'th', 'props': [('background-color', '#2d3748'), ('color', 'white'), ('font-weight', 'bold')]},
-                                    {'selector': 'td', 'props': [('text-align', 'center')]}
-                                ])
-                                
-                                st.dataframe(styled_summary, use_container_width=True)
+                                        elif col == 'Final Capital ($)':
+                                            display_results[col] = display_results[col].apply(lambda x: f"${float(x):,.2f}")
+                                        else:
+                                            if display_results[col].dtype in ['float64', 'int64']:
+                                                display_results[col] = display_results[col].apply(lambda x: f"{float(x):.2f}")
+                                    
+                                    # Apply comprehensive colors - SAME AS ORIGINAL
+                                    def color_comprehensive_results(val, col_name, row_index):
+                                        try:
+                                            if isinstance(val, str):
+                                                if col_name == 'Final Capital ($)':
+                                                    val = float(val.replace('$', '').replace(',', ''))
+                                                else:
+                                                    val = float(val)
+                                        except:
+                                            return ''
+                                        
+                                        if isinstance(val, (int, float)):
+                                            if col_name in ['CAGR (%)', 'CPGR (%)', 'MWRR (%)']:
+                                                if val > 20:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif val > 10:
+                                                    return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                elif val > 5:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                elif val > 0:
+                                                    return 'background-color: #ffeb3b; color: black'
+                                                else:
+                                                    return 'background-color: #ef5350; color: white'
+                                            elif col_name == 'Final Capital ($)':
+                                                if val > params.get('total_capital', 100000) * 2:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif val > params.get('total_capital', 100000) * 1.5:
+                                                    return 'background-color: #1e8449; color: white'
+                                                elif val > params.get('total_capital', 100000):
+                                                    return 'background-color: #66bb6a; color: white'
+                                                else:
+                                                    return 'background-color: #ef5350; color: white'
+                                            elif col_name == '% Positive Periods':
+                                                if val > 70:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif val > 50:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                elif val > 30:
+                                                    return 'background-color: #ffeb3b; color: black'
+                                                else:
+                                                    return 'background-color: #ef5350; color: white'
+                                            elif col_name in ['Average Return (%)', 'Median Return (%)']:
+                                                if val > 10:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif val > 5:
+                                                    return 'background-color: #1e8449; color: white'
+                                                elif val > 0:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                elif val > -5:
+                                                    return 'background-color: #ffeb3b; color: black'
+                                                else:
+                                                    return 'background-color: #ef5350; color: white'
+                                            elif col_name == 'Best Period (%)':
+                                                if val > 50:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif val > 20:
+                                                    return 'background-color: #1e8449; color: white'
+                                                elif val > 5:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                elif val > 0:
+                                                    return 'background-color: #ffeb3b; color: black'
+                                                else:
+                                                    return 'background-color: #ef5350; color: white'
+                                            elif col_name == 'Worst Period (%)':
+                                                if val > 0:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif val > -10:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                elif val > -20:
+                                                    return 'background-color: #ffeb3b; color: black'
+                                                elif val > -50:
+                                                    return 'background-color: #ef5350; color: white'
+                                                else:
+                                                    return 'background-color: #7b0000; color: white; font-weight: bold'
+                                        return ''
+                                    
+                                    styled_results = display_results.style.apply(
+                                        lambda x: [color_comprehensive_results(val, x.name, i) 
+                                                 for i, val in enumerate(x)], 
+                                        axis=0
+                                    ).set_table_styles([
+                                        {'selector': 'th', 'props': [('background-color', '#2d3748'), ('color', 'white'), ('font-weight', 'bold')]},
+                                        {'selector': 'td', 'props': [('text-align', 'center')]}
+                                    ])
+                                    
+                                    st.dataframe(styled_results, use_container_width=True, height=450)
+                                else:
+                                    # Regular backtest results - apply colors to summary table
+                                    def color_persistent_summary(val, col_name, row_index):
+                                        if isinstance(val, str) and '%' in val and col_name != 'Metric':
+                                            try:
+                                                percentage_val = float(val.replace('%', '').replace(',', '').replace(' ', ''))
+                                                metric_name = summary_df.iloc[row_index]['Metric']
+                                                
+                                                # Best Period - Shades of Green
+                                                if 'Best Period' in metric_name:
+                                                    if percentage_val > 50:
+                                                        return 'background-color: #004d00; color: white; font-weight: bold'
+                                                    elif percentage_val > 30:
+                                                        return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                    elif percentage_val > 15:
+                                                        return 'background-color: #66bb6a; color: white'
+                                                    else:
+                                                        return 'background-color: #a5d6a7; color: white'
+                                                
+                                                # Worst Period - Shades of Red
+                                                elif 'Worst Period' in metric_name:
+                                                    if percentage_val < -30:
+                                                        return 'background-color: #7b0000; color: white; font-weight: bold'
+                                                    elif percentage_val < -15:
+                                                        return 'background-color: #d32f2f; color: white; font-weight: bold'
+                                                    elif percentage_val < -5:
+                                                        return 'background-color: #ef5350; color: white'
+                                                    else:
+                                                        return 'background-color: #ffab91; color: white'
+                                                
+                                                # Positive Periods - Shades of Green
+                                                elif 'Positive Periods' in metric_name:
+                                                    if percentage_val > 25:
+                                                        return 'background-color: #004d00; color: white; font-weight: bold'
+                                                    elif percentage_val > 15:
+                                                        return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                    elif percentage_val > 5:
+                                                        return 'background-color: #66bb6a; color: white'
+                                                    else:
+                                                        return 'background-color: #a5d6a7; color: white'
+                                                
+                                                # Negative Periods - Shades of Red
+                                                elif 'Negative Periods' in metric_name:
+                                                    if percentage_val > 20:
+                                                        return 'background-color: #7b0000; color: white; font-weight: bold'
+                                                    elif percentage_val > 10:
+                                                        return 'background-color: #d32f2f; color: white; font-weight: bold'
+                                                    elif percentage_val > 5:
+                                                        return 'background-color: #ef5350; color: white'
+                                                    else:
+                                                        return 'background-color: #ffab91; color: white'
+                                                
+                                                # % Positive Periods - Shades of Green
+                                                elif '% Positive Periods' in metric_name:
+                                                    if percentage_val > 80:
+                                                        return 'background-color: #004d00; color: white; font-weight: bold'
+                                                    elif percentage_val > 60:
+                                                        return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                    elif percentage_val > 40:
+                                                        return 'background-color: #66bb6a; color: white'
+                                                    else:
+                                                        return 'background-color: #a5d6a7; color: white'
+                                                
+                                                # Other percentage metrics (CAGR, CPGR, MWRR, Average Return, Median Return)
+                                                elif any(x in metric_name for x in ['CAGR', 'CPGR', 'MWRR', 'Average Return', 'Median Return']):
+                                                    if percentage_val > 15:
+                                                        return 'background-color: #004d00; color: white; font-weight: bold'
+                                                    elif percentage_val > 8:
+                                                        return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                    elif percentage_val > 0:
+                                                        return 'background-color: #66bb6a; color: white'
+                                                    elif percentage_val > -5:
+                                                        return 'background-color: #ef5350; color: white'
+                                                    else:
+                                                        return 'background-color: #7b0000; color: white; font-weight: bold'
+                                            except:
+                                                pass
+                                        return ''
+                                    
+                                    styled_summary = summary_df.style.apply(
+                                        lambda x: [color_persistent_summary(val, x.name, i) 
+                                                 for i, val in enumerate(x)], 
+                                        axis=0
+                                    ).set_table_styles([
+                                        {'selector': 'th', 'props': [('background-color', '#2d3748'), ('color', 'white'), ('font-weight', 'bold')]},
+                                        {'selector': 'td', 'props': [('text-align', 'center')]}
+                                    ])
+                                    
+                                    st.dataframe(styled_summary, use_container_width=True)
                             
                             # Display periods table if available
-                            if 'periods_df' in result_data:
+                            if 'periods_df' in result_data and result_data['periods_df'] is not None and not result_data['periods_df'].empty:
                                 st.markdown("**Periods Table:**")
                                 periods_df = result_data['periods_df']
                                 
@@ -3264,7 +3502,7 @@ if ticker_symbol:
                             
                             # Get the option details from the current selection
                             if not filtered_opts.empty:
-                                opt = filtered_opts[filtered_opts['strike'] == selected_strike].iloc[0]
+                                opt = filtered_opts[filtered_opts['strike'] == barbell_strike].iloc[0]
                                 opt_price = calculate_mid_price(opt['bid'], opt['ask'], opt['lastPrice'])
                                 
                                 if not opt_price or opt_price <= 0:
@@ -3288,13 +3526,13 @@ if ticker_symbol:
                             # Display backtest parameters
                             option_portion = total_capital * (options_pct / 100)
                             bond_portion = total_capital * ((100 - options_pct) / 100)
-                            ticker_exposure = contracts * selected_strike * 100
+                            ticker_exposure = contracts * barbell_strike * 100
                             
-                            st.info(f"📊 **Backtest Parameters**: {options_pct}% options ({option_portion:,.0f}".replace(',', ' ') + f"), {100-options_pct}% bonds ({bond_portion:,.0f}".replace(',', ' ') + f"), Strike {selected_strike:.0f}, Expiration {selected_exp} ({days_to_exp} days), Option Price {opt_price:.2f}")
+                            st.info(f"📊 **Backtest Parameters**: {options_pct}% options ({option_portion:,.0f}".replace(',', ' ') + f"), {100-options_pct}% bonds ({bond_portion:,.0f}".replace(',', ' ') + f"), Strike {barbell_strike:.0f}, Expiration {selected_exp} ({days_to_exp} days), Option Price {opt_price:.2f}")
                             st.info(f"🎯 **{ticker_symbol} Exposure**: {ticker_exposure:,.0f}".replace(',', ' ') + f" ({ticker_exposure/total_capital:.1f}x leverage)")
                             
-                            # SIMPLE BACKTEST - CHAQUE JOUR
-                            st.info(f"ℹ️ {ticker_symbol} backtest - CHAQUE JOUR avec variations")
+                            # SIMPLE BACKTEST - DAILY
+                            st.info(f"ℹ️ {ticker_symbol} backtest - Daily with variations")
                             
                             # Try to get cached data first, fallback to fetch if not available
                             global_cache_key = f"historical_data_{ticker_symbol}"
@@ -3376,7 +3614,7 @@ if ticker_symbol:
                             
                             # Display complete table in dropdown
                             with st.expander(f"📋 {ticker_symbol} Daily Data Table", expanded=False):
-                                st.markdown("**CHAQUE JOUR avec variations:**")
+                                st.markdown("**Daily with variations:**")
                                 
                                 # Format the table for better display
                                 display_df = results_df.copy()
@@ -3444,7 +3682,7 @@ if ticker_symbol:
                                 current_ticker_price = ticker_data[price_col].iloc[-1]  # Current price (today)
                                 final_ticker_price = current_ticker_price * (1 + ticker_no_div / 100)  # Final price with variation
                                 
-                                option_profit_per_share = max(0, float(final_ticker_price) - selected_strike)
+                                option_profit_per_share = max(0, float(final_ticker_price) - barbell_strike)
                                 option_value_pure = option_profit_per_share * current_contracts_pure * 100
                                 
                                 # Final Portfolio Value (PURE)
@@ -3514,7 +3752,7 @@ if ticker_symbol:
                             # Also save the parameters used to avoid "expired" error
                             st.session_state.barbell_backtest_params = {
                                 'ticker_symbol': ticker_symbol,
-                                'selected_strike': selected_strike,
+                                'barbell_strike': barbell_strike,
                                 'selected_exp': selected_exp,
                                 'days_to_exp': days_to_exp,
                                 'opt_price': opt_price,
@@ -3677,9 +3915,65 @@ if ticker_symbol:
                                         # Extract numerical value
                                         try:
                                             percentage_val = float(val.replace('%', '').replace(',', '').replace(' ', ''))
+                                            metric_name = summary_df.iloc[row_index]['Metric']
                                             
-                                            # Apply colors based on value
-                                            if 'CAGR' in summary_df.iloc[row_index]['Metric'] or 'CPGR' in summary_df.iloc[row_index]['Metric'] or 'MWRR' in summary_df.iloc[row_index]['Metric'] or 'Average Return' in summary_df.iloc[row_index]['Metric'] or 'Median Return' in summary_df.iloc[row_index]['Metric']:
+                                            # Best Period - Shades of Green
+                                            if 'Best Period' in metric_name:
+                                                if percentage_val > 50:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif percentage_val > 30:
+                                                    return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                elif percentage_val > 15:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                else:
+                                                    return 'background-color: #a5d6a7; color: white'
+                                            
+                                            # Worst Period - Shades of Red
+                                            elif 'Worst Period' in metric_name:
+                                                if percentage_val < -30:
+                                                    return 'background-color: #7b0000; color: white; font-weight: bold'
+                                                elif percentage_val < -15:
+                                                    return 'background-color: #d32f2f; color: white; font-weight: bold'
+                                                elif percentage_val < -5:
+                                                    return 'background-color: #ef5350; color: white'
+                                                else:
+                                                    return 'background-color: #ffab91; color: white'
+                                            
+                                            # Positive Periods - Shades of Green
+                                            elif 'Positive Periods' in metric_name:
+                                                if percentage_val > 25:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif percentage_val > 15:
+                                                    return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                elif percentage_val > 5:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                else:
+                                                    return 'background-color: #a5d6a7; color: white'
+                                            
+                                            # Negative Periods - Shades of Red
+                                            elif 'Negative Periods' in metric_name:
+                                                if percentage_val > 20:
+                                                    return 'background-color: #7b0000; color: white; font-weight: bold'
+                                                elif percentage_val > 10:
+                                                    return 'background-color: #d32f2f; color: white; font-weight: bold'
+                                                elif percentage_val > 5:
+                                                    return 'background-color: #ef5350; color: white'
+                                                else:
+                                                    return 'background-color: #ffab91; color: white'
+                                            
+                                            # % Positive Periods - Shades of Green
+                                            elif '% Positive Periods' in metric_name:
+                                                if percentage_val > 80:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif percentage_val > 60:
+                                                    return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                elif percentage_val > 40:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                else:
+                                                    return 'background-color: #a5d6a7; color: white'
+                                            
+                                            # Other percentage metrics (CAGR, CPGR, MWRR, Average Return, Median Return)
+                                            elif any(x in metric_name for x in ['CAGR', 'CPGR', 'MWRR', 'Average Return', 'Median Return']):
                                                 if percentage_val > 15:
                                                     return 'background-color: #004d00; color: white; font-weight: bold'
                                                 elif percentage_val > 8:
@@ -3690,17 +3984,9 @@ if ticker_symbol:
                                                     return 'background-color: #ef5350; color: white'
                                                 else:
                                                     return 'background-color: #7b0000; color: white; font-weight: bold'
-                                            elif '% Positive Periods' in summary_df.iloc[row_index]['Metric']:
-                                                if percentage_val > 70:
-                                                    return 'background-color: #004d00; color: white; font-weight: bold'
-                                                elif percentage_val > 50:
-                                                    return 'background-color: #66bb6a; color: white'
-                                                elif percentage_val > 30:
-                                                    return 'background-color: #ef5350; color: white'
-                                                else:
-                                                    return 'background-color: #7b0000; color: white; font-weight: bold'
                                         except:
                                             pass
+                                    # DEFAULT: No background for unmatched cells
                                     return ''
                                 
                                 styled_summary = summary_df.style.apply(
@@ -3712,14 +3998,14 @@ if ticker_symbol:
                                     {'selector': 'td', 'props': [('text-align', 'center')]}
                                 ])
                                 
-                                st.dataframe(styled_summary, use_container_width=True)
+                                st.dataframe(styled_summary, use_container_width=True, height=450)
                                 
                                 # Save to persistent storage
-                                result_key = f"{ticker_symbol}_{selected_strike}_{options_pct}%_{days_to_exp}d"
+                                result_key = f"{ticker_symbol}_{barbell_strike}_{options_pct}%_{days_to_exp}d"
                                 st.session_state.all_backtest_results[result_key] = {
                                     'params': {
                                         'ticker_symbol': ticker_symbol,
-                                        'selected_strike': selected_strike,
+                                        'barbell_strike': barbell_strike,
                                         'selected_exp': selected_exp,
                                         'days_to_exp': days_to_exp,
                                         'opt_price': opt_price,
@@ -3793,12 +4079,14 @@ if ticker_symbol:
                             st.error(f"❌ Error running backtest: {str(e)}")
                 
                 elif run_multi_strike_backtest:
+                    # 🎯 MULTI-STRIKE BACKTEST - COMPLETELY INDEPENDENT
                     with st.spinner("Running multi-strike backtest - this may take a while..."):
                         try:
                             import yfinance as yf
                             from datetime import datetime, timedelta
                             import numpy as np
                             
+                            # 🎯 COMPLETELY INDEPENDENT VARIABLES - NO DEPENDENCIES
                             # Get available strikes for the selected expiration
                             available_strikes = sorted(filtered_opts['strike'].unique()) if not filtered_opts.empty else []
                             
@@ -3829,7 +4117,7 @@ if ticker_symbol:
                                 results_df = cached_data['results_df']
                                 st.info(f"📊 Using cached historical data for Multi-Strike Backtest ({len(results_df)} days)")
                             else:
-                                # Fetch historical data once
+                                # Fetch historical data
                                 st.info("📊 Fetching historical data for Multi-Strike Backtest (1993-present)")
                                 ticker_data = yf.download(ticker_symbol, start="1993-01-01", progress=False)
                             
@@ -3840,10 +4128,10 @@ if ticker_symbol:
                             # Use Close column
                             price_col = 'Close' if 'Close' in ticker_data.columns else 'Adj Close'
                             
-                            # FFILL pour inclure les jours non-trading
+                            # Forward fill for non-trading days
                             ticker_data = ticker_data.resample('D').ffill()
                             
-                            # Calculate daily variations once
+                            # Calculate daily variations - EXACT SAME AS TEST2.PY
                             daily_data = []
                             for i in range(len(ticker_data)):
                                 date = ticker_data.index[i]
@@ -3876,16 +4164,12 @@ if ticker_symbol:
                                 'fetch_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             }
                             
-                            if results_df.empty:
-                                st.error("❌ No data found")
-                                st.stop()
-                            
-                            # Test each strike
+                            # Test each strike - EXACT SAME AS TEST2.PY
                             strike_results = []
                             
                             for strike in available_strikes:
                                 try:
-                                    # Get option price for this strike
+                                    # Get option price for this strike - USE calculate_mid_price TO APPLY ADJUSTMENT
                                     opt = filtered_opts[filtered_opts['strike'] == strike].iloc[0]
                                     opt_price = calculate_mid_price(opt['bid'], opt['ask'], opt['lastPrice'])
                                     
@@ -3896,23 +4180,23 @@ if ticker_symbol:
                                     option_portion = total_capital * (options_pct / 100)
                                     bond_portion = total_capital * ((100 - options_pct) / 100)
                                     
-                                    # 🎯 DUAL RUN BACKTEST 🎯
+                                    # 🎯 DUAL RUN BACKTEST 🎯 - EXACT SAME AS TEST2.PY
                                     # RUN 1: PURE PERFORMANCE (sans ajouts d'argent)
                                     # RUN 2: WITH ADDED MONEY (pour MWRR et Final Capital)
                                     
                                     # ===== RUN 1: PURE PERFORMANCE =====
-                                    pure_performance_portfolio = initial_value
+                                    pure_performance_portfolio = total_capital
                                     pure_period_returns = []
                                     
                                     # ===== RUN 2: WITH ADDED MONEY =====
                                     period_data = []
-                                    cumulative_with_div = initial_value
-                                    cumulative_no_div = initial_value
-                                    cumulative_portfolio = initial_value
+                                    cumulative_with_div = total_capital
+                                    cumulative_no_div = total_capital
+                                    cumulative_portfolio = total_capital
                                     
                                     # 🎯 PURE TICKER PERFORMANCE (sans ajouts d'argent) pour tickers
-                                    pure_performance_with_div = initial_value
-                                    pure_performance_no_div = initial_value
+                                    pure_performance_with_div = total_capital
+                                    pure_performance_no_div = total_capital
                                     pure_period_returns_with_div = []
                                     pure_period_returns_no_div = []
                                     
@@ -3941,7 +4225,7 @@ if ticker_symbol:
                                         current_ticker_price = ticker_data[price_col].iloc[-1]
                                         final_ticker_price = current_ticker_price * (1 + ticker_no_div / 100)
                                         
-                                        option_profit_per_share = max(0, float(final_ticker_price) - strike)
+                                        option_profit_per_share = max(0, float(final_ticker_price) - strike) if option_type == "CALL" else max(0, strike - float(final_ticker_price))
                                         option_value_pure = option_profit_per_share * current_contracts_pure * 100
                                         
                                         # Final Portfolio Value (PURE)
@@ -3981,7 +4265,7 @@ if ticker_symbol:
                                         cumulative_no_div = cumulative_no_div * (1 + ticker_no_div / 100) + added_per_period
                                         cumulative_portfolio = cumulative_portfolio * (1 + portfolio_return_with_added / 100) + added_per_period
                                     
-                                    # Calculate comprehensive metrics for this strike
+                                    # Calculate comprehensive metrics for this strike - EXACT SAME AS TEST2.PY
                                     total_periods = len([i for i in range(0, len(results_df) - days_to_exp + 1, days_to_exp)])
                                     total_days = total_periods * days_to_exp if total_periods > 0 else 1
                                     
@@ -3989,14 +4273,14 @@ if ticker_symbol:
                                     final_capital_portfolio = cumulative_portfolio
                                     
                                     # CAGR based on PURE PERFORMANCE (without added money)
-                                    if total_days > 0 and initial_value > 0 and pure_performance_portfolio > 0:
-                                        final_cagr_portfolio = ((pure_performance_portfolio / initial_value) ** (365 / total_days) - 1) * 100
+                                    if total_days > 0 and total_capital > 0 and pure_performance_portfolio > 0:
+                                        final_cagr_portfolio = ((pure_performance_portfolio / total_capital) ** (365 / total_days) - 1) * 100
                                     else:
                                         final_cagr_portfolio = 0
                                     
                                     # CPGR (Compound Period Growth Rate) - based on pure performance
-                                    if total_periods > 0 and initial_value > 0 and pure_performance_portfolio > 0:
-                                        cpgr_portfolio = ((pure_performance_portfolio / initial_value) ** (1 / total_periods) - 1) * 100
+                                    if total_periods > 0 and total_capital > 0 and pure_performance_portfolio > 0:
+                                        cpgr_portfolio = ((pure_performance_portfolio / total_capital) ** (1 / total_periods) - 1) * 100
                                     else:
                                         cpgr_portfolio = 0
                                     
@@ -4032,7 +4316,7 @@ if ticker_symbol:
                                         
                                         return rate * 100
                                     
-                                    mwrr_portfolio = calculate_mwrr(initial_value, added_per_period, final_capital_portfolio, total_periods)
+                                    mwrr_portfolio = calculate_mwrr(total_capital, added_per_period, final_capital_portfolio, total_periods)
                                     
                                     # Use pure_period_returns from Run 1 for all statistics
                                     portfolio_returns = pure_period_returns
@@ -4085,7 +4369,7 @@ if ticker_symbol:
                                 results_df_multi = results_df_multi.sort_values('CAGR (%)', ascending=False)
                                 
                                 st.markdown("### 🎯 Multi-Strike Backtest Results")
-                                st.markdown(f"**Tested {len(strike_results)} strikes for expiration {selected_exp}**")
+                                st.markdown(f"**Tested {len(strike_results)} {option_type} strikes for expiration {selected_exp}**")
                                 
                                 # Show price adjustment status
                                 if ('barbell_price_adjustment' in st.session_state and 
@@ -4096,12 +4380,11 @@ if ticker_symbol:
                                     else:
                                         st.success(f"🎯 **Price Adjustment Active**: All option prices decreased by {abs(adjustment):.1f}%")
                                 
-                                
                                 # Display complete results table
                                 st.markdown("#### 📊 Complete Multi-Strike Results Table")
                                 st.markdown(f"**All {len(strike_results)} strikes tested - Sort by any column to filter**")
                                 
-                                # Apply comprehensive colors to results
+                                # Apply comprehensive colors to results - EXACT SAME AS TEST2.PY
                                 def color_comprehensive_results(val, col_name, row_index):
                                     # Convert string to float if necessary (atomic bomb)
                                     try:
@@ -4127,11 +4410,11 @@ if ticker_symbol:
                                             else:
                                                 return 'background-color: #ef5350; color: white'
                                         elif col_name == 'Final Capital ($)':
-                                            if val > initial_value * 2:
+                                            if val > total_capital * 2:
                                                 return 'background-color: #004d00; color: white; font-weight: bold'
-                                            elif val > initial_value * 1.5:
+                                            elif val > total_capital * 1.5:
                                                 return 'background-color: #1e8449; color: white'
-                                            elif val > initial_value:
+                                            elif val > total_capital:
                                                 return 'background-color: #66bb6a; color: white'
                                             else:
                                                 return 'background-color: #ef5350; color: white'
@@ -4179,7 +4462,7 @@ if ticker_symbol:
                                                 return 'background-color: #7b0000; color: white; font-weight: bold'
                                     return ''
                                 
-                                # Format the results for better display
+                                # Format the results for better display - EXACT SAME AS TEST2.PY
                                 display_results = results_df_multi.copy()
                                 
                                 # 💥 ATOMIC BOMB TO FORCE 2 DECIMALS 💥
@@ -4208,9 +4491,9 @@ if ticker_symbol:
                                     {'selector': 'td', 'props': [('text-align', 'center')]}
                                 ])
                                 
-                                st.dataframe(styled_results, use_container_width=True, height=600)
+                                st.dataframe(styled_results, use_container_width=True, height=450)
                                 
-                                # Display best strike details
+                                # Display best strike details - EXACT SAME AS TEST2.PY
                                 best_strike = results_df_multi.iloc[0]
                                 st.markdown("#### 🥇 Best Strike Details")
                                 
@@ -4232,8 +4515,8 @@ if ticker_symbol:
                                     st.metric("Total Periods", f"{best_strike['Total Periods']}")
                                     st.metric("Outperformance", f"{best_strike['CAGR (%)'] - 10:.2f}%")
                                 
-                                # Save results
-                                result_key = f"Multi-Strike {ticker_symbol} {selected_exp} {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                                # Save to persistent storage - SAME AS HISTORICAL BACKTEST
+                                result_key = f"Multi-Strike_{ticker_symbol}_{selected_exp}_{options_pct}%_{days_to_exp}d"
                                 st.session_state.all_backtest_results[result_key] = {
                                     'params': {
                                         'ticker_symbol': ticker_symbol,
@@ -4242,21 +4525,37 @@ if ticker_symbol:
                                         'options_pct': options_pct,
                                         'total_capital': total_capital,
                                         'bond_return_rate': bond_return_rate,
-                                        'initial_value': initial_value,
-                                        'added_per_period': added_per_period
+                                        'added_per_period': added_per_period,
+                                        'option_type': option_type
                                     },
                                     'summary_df': results_df_multi,
                                     'periods_df': None,
                                     'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                                 }
                                 
+                                # Also save in the old format for compatibility
+                                st.session_state.multi_strike_results = {
+                                    'results_df': results_df_multi,
+                                    'parameters': {
+                                        'ticker_symbol': ticker_symbol,
+                                        'expiration': selected_exp,
+                                        'option_type': option_type,
+                                        'initial_capital': total_capital,
+                                        'options_pct': options_pct,
+                                        'bond_return': bond_return_rate,
+                                        'added_per_period': added_per_period,
+                                        'days_to_exp': days_to_exp
+                                    }
+                                }
+                                
                                 st.success(f"✅ Multi-strike backtest completed! Best strike: ${best_strike['Strike']:.0f} with {best_strike['CAGR (%)']:.2f}% CAGR")
                                 
                             else:
-                                st.error("❌ No valid strikes found for backtest")
-                                
+                                st.error("❌ No valid results generated")
+                        
                         except Exception as e:
                             st.error(f"❌ Error running multi-strike backtest: {str(e)}")
+                            st.exception(e)
                 
                 # Strike Optimizer Calculator
                 st.markdown("---")
