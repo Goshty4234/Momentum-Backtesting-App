@@ -121,7 +121,7 @@ def calculate_mid_price(bid, ask, last_price):
         elif last_val is not None and last_val > 0:
             mid_price = last_val
         else:
-            return None
+            return 0.0
         
         # Apply price adjustment if active
         if 'barbell_price_adjustment' in st.session_state and st.session_state.barbell_price_adjustment != 0:
@@ -131,7 +131,7 @@ def calculate_mid_price(bid, ask, last_price):
         return mid_price
         
     except (ValueError, TypeError):
-        return None
+        return 0.0
 
 # Utility function to safely convert current_price to float
 def safe_float_price(price):
@@ -1780,8 +1780,8 @@ if ticker_symbol:
                                     st.warning("No price data available for chart")
                             else:
                                 st.warning(f"No options found for strike ${evolution_strike:.2f}")
-                else:
-                    st.warning("No options data available")
+                    else:
+                        st.warning("No options data available")
                 
                 # SPREAD ANALYSIS Section within Option Evolution ONLY
                 st.markdown("---")
@@ -3312,6 +3312,44 @@ if ticker_symbol:
                                                         return 'background-color: #ffeb3b; color: black'
                                                     else:
                                                         return 'background-color: #ef5350; color: white'
+                                                elif col_name in ['Average Return (%)', 'Median Return (%)', 'Best Period (%)']:
+                                                    if val > 20:
+                                                        return 'background-color: #004d00; color: white; font-weight: bold'
+                                                    elif val > 10:
+                                                        return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                    elif val > 5:
+                                                        return 'background-color: #66bb6a; color: white'
+                                                    elif val > 0:
+                                                        return 'background-color: #ffeb3b; color: black'
+                                                    else:
+                                                        return 'background-color: #ef5350; color: white'
+                                                elif col_name == 'Worst Period (%)':
+                                                    if val > 0:
+                                                        return 'background-color: #66bb6a; color: white'
+                                                    elif val > -10:
+                                                        return 'background-color: #ffeb3b; color: black'
+                                                    elif val > -20:
+                                                        return 'background-color: #ef5350; color: white'
+                                                    else:
+                                                        return 'background-color: #d32f2f; color: white; font-weight: bold'
+                                                elif col_name == 'Distance %':
+                                                    if val > 10:
+                                                        return 'background-color: #ef5350; color: white'  # Far OTM - red
+                                                    elif val > 0:
+                                                        return 'background-color: #ffeb3b; color: black'  # OTM - yellow
+                                                    elif val > -5:
+                                                        return 'background-color: #66bb6a; color: white'  # Near ATM - green
+                                                    else:
+                                                        return 'background-color: #1e8449; color: white'  # ITM - dark green
+                                                elif col_name in ['Neutral Return %', 'Equal SPY Return %']:
+                                                    if val > 20:
+                                                        return 'background-color: #ef5350; color: white'  # High requirement - red
+                                                    elif val > 10:
+                                                        return 'background-color: #ffeb3b; color: black'  # Medium requirement - yellow
+                                                    elif val > 0:
+                                                        return 'background-color: #66bb6a; color: white'  # Low requirement - green
+                                                    else:
+                                                        return 'background-color: #1e8449; color: white'  # Very low requirement - dark green
                                         except:
                                             return ''
                                         return ''
@@ -3335,6 +3373,9 @@ if ticker_symbol:
                                         'CAGR (%)': '{:.2f}%',
                                         'CPGR (%)': '{:.2f}%',
                                         'MWRR (%)': '{:.2f}%',
+                                        'Distance %': '{:.2f}%',
+                                        'Neutral Return %': '{:.2f}%',
+                                        'Equal SPY Return %': '{:.2f}%',
                                         'Average Return (%)': '{:.2f}%',
                                         'Median Return (%)': '{:.2f}%',
                                         'Best Period (%)': '{:.2f}%',
@@ -4286,6 +4327,59 @@ if ticker_symbol:
                                         best_period = 0
                                         worst_period = 0
                                     
+                                    # Calculate additional metrics
+                                    # Use the current price from the ticker (already available in the scope)
+                                    current_price = current_price if 'current_price' in locals() else 400.0
+                                    
+                                    # 1. Distance % between strike and current price
+                                    distance_pct = ((strike - current_price) / current_price) * 100
+                                    
+                                    # 2. Minimum SPY return for BARBELL PORTFOLIO to be neutral (0% return)
+                                    # Use EXACT SAME LOGIC as Performance Summary Table Key Insights
+                                    # Find the SPY movement where barbell_return = 0%
+                                    
+                                    # Create the same fine_movements and barbell_returns as Performance Summary Table
+                                    fine_movements = np.arange(-30, 51, 0.5)  # Same as Performance Summary Table
+                                    barbell_returns = []
+                                    
+                                    for mov in fine_movements:
+                                        # Calculate barbell return for this movement (SAME LOGIC as Performance Summary Table)
+                                        new_px = current_price * (1 + mov / 100)
+                                        payoff = max(0, (new_px - strike) if option_type == "CALL" else (strike - new_px))
+                                        opt_val = contracts * payoff * 100
+                                        cash_portion = cash * (1 + bond_return_rate/100)
+                                        barbell_value = opt_val + cash_portion
+                                        barbell_return = ((barbell_value - total_capital) / total_capital) * 100
+                                        barbell_returns.append(barbell_return)
+                                    
+                                    # Find neutral point - PRIORITIZE POSITIVE VALUES
+                                    # First try to find positive movements where barbell_return is closest to 0%
+                                    positive_indices = np.where(fine_movements > 0)[0]
+                                    if len(positive_indices) > 0:
+                                        positive_returns = np.array(barbell_returns)[positive_indices]
+                                        closest_positive_idx = np.argmin(np.abs(positive_returns))
+                                        neutral_return = fine_movements[positive_indices[closest_positive_idx]]
+                                    else:
+                                        # Fallback to any movement if no positive ones
+                                        zero_return_idx = np.argmin(np.abs(barbell_returns))
+                                        neutral_return = fine_movements[zero_return_idx]
+                                    
+                                    # 3. Minimum SPY return for BARBELL PORTFOLIO to equal SPY performance
+                                    # Find ticker movement where BARBELL = ticker return (SAME LOGIC as Key Insights)
+                                    ticker_returns = fine_movements  # ticker_return = movement
+                                    return_diffs = np.array(barbell_returns) - np.array(ticker_returns)
+                                    
+                                    # First try to find positive movements where performance is equal
+                                    positive_indices = np.where(fine_movements > 0)[0]
+                                    if len(positive_indices) > 0:
+                                        positive_diffs = return_diffs[positive_indices]
+                                        positive_movements = fine_movements[positive_indices]
+                                        closest_positive_idx = np.argmin(np.abs(positive_diffs))
+                                        equal_spy_return = positive_movements[closest_positive_idx]
+                                    else:
+                                        equal_return_idx = np.argmin(np.abs(return_diffs))
+                                        equal_spy_return = fine_movements[equal_return_idx]
+                                    
                                     # 💥 ATOMIC BOMB - FORCE 2 DECIMALS AT CREATION 💥
                                     strike_results.append({
                                         'Strike': strike,
@@ -4295,6 +4389,9 @@ if ticker_symbol:
                                         'CPGR (%)': float(f"{cpgr_portfolio:.2f}"),
                                         'MWRR (%)': float(f"{mwrr_portfolio:.2f}"),
                                         'Final Capital ($)': float(f"{final_capital_portfolio:.2f}"),
+                                        'Distance %': float(f"{distance_pct:.2f}"),
+                                        'Neutral Return %': float(f"{neutral_return:.2f}"),
+                                        'Equal SPY Return %': float(f"{equal_spy_return:.2f}"),
                                         'Positive Periods': positive_periods,
                                         'Negative Periods': negative_periods,
                                         '% Positive Periods': float(f"{pct_positive:.2f}"),
@@ -4411,6 +4508,24 @@ if ticker_symbol:
                                                 return 'background-color: #ef5350; color: white'
                                             else:
                                                 return 'background-color: #7b0000; color: white; font-weight: bold'
+                                        elif col_name == 'Distance %':
+                                            if val > 10:
+                                                return 'background-color: #ef5350; color: white'  # Far OTM - red
+                                            elif val > 0:
+                                                return 'background-color: #ffeb3b; color: black'  # OTM - yellow
+                                            elif val > -5:
+                                                return 'background-color: #66bb6a; color: white'  # Near ATM - green
+                                            else:
+                                                return 'background-color: #1e8449; color: white'  # ITM - dark green
+                                        elif col_name in ['Neutral Return %', 'Equal SPY Return %']:
+                                            if val > 20:
+                                                return 'background-color: #ef5350; color: white'  # High requirement - red
+                                            elif val > 10:
+                                                return 'background-color: #ffeb3b; color: black'  # Medium requirement - yellow
+                                            elif val > 0:
+                                                return 'background-color: #66bb6a; color: white'  # Low requirement - green
+                                            else:
+                                                return 'background-color: #1e8449; color: white'  # Very low requirement - dark green
                                     return ''
                                 
                                 # Format the results for better display - EXACT SAME AS TEST2.PY
@@ -4913,6 +5028,58 @@ if ticker_symbol:
                                         negative_periods = 0
                                         positive_pct = 0
                                     
+                                    # Calculate additional metrics for All CALL Options
+                                    current_price = results_df['Price'].iloc[-1] if not results_df.empty else 400.0
+                                    
+                                    # 1. Distance % between strike and current price
+                                    distance_pct = ((strike - current_price) / current_price) * 100
+                                    
+                                    # 2. Minimum SPY return for BARBELL PORTFOLIO to be neutral (0% return)
+                                    # Use EXACT SAME LOGIC as Performance Summary Table Key Insights
+                                    # Find the SPY movement where barbell_return = 0%
+                                    
+                                    # Create the same fine_movements and barbell_returns as Performance Summary Table
+                                    fine_movements = np.arange(-30, 51, 0.5)  # Same as Performance Summary Table
+                                    barbell_returns = []
+                                    
+                                    for mov in fine_movements:
+                                        # Calculate barbell return for this movement (SAME LOGIC as Performance Summary Table)
+                                        new_px = current_price * (1 + mov / 100)
+                                        payoff = max(0, (new_px - strike) if option_type == "CALL" else (strike - new_px))
+                                        opt_val = initial_contracts * payoff * 100
+                                        cash_portion = cash * (1 + all_options_bond_return/100)
+                                        barbell_value = opt_val + cash_portion
+                                        barbell_return = ((barbell_value - all_options_initial_capital) / all_options_initial_capital) * 100
+                                        barbell_returns.append(barbell_return)
+                                    
+                                    # Find neutral point - PRIORITIZE POSITIVE VALUES
+                                    # First try to find positive movements where barbell_return is closest to 0%
+                                    positive_indices = np.where(fine_movements > 0)[0]
+                                    if len(positive_indices) > 0:
+                                        positive_returns = np.array(barbell_returns)[positive_indices]
+                                        closest_positive_idx = np.argmin(np.abs(positive_returns))
+                                        neutral_return = fine_movements[positive_indices[closest_positive_idx]]
+                                    else:
+                                        # Fallback to any movement if no positive ones
+                                        zero_return_idx = np.argmin(np.abs(barbell_returns))
+                                        neutral_return = fine_movements[zero_return_idx]
+                                    
+                                    # 3. Minimum SPY return for BARBELL PORTFOLIO to equal SPY performance
+                                    # Find ticker movement where BARBELL = ticker return (SAME LOGIC as Key Insights)
+                                    ticker_returns = fine_movements  # ticker_return = movement
+                                    return_diffs = np.array(barbell_returns) - np.array(ticker_returns)
+                                    
+                                    # First try to find positive movements where performance is equal
+                                    positive_indices = np.where(fine_movements > 0)[0]
+                                    if len(positive_indices) > 0:
+                                        positive_diffs = return_diffs[positive_indices]
+                                        positive_movements = fine_movements[positive_indices]
+                                        closest_positive_idx = np.argmin(np.abs(positive_diffs))
+                                        equal_spy_return = positive_movements[closest_positive_idx]
+                                    else:
+                                        equal_return_idx = np.argmin(np.abs(return_diffs))
+                                        equal_spy_return = fine_movements[equal_return_idx]
+                                    
                                     all_calls_results.append({
                                         'Strike': strike,
                                         'Expiration': expiration,
@@ -4923,6 +5090,9 @@ if ticker_symbol:
                                         'CAGR (%)': final_cagr_portfolio,
                                         'CPGR (%)': cpgr_portfolio,
                                         'MWRR (%)': mwrr_portfolio,
+                                        'Distance %': distance_pct,
+                                        'Neutral Return %': neutral_return,
+                                        'Equal SPY Return %': equal_spy_return,
                                         'Average Return (%)': avg_return,
                                         'Median Return (%)': median_return,
                                         'Best Period (%)': best_period,
@@ -4987,6 +5157,44 @@ if ticker_symbol:
                                                     return 'background-color: #ffeb3b; color: black'
                                                 else:
                                                     return 'background-color: #ef5350; color: white'
+                                            elif col_name in ['Average Return (%)', 'Median Return (%)', 'Best Period (%)']:
+                                                if val > 20:
+                                                    return 'background-color: #004d00; color: white; font-weight: bold'
+                                                elif val > 10:
+                                                    return 'background-color: #1e8449; color: white; font-weight: bold'
+                                                elif val > 5:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                elif val > 0:
+                                                    return 'background-color: #ffeb3b; color: black'
+                                                else:
+                                                    return 'background-color: #ef5350; color: white'
+                                            elif col_name == 'Worst Period (%)':
+                                                if val > 0:
+                                                    return 'background-color: #66bb6a; color: white'
+                                                elif val > -10:
+                                                    return 'background-color: #ffeb3b; color: black'
+                                                elif val > -20:
+                                                    return 'background-color: #ef5350; color: white'
+                                                else:
+                                                    return 'background-color: #d32f2f; color: white; font-weight: bold'
+                                            elif col_name == 'Distance %':
+                                                if val > 10:
+                                                    return 'background-color: #ef5350; color: white'  # Far OTM - red
+                                                elif val > 0:
+                                                    return 'background-color: #ffeb3b; color: black'  # OTM - yellow
+                                                elif val > -5:
+                                                    return 'background-color: #66bb6a; color: white'  # Near ATM - green
+                                                else:
+                                                    return 'background-color: #1e8449; color: white'  # ITM - dark green
+                                            elif col_name in ['Neutral Return %', 'Equal SPY Return %']:
+                                                if val > 20:
+                                                    return 'background-color: #ef5350; color: white'  # High requirement - red
+                                                elif val > 10:
+                                                    return 'background-color: #ffeb3b; color: black'  # Medium requirement - yellow
+                                                elif val > 0:
+                                                    return 'background-color: #66bb6a; color: white'  # Low requirement - green
+                                                else:
+                                                    return 'background-color: #1e8449; color: white'  # Very low requirement - dark green
                                     except:
                                         return ''
                                     return ''
@@ -5030,6 +5238,9 @@ if ticker_symbol:
                                     'CAGR (%)': '{:.2f}%',
                                     'CPGR (%)': '{:.2f}%',
                                     'MWRR (%)': '{:.2f}%',
+                                    'Distance %': '{:.2f}%',
+                                    'Neutral Return %': '{:.2f}%',
+                                    'Equal SPY Return %': '{:.2f}%',
                                     'Average Return (%)': '{:.2f}%',
                                     'Median Return (%)': '{:.2f}%',
                                     'Best Period (%)': '{:.2f}%',
