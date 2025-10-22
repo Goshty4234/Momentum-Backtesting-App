@@ -4718,10 +4718,14 @@ def calculate_sma(df, window):
         return None
     return df['Close'].rolling(window=window, min_periods=window).mean()
 
-def precompute_ma_columns(reindexed_data, ma_window, ma_type='SMA'):
+def precompute_ma_columns(reindexed_data, ma_window, ma_type='SMA', ma_multiplier=1.48):
     """
     Precompute MA columns for all tickers once at the start.
     This is the key optimization - compute MA once instead of every day!
+    
+    Args:
+        ma_multiplier: Multiplier to convert market days to calendar days (default 1.48)
+                      Since data uses ffill, we need more calendar days to get market days
     """
     ma_col_name = f"MA_{ma_type}_{ma_window}"
     
@@ -4735,7 +4739,9 @@ def precompute_ma_columns(reindexed_data, ma_window, ma_type='SMA'):
                 if ma_type == 'EMA':
                     df[ma_col_name] = df['Close'].ewm(span=ma_window, adjust=False, min_periods=ma_window).mean()
                 else:  # SMA
-                    df[ma_col_name] = df['Close'].rolling(window=ma_window, min_periods=ma_window).mean()
+                    # Apply multiplier to approximate market days from calendar days
+                    adjusted_window = int(ma_window * ma_multiplier)
+                    df[ma_col_name] = df['Close'].rolling(window=adjusted_window, min_periods=adjusted_window).mean()
             except Exception:
                 # If MA cannot be computed, skip this ticker
                 continue
@@ -5044,11 +5050,12 @@ def filter_assets_by_ma(valid_assets, reindexed_data, date, ma_window, ma_type='
         df_up_to_date = df[df.index <= date]
         df_ref_up_to_date = df_ref[df_ref.index <= date]
         
-        # For 200 SMA, we need 200+ market days, not just 200 calendar days
-        # Market days are typically ~252 per year, so 200 market days ≈ 280+ calendar days
-        required_days = int(ma_window * 1.4)  # Add 40% buffer for market days vs calendar days
+        # For 200 SMA, we need adjusted window based on multiplier
+        # Get multiplier from config or use default
+        ma_multiplier = config.get('ma_multiplier', 1.48) if config else 1.48
+        required_days = int(ma_window * ma_multiplier)
         if len(df_ref_up_to_date) < required_days:
-            # Not enough data to calculate MA on reference (e.g., QQQ started but not 200 market days yet)
+            # Not enough data to calculate MA on reference
             # Include by default (no filter) - MA filter will kick in once enough data
             filtered_assets.append(ticker)
             continue
@@ -5228,7 +5235,8 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     if config.get('use_sma_filter', False):
         ma_window = config.get('sma_window', 200)
         ma_type = config.get('ma_type', 'SMA')
-        precompute_ma_columns(reindexed_data, ma_window, ma_type)
+        ma_multiplier = config.get('ma_multiplier', 1.48)  # Default multiplier for market days
+        precompute_ma_columns(reindexed_data, ma_window, ma_type, ma_multiplier)
     
     # Handle first rebalance strategy - replace first rebalance date if needed
     first_rebalance_strategy = st.session_state.get('multi_backtest_first_rebalance_strategy', 'rebalancing_date')
@@ -8721,6 +8729,10 @@ def update_active_portfolio_index():
         st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
         st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
         st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
+        
+        # Initialize MA multiplier setting
+        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{portfolio_index}"
+        st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
         
         # Initialize MA cross rebalance setting
         ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{portfolio_index}"
@@ -12332,6 +12344,20 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                        help="Moving average window in days")
             st.session_state[ma_window_key] = ma_window
         
+        # Add MA Multiplier input
+        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{st.session_state.multi_backtest_active_portfolio_index}"
+        if ma_multiplier_key not in st.session_state:
+            st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
+        
+        ma_multiplier = st.number_input("MA Multiplier", 
+                                       value=st.session_state.get(ma_multiplier_key, 1.48),
+                                       min_value=1.0,
+                                       max_value=3.0,
+                                       step=0.01,
+                                       key=f"ma_multiplier_main_{st.session_state.multi_backtest_active_portfolio_index}",
+                                       help="Multiplier to convert market days to calendar days (default 1.48 for ffill data)")
+        st.session_state[ma_multiplier_key] = ma_multiplier
+        
         # New option for immediate rebalancing on MA cross
         ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{st.session_state.multi_backtest_active_portfolio_index}"
         
@@ -12390,6 +12416,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
     active_portfolio['use_sma_filter'] = st.session_state.get(ma_filter_key, False)
     active_portfolio['ma_type'] = st.session_state.get(ma_type_key, "SMA")
     active_portfolio['sma_window'] = st.session_state.get(ma_window_key, 200)
+    active_portfolio['ma_multiplier'] = st.session_state.get(ma_multiplier_key, 1.48)
 else:
     # Hide MA filter when targeted rebalancing is enabled
     # Don't modify session state directly - let the checkbox handle it
@@ -12529,6 +12556,7 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     cleaned_config['use_sma_filter'] = st.session_state.get(ma_filter_key, False)
     cleaned_config['sma_window'] = st.session_state.get(ma_window_key, 200)
     cleaned_config['ma_type'] = st.session_state.get(ma_type_key, 'SMA')
+    cleaned_config['ma_multiplier'] = st.session_state.get(ma_multiplier_key, 1.48)
     
     # Add MA cross rebalance setting
     ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{portfolio_index}"
@@ -12545,6 +12573,7 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     active_portfolio['use_sma_filter'] = st.session_state.get(ma_filter_key, False)
     active_portfolio['sma_window'] = st.session_state.get(ma_window_key, 200)
     active_portfolio['ma_type'] = st.session_state.get(ma_type_key, 'SMA')
+    active_portfolio['ma_multiplier'] = st.session_state.get(ma_multiplier_key, 1.48)
     
     # Convert date objects to strings for JSON serialization
     if cleaned_config.get('start_date_user') is not None:
@@ -14494,6 +14523,7 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
             cleaned_config['use_sma_filter'] = config.get('use_sma_filter', False)
             cleaned_config['sma_window'] = config.get('sma_window', 200)
             cleaned_config['ma_type'] = config.get('ma_type', 'SMA')
+            cleaned_config['ma_multiplier'] = config.get('ma_multiplier', 1.48)
             cleaned_config['ma_cross_rebalance'] = config.get('ma_cross_rebalance', False)
             cleaned_config['ma_tolerance_percent'] = config.get('ma_tolerance_percent', 2.0)
             cleaned_config['ma_confirmation_days'] = config.get('ma_confirmation_days', 3)
