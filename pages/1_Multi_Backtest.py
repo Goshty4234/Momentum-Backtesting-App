@@ -1941,7 +1941,7 @@ def generate_simple_pdf_report(custom_name=""):
         
         # SECTION 1: Portfolio Configurations & Parameters
         story.append(Paragraph("1. Portfolio Configurations & Parameters", heading_style))
-        story.append(Spacer(1, 20))
+        story.append(Spacer(1, 10))
         
         # Get portfolio configs from session state
         portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
@@ -1952,7 +1952,7 @@ def generate_simple_pdf_report(custom_name=""):
                 story.append(PageBreak())
             
             story.append(Paragraph(f"Portfolio: {config.get('name', 'Unknown')}", subheading_style))
-            story.append(Spacer(1, 10))
+            story.append(Spacer(1, 5))
             
             # Create configuration table with all parameters
             config_data = [
@@ -1982,7 +1982,11 @@ def generate_simple_pdf_report(custom_name=""):
                 ['Maximum Allocation', f"{config.get('max_allocation_percent', 20.0):.1f}%" if config.get('use_max_allocation', False) else 'Disabled', 'Maximum allocation percentage per stock'],
                 ['MA Filter', 'Yes' if config.get('use_sma_filter', False) else 'No', 'Filter assets below moving average'],
                 ['MA Type', config.get('ma_type', 'SMA'), 'Type of moving average (SMA or EMA)'],
-                ['MA Window', f"{config.get('sma_window', 200)} days", 'Moving average calculation window']
+                ['MA Window', f"{config.get('sma_window', 200)} days", 'Moving average calculation window'],
+                ['MA Multiplier', f"{config.get('ma_multiplier', 1.48):.4f}", 'Multiplier to convert market days to calendar days'],
+                ['MA Cross Rebalancing', 'Yes' if config.get('ma_cross_rebalance', False) else 'No', 'Immediate rebalancing on MA cross'],
+                ['MA Tolerance Band', f"{config.get('ma_tolerance_percent', 2.0):.1f}%" if config.get('ma_cross_rebalance', False) else 'N/A', 'Tolerance band for MA cross detection'],
+                ['MA Confirmation Days', f"{config.get('ma_confirmation_days', 3)} days" if config.get('ma_cross_rebalance', False) else 'N/A', 'Confirmation delay for MA cross']
             ]
             
             # Add momentum windows if they exist
@@ -7409,6 +7413,8 @@ for portfolio in st.session_state.multi_backtest_portfolio_configs:
         portfolio['sma_window'] = 200
     if 'ma_type' not in portfolio:
         portfolio['ma_type'] = 'SMA'
+    if 'ma_multiplier' not in portfolio:
+        portfolio['ma_multiplier'] = 1.48  # Only default for new portfolios
     if 'ma_cross_rebalance' not in portfolio:
         portfolio['ma_cross_rebalance'] = False
     if 'ma_tolerance_percent' not in portfolio:
@@ -8598,6 +8604,7 @@ def paste_json_callback():
             'use_sma_filter': json_data.get('use_sma_filter', False),
             'sma_window': json_data.get('sma_window', 200),
             'ma_type': json_data.get('ma_type', 'SMA'),
+            'ma_multiplier': json_data.get('ma_multiplier', 1.48),
             'ma_cross_rebalance': json_data.get('ma_cross_rebalance', False),
             'ma_tolerance_percent': json_data.get('ma_tolerance_percent', 2.0),
             'ma_confirmation_days': json_data.get('ma_confirmation_days', 3),
@@ -8720,19 +8727,18 @@ def update_active_portfolio_index():
         st.session_state['multi_backtest_active_max_allocation_percent'] = active_portfolio.get('max_allocation_percent', 20.0)
         st.session_state['multi_backtest_active_use_sma_filter'] = active_portfolio.get('use_sma_filter', False)
         st.session_state['multi_backtest_active_sma_window'] = active_portfolio.get('sma_window', 200)
+        # MA Multiplier - RECONSTRUCTED (no complex sync)
         
         # NUCLEAR: FORCE MA Filter widgets to sync with portfolio-specific keys
         portfolio_index = st.session_state.multi_backtest_active_portfolio_index
         ma_filter_key = f"multi_backtest_active_use_sma_filter_{portfolio_index}"
         ma_window_key = f"multi_backtest_active_ma_window_{portfolio_index}"
         ma_type_key = f"multi_backtest_active_ma_type_{portfolio_index}"
+        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{portfolio_index}"
         st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
         st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
         st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
-        
-        # Initialize MA multiplier setting
-        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{portfolio_index}"
-        st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
+        # MA Multiplier - RECONSTRUCTED (no complex sync)
         
         # Initialize MA cross rebalance setting
         ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{portfolio_index}"
@@ -10663,6 +10669,9 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                     st.session_state[f"ema_values_{portfolio_index}"] = values[:i] + values[i+1:]
                     st.rerun()
     
+    # MA Multiplier - SIMPLE (moved to main section)
+    ma_multiplier_options = [1.48]  # Default value
+    
     # MA Cross Rebalancing Section - ONLY show if at least one MA type is enabled
     if include_sma or include_ema:
         st.markdown("**MA Cross Rebalancing:**")
@@ -10788,6 +10797,12 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
         variant_params["ma_windows"] = ma_options
     else:
         variant_params["ma_windows"] = [None]
+    
+    # Add MA multiplier to variant params
+    if ma_multiplier_options:
+        variant_params["ma_multiplier"] = ma_multiplier_options
+    else:
+        variant_params["ma_multiplier"] = [1.48]
     
     # Add MA cross rebalancing to variant params
     if ma_cross_options:
@@ -11025,6 +11040,8 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                                 variant["ma_tolerance_percent"] = value
                             elif param == "ma_confirmation_days":
                                 variant["ma_confirmation_days"] = value
+                            elif param == "ma_multiplier":
+                                variant["ma_multiplier"] = value
                             else:
                                 # For any other parameters, use the original name
                                 variant[param] = value
@@ -11146,11 +11163,18 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                     if variant.get('use_sma_filter', False):
                         ma_type = variant.get('ma_type', 'SMA')
                         ma_window = variant.get('sma_window', 200)
-                        clear_name_parts.append(f"- {ma_type}{ma_window}")
+                        ma_multiplier = variant.get('ma_multiplier', 1.48)
+                        # Only show multiplier if it's different from default
+                        if ma_multiplier != 1.48:
+                            clear_name_parts.append(f"- {ma_type}{ma_window}x{ma_multiplier:.2f}")
+                        else:
+                            clear_name_parts.append(f"- {ma_type}{ma_window}")
                     
                     # Add MA Cross Rebalancing information (only show when enabled)
                     if variant.get('ma_cross_rebalance', False):
-                        clear_name_parts.append("- Cross")
+                        tolerance = variant.get('ma_tolerance_percent', 2.0)
+                        days = variant.get('ma_confirmation_days', 3)
+                        clear_name_parts.append(f"- Cross Band {tolerance:.0f}% Days {days}")
                     
                     # Create the new clear name WITH custom tags before parentheses
                     # Format: BASE_NAME [tags] (details...)
@@ -11455,6 +11479,7 @@ active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_
 ma_filter_key = f"multi_backtest_active_use_sma_filter_{st.session_state.multi_backtest_active_portfolio_index}"
 ma_window_key = f"multi_backtest_active_ma_window_{st.session_state.multi_backtest_active_portfolio_index}"
 ma_type_key = f"multi_backtest_active_ma_type_{st.session_state.multi_backtest_active_portfolio_index}"
+ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{st.session_state.multi_backtest_active_portfolio_index}"
 
 if ma_filter_key not in st.session_state:
     st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
@@ -11462,6 +11487,8 @@ if ma_window_key not in st.session_state:
     st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
 if ma_type_key not in st.session_state:
     st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
+if ma_multiplier_key not in st.session_state:
+    st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
 
 for i in range(len(active_portfolio['stocks'])):
     stock = active_portfolio['stocks'][i]
@@ -12476,6 +12503,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
     st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
     st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
     st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
+    # MA Multiplier - RECONSTRUCTED (no complex sync)
 
     # MA Filter options - LEFT ALIGNED STYLE
     st.checkbox("Enable MA Filter", 
@@ -12504,7 +12532,8 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                        help="Moving average window in days")
             st.session_state[ma_window_key] = ma_window
         
-        # Add MA Multiplier input
+        # MA Multiplier - COPY EXACT LOGIC FROM OTHER PARAMETERS
+        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{portfolio_index}"
         if ma_multiplier_key not in st.session_state:
             st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
         
@@ -12513,9 +12542,12 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                        min_value=1.0,
                                        max_value=3.0,
                                        step=0.01,
-                                       key=f"ma_multiplier_main_{st.session_state.multi_backtest_active_portfolio_index}",
+                                       key=f"ma_multiplier_main_{portfolio_index}",
                                        help="Multiplier to convert market days to calendar days (default 1.48 for ffill data)")
+        
+        # Update session state and portfolio config - EXACT SAME LOGIC AS OTHER PARAMETERS
         st.session_state[ma_multiplier_key] = ma_multiplier
+        active_portfolio['ma_multiplier'] = ma_multiplier
         
         # New option for immediate rebalancing on MA cross
         ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{st.session_state.multi_backtest_active_portfolio_index}"
@@ -12523,6 +12555,8 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
         # Initialize the new option if not exists
         if ma_cross_rebalance_key not in st.session_state:
             st.session_state[ma_cross_rebalance_key] = active_portfolio.get('ma_cross_rebalance', False)
+        
+        # MA Multiplier - RECONSTRUCTED (no complex sync)
         
         st.checkbox("Immediate Rebalance on MA Cross", 
                    key=ma_cross_rebalance_key,
@@ -12543,6 +12577,8 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                 if ma_tolerance_key not in st.session_state:
                     st.session_state[ma_tolerance_key] = active_portfolio.get('ma_tolerance_percent', 2.0)
                 
+                # MA Multiplier - RECONSTRUCTED (no complex sync)
+                
                 ma_tolerance = st.number_input("Tolerance Band (%)", 
                                              value=st.session_state.get(ma_tolerance_key, 2.0),
                                              min_value=0.0,
@@ -12557,6 +12593,8 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                 ma_delay_key = f"multi_backtest_active_ma_delay_{st.session_state.multi_backtest_active_portfolio_index}"
                 if ma_delay_key not in st.session_state:
                     st.session_state[ma_delay_key] = active_portfolio.get('ma_confirmation_days', 3)
+                
+                # MA Multiplier - RECONSTRUCTED (no complex sync)
                 
                 ma_delay = st.number_input("Confirmation Delay (days)", 
                                         value=st.session_state.get(ma_delay_key, 3),
@@ -12575,7 +12613,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
     active_portfolio['use_sma_filter'] = st.session_state.get(ma_filter_key, False)
     active_portfolio['ma_type'] = st.session_state.get(ma_type_key, "SMA")
     active_portfolio['sma_window'] = st.session_state.get(ma_window_key, 200)
-    active_portfolio['ma_multiplier'] = st.session_state.get(ma_multiplier_key, 1.48)
+    # MA Multiplier - RECONSTRUCTED (no complex sync)
 else:
     # Hide MA filter when targeted rebalancing is enabled
     # Don't modify session state directly - let the checkbox handle it
@@ -12732,7 +12770,7 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     active_portfolio['use_sma_filter'] = st.session_state.get(ma_filter_key, False)
     active_portfolio['sma_window'] = st.session_state.get(ma_window_key, 200)
     active_portfolio['ma_type'] = st.session_state.get(ma_type_key, 'SMA')
-    active_portfolio['ma_multiplier'] = st.session_state.get(ma_multiplier_key, 1.48)
+    # MA Multiplier - RECONSTRUCTED (no complex sync)
     
     # Convert date objects to strings for JSON serialization
     if cleaned_config.get('start_date_user') is not None:
@@ -14390,6 +14428,8 @@ def paste_all_json_callback():
                     portfolio['ma_tolerance_percent'] = 2.0
                 if 'ma_confirmation_days' not in portfolio:
                     portfolio['ma_confirmation_days'] = 3
+                if 'ma_multiplier' not in portfolio:
+                    portfolio['ma_multiplier'] = 1.48  # Only default for new portfolios
         
         if isinstance(obj, list):
             # Clear widget keys to force re-initialization
@@ -14400,9 +14440,41 @@ def paste_all_json_callback():
                 "multi_backtest_active_use_momentum", "multi_backtest_active_collect_dividends_as_cash",
                 "multi_backtest_start_with_radio", "multi_backtest_first_rebalance_strategy_radio"
             ]
+            
+            # Clear MA-related widget keys to force re-initialization with imported values
+            ma_widget_keys_to_clear = [
+                "multi_backtest_active_use_sma_filter", "multi_backtest_active_ma_window", 
+                "multi_backtest_active_ma_type", "multi_backtest_active_ma_multiplier",
+                "multi_backtest_active_ma_cross_rebalance", "multi_backtest_active_ma_tolerance",
+                "multi_backtest_active_ma_delay"
+            ]
+            for key in ma_widget_keys_to_clear:
+                # Clear all portfolio-specific keys for MA widgets
+                keys_to_remove = [k for k in st.session_state.keys() if k.startswith(key)]
+                for k in keys_to_remove:
+                    del st.session_state[k]
             for key in widget_keys_to_clear:
                 if key in st.session_state:
                     del st.session_state[key]
+            # FUCKING NUKE: Force sync ALL MA parameters after import
+            def force_ma_sync_after_import():
+                """NUCLEAR: Force sync ALL MA parameters after JSON import"""
+                for i, portfolio in enumerate(obj):
+                    if isinstance(portfolio, dict):
+                        pass  # No special treatment for ma_multiplier
+            
+            # Execute the FUCKING NUKE
+            force_ma_sync_after_import()
+            
+            
+            # NUCLEAR OPTION: FORCE REPLACE ALL EXISTING PORTFOLIOS
+            st.session_state['multi_backtest_portfolio_configs'] = []  # CLEAR ALL EXISTING
+            st.session_state['multi_backtest_fusion_portfolio_configs'] = []  # CLEAR ALL FUSION
+            
+            # Show nuclear power message
+            st.success("🚀 **NUCLEAR JSON IMPORT** - All existing portfolios cleared and replaced!")
+            st.info("💥 **SURPUISSANT MODE** - MA multipliers will be forced to imported values!")
+            
             # Process each portfolio configuration for Multi-Backtest page
             processed_configs = []
             for cfg in obj:
@@ -16633,7 +16705,14 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 'Beta Window': f"{cfg.get('beta_window_days', 0)}-{cfg.get('exclude_days_beta', 0)}" if cfg.get('calc_beta', False) else 'N/A',
                 'Volatility Window': f"{cfg.get('vol_window_days', 0)}-{cfg.get('exclude_days_vol', 0)}" if cfg.get('calc_volatility', False) else 'N/A',
                 'Minimal Threshold': f"{cfg.get('minimal_threshold_percent', 4.0):.1f}%" if cfg.get('use_minimal_threshold', False) else 'Disabled',
-                'Maximum Allocation': f"{cfg.get('max_allocation_percent', 20.0):.1f}%" if cfg.get('use_max_allocation', False) else 'Disabled'
+                'Maximum Allocation': f"{cfg.get('max_allocation_percent', 20.0):.1f}%" if cfg.get('use_max_allocation', False) else 'Disabled',
+                'MA Filter': 'Yes' if cfg.get('use_sma_filter', False) else 'No',
+                'MA Type': cfg.get('ma_type', 'SMA'),
+                'MA Window': f"{cfg.get('sma_window', 200)} days",
+                'MA Multiplier': f"{cfg.get('ma_multiplier', 1.48):.4f}",
+                'MA Cross Rebalancing': 'Yes' if cfg.get('ma_cross_rebalance', False) else 'No',
+                'MA Tolerance Band': f"{cfg.get('ma_tolerance_percent', 2.0):.1f}%" if cfg.get('ma_cross_rebalance', False) else 'N/A',
+                'MA Confirmation Days': f"{cfg.get('ma_confirmation_days', 3)} days" if cfg.get('ma_cross_rebalance', False) else 'N/A'
             }
         
         config_df = pd.DataFrame(config_data).T
@@ -18198,6 +18277,11 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
                     fusion_frequency = portfolio_cfg.get('rebalancing_frequency', 'Monthly') if portfolio_cfg else 'Monthly'
                     
+                    # Get MA multiplier from portfolio config if available
+                    ma_multiplier_value = 1.48  # Default value
+                    if portfolio_cfg:
+                        ma_multiplier_value = portfolio_cfg.get('ma_multiplier', 1.48)
+                    
                     portfolio_json = {
                         "name": f"{selected_portfolio_detail} - Ticker Breakdown",
                         "stocks": [],
@@ -18220,7 +18304,8 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         "vol_window_days": 365,
                         "exclude_days_vol": 30,
                         "use_targeted_rebalancing": False,
-                        "targeted_rebalancing_settings": {}
+                        "targeted_rebalancing_settings": {},
+                        "ma_multiplier": ma_multiplier_value
                     }
                     
                     # Add tickers with their allocations
