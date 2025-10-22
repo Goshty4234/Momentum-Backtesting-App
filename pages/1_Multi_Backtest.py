@@ -4005,6 +4005,121 @@ def process_allocation_dataframe(portfolio_name, allocation_data):
         st.error(f"Error processing allocation data for {portfolio_name}: {str(e)}")
         return None, []
 
+def precompute_individual_portfolio_charts():
+    """Pre-compute and cache ALL individual portfolio data for instant switching"""
+    try:
+        # Get all portfolio names from results
+        all_results = st.session_state.get('multi_all_results', {})
+        all_allocations = st.session_state.get('multi_all_allocations', {})
+        all_metrics = st.session_state.get('multi_all_metrics', {})
+        portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+        
+        if not all_results or not all_allocations:
+            return
+        
+        # Initialize comprehensive cache
+        if 'individual_portfolio_cache' not in st.session_state:
+            st.session_state.individual_portfolio_cache = {}
+        
+        # Pre-compute EVERYTHING for each portfolio
+        for portfolio_name in all_results.keys():
+            if portfolio_name in all_allocations:
+                portfolio_cache = {}
+                
+                # 1. Cache portfolio configuration
+                portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == portfolio_name), None)
+                portfolio_cache['config'] = portfolio_cfg
+                
+                # 2. Cache allocation data
+                allocation_data = all_allocations[portfolio_name]
+                portfolio_cache['allocation_data'] = allocation_data
+                
+                # 3. Cache metrics data
+                if portfolio_name in all_metrics:
+                    portfolio_cache['metrics_data'] = all_metrics[portfolio_name]
+                
+                # 4. Pre-compute and cache Historical Allocations DataFrame
+                if allocation_data:
+                    try:
+                        allocations_df_raw, all_tickers = process_allocation_dataframe(portfolio_name, allocation_data)
+                        if allocations_df_raw is not None:
+                            allocations_df_raw.index.name = "Date"
+                            allocations_df_raw = allocations_df_raw.sort_index(ascending=True)
+                            portfolio_cache['allocations_df'] = allocations_df_raw
+                            portfolio_cache['allocations_tickers'] = all_tickers
+                    except Exception as e:
+                        portfolio_cache['allocations_df'] = None
+                        portfolio_cache['allocations_tickers'] = []
+                
+                # 5. Pre-compute pie chart data
+                if allocation_data:
+                    latest_date = max(allocation_data.keys())
+                    latest_allocation = allocation_data[latest_date]
+                    
+                    labels_today = [k for k, v in sorted(latest_allocation.items(), key=lambda x: (-x[1], x[0])) if v > 0]
+                    vals_today = [float(latest_allocation[k]) * 100 for k in labels_today]
+                    
+                    portfolio_cache['pie_chart_data'] = {
+                        'labels': labels_today,
+                        'values': vals_today,
+                        'allocation': latest_allocation
+                    }
+                    
+                    # Create and cache the pie chart
+                    if labels_today and vals_today:
+                        fig_today = go.Figure()
+                        fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
+                        fig_today.update_traces(textinfo='percent+label')
+                        fig_today.update_layout(
+                            template='plotly_dark', 
+                            margin=dict(t=30),
+                            height=600,
+                            showlegend=True
+                        )
+                        portfolio_cache['pie_chart_figure'] = fig_today
+                
+                # 6. Pre-compute rebalancing data
+                if allocation_data:
+                    alloc_dates = sorted(list(allocation_data.keys()))
+                    if alloc_dates:
+                        final_date = alloc_dates[-1]
+                        last_rebal_date = alloc_dates[-2] if len(alloc_dates) > 1 else alloc_dates[-1]
+                        
+                        final_alloc = allocation_data.get(final_date, {})
+                        rebal_alloc = allocation_data.get(last_rebal_date, {})
+                        
+                        # Pre-compute labels and values for both charts
+                        labels_final = [k for k, v in sorted(final_alloc.items(), key=lambda x: (-x[1], x[0])) if v > 0]
+                        vals_final = [float(final_alloc[k]) * 100 for k in labels_final]
+                        
+                        labels_rebal = [k for k, v in sorted(rebal_alloc.items(), key=lambda x: (-x[1], x[0])) if v > 0]
+                        vals_rebal = [float(rebal_alloc[k]) * 100 for k in labels_rebal]
+                        
+                        portfolio_cache['rebalancing_data'] = {
+                            'final_date': final_date,
+                            'last_rebal_date': last_rebal_date,
+                            'labels_final': labels_final,
+                            'vals_final': vals_final,
+                            'labels_rebal': labels_rebal,
+                            'vals_rebal': vals_rebal,
+                            'final_alloc': final_alloc,
+                            'rebal_alloc': rebal_alloc
+                        }
+                
+                # 7. Pre-compute today weights from snapshot
+                snapshot = st.session_state.get('multi_backtest_snapshot_data', {})
+                today_weights_map = snapshot.get('today_weights_map', {}) if snapshot else {}
+                if portfolio_name in today_weights_map:
+                    portfolio_cache['today_weights'] = today_weights_map[portfolio_name]
+                
+                # Store everything in the cache
+                st.session_state.individual_portfolio_cache[portfolio_name] = portfolio_cache
+        
+        st.success(f"✅ Pre-computed ALL data for {len(all_results)} portfolios")
+        
+    except Exception as e:
+        st.error(f"Error pre-computing portfolio data: {str(e)}")
+
 def create_pie_chart(portfolio_name, allocation_data, title_suffix="Current Allocation"):
     """Create pie chart for portfolio allocation (CACHED version)"""
     try:
@@ -4603,6 +4718,257 @@ def calculate_sma(df, window):
         return None
     return df['Close'].rolling(window=window, min_periods=window).mean()
 
+def precompute_ma_columns(reindexed_data, ma_window, ma_type='SMA'):
+    """
+    Precompute MA columns for all tickers once at the start.
+    This is the key optimization - compute MA once instead of every day!
+    """
+    ma_col_name = f"MA_{ma_type}_{ma_window}"
+    
+    for ticker, df in reindexed_data.items():
+        if df is None or not isinstance(df, pd.DataFrame) or 'Close' not in df.columns:
+            continue
+            
+        # Only compute if column doesn't exist
+        if ma_col_name not in df.columns:
+            try:
+                if ma_type == 'EMA':
+                    df[ma_col_name] = df['Close'].ewm(span=ma_window, adjust=False, min_periods=ma_window).mean()
+                else:  # SMA
+                    df[ma_col_name] = df['Close'].rolling(window=ma_window, min_periods=ma_window).mean()
+            except Exception:
+                # If MA cannot be computed, skip this ticker
+                continue
+
+def detect_ma_cross_with_anti_whipsaw(valid_assets, reindexed_data, date, ma_window, ma_type='SMA', config=None, stocks_config=None, tolerance_percent=2.0, confirmation_days=3):
+    """
+    Detect if any ticker has crossed its Moving Average with anti-whipsaw filtering.
+    
+    Args:
+        valid_assets: List of tickers to check
+        reindexed_data: Dict of ticker -> DataFrame
+        date: Current date for checking
+        ma_window: MA window in days (e.g., 200 for 200-day MA)
+        ma_type: Type of moving average - 'SMA' or 'EMA'
+        config: Optional config dict
+        stocks_config: List of stock configs with include_in_ma_filter and ma_reference_ticker options
+        tolerance_percent: Percentage band that price must exceed MA by (default 2.0%)
+        confirmation_days: Number of days the crossing must persist (default 3)
+        
+    Returns:
+        crossed_assets: List of tickers that crossed their MA with confirmation
+        cross_details: Dict of ticker -> cross information
+    """
+    if not valid_assets or ma_window <= 0:
+        return [], {}
+    
+    crossed_assets = []
+    cross_details = {}
+    
+    # Create mappings from stocks_config
+    include_in_ma = {}
+    ma_reference = {}
+    if stocks_config:
+        for stock in stocks_config:
+            ticker = stock.get('ticker')
+            if ticker:
+                include_in_ma[ticker] = stock.get('include_in_sma_filter', True)
+                ref = stock.get('ma_reference_ticker', '').strip()
+                if ref:
+                    ref = resolve_ticker_alias(ref)
+                ma_reference[ticker] = ref if ref else ticker
+    
+    for ticker in valid_assets:
+        is_included = include_in_ma.get(ticker, True)
+        if not is_included:
+            continue
+            
+        reference_ticker = ma_reference.get(ticker, ticker)
+        
+        # Get reference ticker's data for MA calculation
+        df_ref = reindexed_data.get(reference_ticker)
+        if df_ref is None or not isinstance(df_ref, pd.DataFrame):
+            continue
+        
+        # Get data up to current date
+        df_ref_up_to_date = df_ref[df_ref.index <= date]
+        
+        # Need enough data for MA calculation + confirmation period
+        min_required_days = ma_window + max(confirmation_days, 1)  # At least 1 day for MA calculation
+        if len(df_ref_up_to_date) < min_required_days:
+            continue
+        
+        # Calculate MA on the REFERENCE ticker
+        if ma_type == 'EMA':
+            ma = calculate_ema(df_ref_up_to_date, ma_window)
+        else:  # Default to SMA
+            ma = calculate_sma(df_ref_up_to_date, ma_window)
+            
+        if ma is None or len(ma) < confirmation_days + 1:
+            continue
+        
+        try:
+            # Get current price and MA
+            current_price = df_ref_up_to_date['Close'].iloc[-1]
+            current_ma = ma.iloc[-1]
+            
+            if pd.isna(current_price) or pd.isna(current_ma):
+                continue
+            
+            # Check if price exceeds MA by tolerance percentage
+            price_ma_ratio = current_price / current_ma
+            tolerance_ratio = 1 + (tolerance_percent / 100.0)
+            
+            # Check if crossing is significant enough (above tolerance band)
+            significant_above = price_ma_ratio >= tolerance_ratio
+            significant_below = price_ma_ratio <= (1.0 / tolerance_ratio)
+            
+            if significant_above or significant_below:
+                # Check if this crossing has persisted for confirmation_days
+                crossing_confirmed = True
+                cross_direction = "above" if significant_above else "below"
+                
+                # If confirmation_days = 0, no confirmation needed (immediate)
+                if confirmation_days == 0:
+                    crossing_confirmed = True
+                else:
+                    # Look back confirmation_days to see if crossing has been consistent
+                    for i in range(1, confirmation_days + 1):
+                        if len(df_ref_up_to_date) <= i or len(ma) <= i:
+                            crossing_confirmed = False
+                            break
+                        
+                        # Get historical data
+                        hist_price = df_ref_up_to_date['Close'].iloc[-(i+1)]
+                        hist_ma = ma.iloc[-(i+1)]
+                        
+                        if pd.isna(hist_price) or pd.isna(hist_ma):
+                            crossing_confirmed = False
+                            break
+                        
+                        # Check if historical crossing was in same direction
+                        hist_ratio = hist_price / hist_ma
+                        if cross_direction == "above":
+                            if hist_ratio < tolerance_ratio:
+                                crossing_confirmed = False
+                                break
+                        else:  # below
+                            if hist_ratio > (1.0 / tolerance_ratio):
+                                crossing_confirmed = False
+                                break
+                
+                if crossing_confirmed:
+                    crossed_assets.append(ticker)
+                    cross_details[ticker] = {
+                        'type': cross_direction,
+                        'current_price': current_price,
+                        'current_ma': current_ma,
+                        'price_ma_ratio': price_ma_ratio,
+                        'tolerance_ratio': tolerance_ratio,
+                        'confirmation_days': confirmation_days,
+                        'reference_ticker': reference_ticker
+                    }
+                
+        except Exception as e:
+            continue
+    
+    return crossed_assets, cross_details
+
+def detect_ma_cross(valid_assets, reindexed_data, date, ma_window, ma_type='SMA', config=None, stocks_config=None):
+    """
+    Detect if any ticker has crossed its Moving Average (SMA or EMA) between previous and current date.
+    
+    Args:
+        valid_assets: List of tickers to check
+        reindexed_data: Dict of ticker -> DataFrame
+        date: Current date for checking
+        ma_window: MA window in days (e.g., 200 for 200-day MA)
+        ma_type: Type of moving average - 'SMA' or 'EMA'
+        config: Optional config dict
+        stocks_config: List of stock configs with include_in_ma_filter and ma_reference_ticker options
+        
+    Returns:
+        crossed_assets: List of tickers that crossed their MA
+        cross_details: Dict of ticker -> cross information
+    """
+    if not valid_assets or ma_window <= 0:
+        return [], {}
+    
+    crossed_assets = []
+    cross_details = {}
+    
+    # Create mappings from stocks_config
+    include_in_ma = {}
+    ma_reference = {}
+    if stocks_config:
+        for stock in stocks_config:
+            ticker = stock.get('ticker')
+            if ticker:
+                include_in_ma[ticker] = stock.get('include_in_sma_filter', True)
+                ref = stock.get('ma_reference_ticker', '').strip()
+                if ref:
+                    ref = resolve_ticker_alias(ref)
+                ma_reference[ticker] = ref if ref else ticker
+    
+    for ticker in valid_assets:
+        is_included = include_in_ma.get(ticker, True)
+        if not is_included:
+            continue
+            
+        reference_ticker = ma_reference.get(ticker, ticker)
+        
+        # Get reference ticker's data for MA calculation
+        df_ref = reindexed_data.get(reference_ticker)
+        if df_ref is None or not isinstance(df_ref, pd.DataFrame):
+            continue
+        
+        # Get data up to current date
+        df_ref_up_to_date = df_ref[df_ref.index <= date]
+        
+        if len(df_ref_up_to_date) < ma_window + 1:  # Need at least ma_window + 1 for comparison
+            continue
+        
+        # Calculate MA on the REFERENCE ticker
+        if ma_type == 'EMA':
+            ma = calculate_ema(df_ref_up_to_date, ma_window)
+        else:  # Default to SMA
+            ma = calculate_sma(df_ref_up_to_date, ma_window)
+            
+        if ma is None or len(ma) < 2:
+            continue
+        
+        try:
+            # Get current and previous prices and MA values
+            current_price = df_ref_up_to_date['Close'].iloc[-1]
+            previous_price = df_ref_up_to_date['Close'].iloc[-2]
+            current_ma = ma.iloc[-1]
+            previous_ma = ma.iloc[-2]
+            
+            if pd.isna(current_price) or pd.isna(previous_price) or pd.isna(current_ma) or pd.isna(previous_ma):
+                continue
+            
+            # Check for cross: price crosses MA (either direction)
+            current_above = current_price >= current_ma
+            previous_above = previous_price >= previous_ma
+            
+            # Cross detected if the relationship changed
+            if current_above != previous_above:
+                crossed_assets.append(ticker)
+                cross_type = "above" if current_above else "below"
+                cross_details[ticker] = {
+                    'type': cross_type,
+                    'current_price': current_price,
+                    'current_ma': current_ma,
+                    'previous_price': previous_price,
+                    'previous_ma': previous_ma,
+                    'reference_ticker': reference_ticker
+                }
+                
+        except Exception as e:
+            continue
+    
+    return crossed_assets, cross_details
+
 def filter_assets_by_ma(valid_assets, reindexed_data, date, ma_window, ma_type='SMA', config=None, stocks_config=None):
     """
     Filter out assets that are below their Moving Average (SMA or EMA).
@@ -4678,8 +5044,11 @@ def filter_assets_by_ma(valid_assets, reindexed_data, date, ma_window, ma_type='
         df_up_to_date = df[df.index <= date]
         df_ref_up_to_date = df_ref[df_ref.index <= date]
         
-        if len(df_ref_up_to_date) < ma_window:
-            # Not enough data to calculate MA on reference (e.g., QQQ started but not 200 days yet)
+        # For 200 SMA, we need 200+ market days, not just 200 calendar days
+        # Market days are typically ~252 per year, so 200 market days ≈ 280+ calendar days
+        required_days = int(ma_window * 1.4)  # Add 40% buffer for market days vs calendar days
+        if len(df_ref_up_to_date) < required_days:
+            # Not enough data to calculate MA on reference (e.g., QQQ started but not 200 market days yet)
             # Include by default (no filter) - MA filter will kick in once enough data
             filtered_assets.append(ticker)
             continue
@@ -4687,26 +5056,24 @@ def filter_assets_by_ma(valid_assets, reindexed_data, date, ma_window, ma_type='
         # Mark that this ticker has enough data for MA calculation
         tickers_with_enough_data.append(ticker)
         
-        # Calculate MA on the REFERENCE ticker
-        if ma_type == 'EMA':
-            ma = calculate_ema(df_ref_up_to_date, ma_window)
-        else:  # Default to SMA
-            ma = calculate_sma(df_ref_up_to_date, ma_window)
-            
-        if ma is None:
+        # Use precomputed MA column - this is the key optimization!
+        ma_col_name = f"MA_{ma_type}_{ma_window}"
+        if ma_col_name not in df_ref.columns:
+            # MA not precomputed, include by default
             filtered_assets.append(ticker)
             continue
         
-        # Get current price of REFERENCE TICKER and MA value of REFERENCE at date
+        # Get current price and MA value at date
         try:
-            # Use the last available price up to date (in case exact date doesn't exist)
-            if len(df_ref_up_to_date) == 0:
-                filtered_assets.append(ticker)
-                continue
-            # CRITICAL: Use reference ticker's price, not the ticker itself!
-            # Compare: reference price vs reference MA (same price scale)
             current_price = df_ref_up_to_date['Close'].iloc[-1]
-            current_ma = ma.iloc[-1]
+            
+            # CRITICAL FIX: Get MA value from the full series at the exact date
+            # The MA was calculated on the full df_ref, so we need to get it from there
+            if date in df_ref.index:
+                current_ma = df_ref.loc[date, ma_col_name]
+            else:
+                # If exact date not found, use the last available MA value
+                current_ma = df_ref_up_to_date[ma_col_name].iloc[-1]
             
             if pd.isna(current_price) or pd.isna(current_ma):
                 filtered_assets.append(ticker)
@@ -4856,6 +5223,12 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     # Get regular rebalancing dates
     dates_rebal = sorted(get_dates_by_freq(rebalancing_frequency, sim_index[0], sim_index[-1], sim_index))
     
+    # OPTIMIZATION: Precompute MA columns once at the start if MA filter is enabled
+    # This is the key performance improvement - compute MA once instead of every day!
+    if config.get('use_sma_filter', False):
+        ma_window = config.get('sma_window', 200)
+        ma_type = config.get('ma_type', 'SMA')
+        precompute_ma_columns(reindexed_data, ma_window, ma_type)
     
     # Handle first rebalance strategy - replace first rebalance date if needed
     first_rebalance_strategy = st.session_state.get('multi_backtest_first_rebalance_strategy', 'rebalancing_date')
@@ -5714,6 +6087,25 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         # Normalize dates for comparison (remove timezone and time components)
         date_normalized = pd.Timestamp(date).normalize()
         dates_rebal_normalized = {pd.Timestamp(d).normalize() for d in dates_rebal}
+        
+        # Check for MA cross rebalancing (if enabled)
+        ma_cross_rebalance = config.get('ma_cross_rebalance', False)
+        if ma_cross_rebalance and config.get('use_sma_filter', False) and set(tickers):
+            # Check if any ticker has crossed its MA with anti-whipsaw filtering
+            ma_window = config.get('sma_window', 200)
+            ma_type = config.get('ma_type', 'SMA')
+            tolerance_percent = config.get('ma_tolerance_percent', 2.0)
+            confirmation_days = config.get('ma_confirmation_days', 3)
+            
+            crossed_assets, cross_details = detect_ma_cross_with_anti_whipsaw(
+                list(tickers), reindexed_data, date, ma_window, ma_type, config, config['stocks'],
+                tolerance_percent, confirmation_days
+            )
+            
+            if crossed_assets:
+                # MA cross detected with confirmation - trigger immediate rebalancing
+                should_rebalance = True
+                print(f"[MA CROSS] Detected confirmed MA cross for {crossed_assets} at {date} (tolerance: {tolerance_percent}%, confirmation: {confirmation_days} days), triggering immediate rebalancing")
         
         if date_normalized in dates_rebal_normalized and set(tickers):
             # If targeted rebalancing is enabled, check thresholds first
@@ -7009,6 +7401,12 @@ for portfolio in st.session_state.multi_backtest_portfolio_configs:
         portfolio['sma_window'] = 200
     if 'ma_type' not in portfolio:
         portfolio['ma_type'] = 'SMA'
+    if 'ma_cross_rebalance' not in portfolio:
+        portfolio['ma_cross_rebalance'] = False
+    if 'ma_tolerance_percent' not in portfolio:
+        portfolio['ma_tolerance_percent'] = 2.0
+    if 'ma_confirmation_days' not in portfolio:
+        portfolio['ma_confirmation_days'] = 3
     
     # Ensure all stocks have include_in_sma_filter setting
     for stock in portfolio.get('stocks', []):
@@ -8192,6 +8590,9 @@ def paste_json_callback():
             'use_sma_filter': json_data.get('use_sma_filter', False),
             'sma_window': json_data.get('sma_window', 200),
             'ma_type': json_data.get('ma_type', 'SMA'),
+            'ma_cross_rebalance': json_data.get('ma_cross_rebalance', False),
+            'ma_tolerance_percent': json_data.get('ma_tolerance_percent', 2.0),
+            'ma_confirmation_days': json_data.get('ma_confirmation_days', 3),
         }
         
         st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index] = multi_backtest_config
@@ -8320,6 +8721,16 @@ def update_active_portfolio_index():
         st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
         st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
         st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
+        
+        # Initialize MA cross rebalance setting
+        ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{portfolio_index}"
+        st.session_state[ma_cross_rebalance_key] = active_portfolio.get('ma_cross_rebalance', False)
+        
+        # Initialize anti-whipsaw settings
+        ma_tolerance_key = f"multi_backtest_active_ma_tolerance_{portfolio_index}"
+        ma_delay_key = f"multi_backtest_active_ma_delay_{portfolio_index}"
+        st.session_state[ma_tolerance_key] = active_portfolio.get('ma_tolerance_percent', 2.0)
+        st.session_state[ma_delay_key] = active_portfolio.get('ma_confirmation_days', 3)
         
         # NUCLEAR: If portfolio has momentum enabled but no windows, FORCE create them
         if active_portfolio.get('use_momentum', False) and not active_portfolio.get('momentum_windows'):
@@ -11920,6 +12331,60 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                        key=f"ma_window_main_{st.session_state.multi_backtest_active_portfolio_index}",
                                        help="Moving average window in days")
             st.session_state[ma_window_key] = ma_window
+        
+        # New option for immediate rebalancing on MA cross
+        ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{st.session_state.multi_backtest_active_portfolio_index}"
+        
+        # Initialize the new option if not exists
+        if ma_cross_rebalance_key not in st.session_state:
+            st.session_state[ma_cross_rebalance_key] = active_portfolio.get('ma_cross_rebalance', False)
+        
+        st.checkbox("Immediate Rebalance on MA Cross", 
+                   key=ma_cross_rebalance_key,
+                   help="Rebalance portfolio immediately when any ticker crosses its moving average, in addition to regular rebalancing schedule")
+        
+        # Store the new option in active portfolio
+        active_portfolio['ma_cross_rebalance'] = st.session_state.get(ma_cross_rebalance_key, False)
+        
+        # Anti-whipsaw options (only show when MA cross rebalancing is enabled)
+        if st.session_state.get(ma_cross_rebalance_key, False):
+            st.markdown("**Anti-Whipsaw Settings:**")
+            
+            col_band, col_delay = st.columns(2)
+            
+            with col_band:
+                # Tolerance band percentage
+                ma_tolerance_key = f"multi_backtest_active_ma_tolerance_{st.session_state.multi_backtest_active_portfolio_index}"
+                if ma_tolerance_key not in st.session_state:
+                    st.session_state[ma_tolerance_key] = active_portfolio.get('ma_tolerance_percent', 2.0)
+                
+                ma_tolerance = st.number_input("Tolerance Band (%)", 
+                                             value=st.session_state.get(ma_tolerance_key, 2.0),
+                                             min_value=0.0,
+                                             max_value=10.0,
+                                             step=0.1,
+                                             key=f"ma_tolerance_input_{st.session_state.multi_backtest_active_portfolio_index}",
+                                             help="Price must exceed MA by this percentage to trigger rebalancing")
+                st.session_state[ma_tolerance_key] = ma_tolerance
+            
+            with col_delay:
+                # Confirmation delay in days
+                ma_delay_key = f"multi_backtest_active_ma_delay_{st.session_state.multi_backtest_active_portfolio_index}"
+                if ma_delay_key not in st.session_state:
+                    st.session_state[ma_delay_key] = active_portfolio.get('ma_confirmation_days', 3)
+                
+                ma_delay = st.number_input("Confirmation Delay (days)", 
+                                        value=st.session_state.get(ma_delay_key, 3),
+                                        min_value=0,
+                                        max_value=10,
+                                        step=1,
+                                        key=f"ma_delay_input_{st.session_state.multi_backtest_active_portfolio_index}",
+                                        help="Crossing must persist for this many days to trigger rebalancing (0 = immediate)")
+                st.session_state[ma_delay_key] = ma_delay
+            
+            # Store the anti-whipsaw settings in active portfolio
+            active_portfolio['ma_tolerance_percent'] = st.session_state.get(ma_tolerance_key, 2.0)
+            active_portfolio['ma_confirmation_days'] = st.session_state.get(ma_delay_key, 3)
 
     # Store MA filter state in active portfolio - USING PORTFOLIO-SPECIFIC KEYS
     active_portfolio['use_sma_filter'] = st.session_state.get(ma_filter_key, False)
@@ -12064,6 +12529,16 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     cleaned_config['use_sma_filter'] = st.session_state.get(ma_filter_key, False)
     cleaned_config['sma_window'] = st.session_state.get(ma_window_key, 200)
     cleaned_config['ma_type'] = st.session_state.get(ma_type_key, 'SMA')
+    
+    # Add MA cross rebalance setting
+    ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{portfolio_index}"
+    cleaned_config['ma_cross_rebalance'] = st.session_state.get(ma_cross_rebalance_key, False)
+    
+    # Add anti-whipsaw settings
+    ma_tolerance_key = f"multi_backtest_active_ma_tolerance_{portfolio_index}"
+    ma_delay_key = f"multi_backtest_active_ma_delay_{portfolio_index}"
+    cleaned_config['ma_tolerance_percent'] = st.session_state.get(ma_tolerance_key, 2.0)
+    cleaned_config['ma_confirmation_days'] = st.session_state.get(ma_delay_key, 3)
     
     # Also update the active portfolio to keep it in sync
     active_portfolio['use_targeted_rebalancing'] = st.session_state.get('multi_backtest_active_use_targeted_rebalancing', False)
@@ -13622,6 +14097,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             
             # OPTIMIZATION: Pre-compute and cache allocation evolution charts for all portfolios
             st.info("🔄 Pre-computing charts for instant portfolio selection...")
+            
+            # Pre-compute and cache individual portfolio charts
+            precompute_individual_portfolio_charts()
             progress_bar = st.progress(0)
             
             # Get all available portfolio names for pre-computation
@@ -13716,6 +14194,14 @@ def paste_all_json_callback():
                     portfolio['minimal_threshold_percent'] = 4.0
                 # Don't override max_allocation values from JSON - preserve imported values like minimal_threshold
                 # REMOVED: Don't force max_allocation values to preserve JSON values
+                
+                # Add missing anti-whipsaw fields with default values
+                if 'ma_cross_rebalance' not in portfolio:
+                    portfolio['ma_cross_rebalance'] = False
+                if 'ma_tolerance_percent' not in portfolio:
+                    portfolio['ma_tolerance_percent'] = 2.0
+                if 'ma_confirmation_days' not in portfolio:
+                    portfolio['ma_confirmation_days'] = 3
         
         if isinstance(obj, list):
             # Clear widget keys to force re-initialization
@@ -13880,6 +14366,9 @@ def paste_all_json_callback():
                     'use_sma_filter': cfg.get('use_sma_filter', False),
                     'sma_window': cfg.get('sma_window', 200),
                     'ma_type': cfg.get('ma_type', 'SMA'),
+                    'ma_cross_rebalance': cfg.get('ma_cross_rebalance', False),
+                    'ma_tolerance_percent': cfg.get('ma_tolerance_percent', 2.0),
+                    'ma_confirmation_days': cfg.get('ma_confirmation_days', 3),
                     # Preserve fusion portfolio configuration if present
                     'fusion_portfolio': cfg.get('fusion_portfolio', {'enabled': False, 'selected_portfolios': [], 'allocations': {}}),
                     # Note: Ignoring Backtest Engine specific fields like 'portfolio_drag_pct', 'use_custom_dates', etc.
@@ -13945,12 +14434,18 @@ def paste_all_json_callback():
                 st.session_state['multi_backtest_active_use_sma_filter_0'] = bool(processed_configs[0].get('use_sma_filter', False))
                 st.session_state['multi_backtest_active_ma_window_0'] = processed_configs[0].get('sma_window', 200)
                 st.session_state['multi_backtest_active_ma_type_0'] = processed_configs[0].get('ma_type', 'SMA')
+                st.session_state['multi_backtest_active_ma_cross_rebalance_0'] = bool(processed_configs[0].get('ma_cross_rebalance', False))
+                st.session_state['multi_backtest_active_ma_tolerance_0'] = processed_configs[0].get('ma_tolerance_percent', 2.0)
+                st.session_state['multi_backtest_active_ma_delay_0'] = processed_configs[0].get('ma_confirmation_days', 3)
                 
                 # Also initialize MA Filter keys for ALL imported portfolios
                 for idx, cfg in enumerate(processed_configs):
                     st.session_state[f'multi_backtest_active_use_sma_filter_{idx}'] = bool(cfg.get('use_sma_filter', False))
                     st.session_state[f'multi_backtest_active_ma_window_{idx}'] = cfg.get('sma_window', 200)
                     st.session_state[f'multi_backtest_active_ma_type_{idx}'] = cfg.get('ma_type', 'SMA')
+                    st.session_state[f'multi_backtest_active_ma_cross_rebalance_{idx}'] = bool(cfg.get('ma_cross_rebalance', False))
+                    st.session_state[f'multi_backtest_active_ma_tolerance_{idx}'] = cfg.get('ma_tolerance_percent', 2.0)
+                    st.session_state[f'multi_backtest_active_ma_delay_{idx}'] = cfg.get('ma_confirmation_days', 3)
             else:
                 st.session_state.multi_backtest_active_portfolio_index = None
                 st.session_state.multi_backtest_portfolio_selector = ''
@@ -13999,6 +14494,9 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
             cleaned_config['use_sma_filter'] = config.get('use_sma_filter', False)
             cleaned_config['sma_window'] = config.get('sma_window', 200)
             cleaned_config['ma_type'] = config.get('ma_type', 'SMA')
+            cleaned_config['ma_cross_rebalance'] = config.get('ma_cross_rebalance', False)
+            cleaned_config['ma_tolerance_percent'] = config.get('ma_tolerance_percent', 2.0)
+            cleaned_config['ma_confirmation_days'] = config.get('ma_confirmation_days', 3)
             
             # Convert date objects to strings for JSON serialization
             if cleaned_config.get('start_date_user') is not None:
@@ -16347,65 +16845,44 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             if view_clicked:
                 # No-op here; the detail panels below will render based on selected_portfolio_detail. Keep a small indicator
                 st.success(f"Loaded details for {selected_portfolio_detail}")
-            # Table 1: Historical Allocations - OPTIMIZED with session state caching
-            if selected_portfolio_detail in st.session_state.multi_all_allocations:
+            # Table 1: Historical Allocations - ULTRA-OPTIMIZED with comprehensive caching
+            if 'individual_portfolio_cache' in st.session_state and selected_portfolio_detail in st.session_state.individual_portfolio_cache:
                 st.markdown("---")
                 st.markdown(f"**Historical Allocations for {selected_portfolio_detail}**")
                 
-                # Check if processed DataFrame is already cached in session state
-                df_cache_key = f'processed_allocations_df_{selected_portfolio_detail}'
-                tickers_cache_key = f'processed_allocations_tickers_{selected_portfolio_detail}'
+                # Use pre-computed data from cache - INSTANT ACCESS!
+                portfolio_cache = st.session_state.individual_portfolio_cache[selected_portfolio_detail]
+                allocations_df_raw = portfolio_cache.get('allocations_df')
+                all_tickers = portfolio_cache.get('allocations_tickers', [])
                 
-                # Clear cache to force recalculation with fixed logic
-                if df_cache_key in st.session_state:
-                    del st.session_state[df_cache_key]
-                if tickers_cache_key in st.session_state:
-                    del st.session_state[tickers_cache_key]
-                
-                if df_cache_key not in st.session_state or tickers_cache_key not in st.session_state:
-                    # Process allocation data and cache it
-                    allocation_data = st.session_state.multi_all_allocations[selected_portfolio_detail]
-                    allocations_df_raw, all_tickers = process_allocation_dataframe(selected_portfolio_detail, allocation_data)
-                    
-                    if allocations_df_raw is not None:
-                        allocations_df_raw.index.name = "Date"
-                        allocations_df_raw = allocations_df_raw.sort_index(ascending=True)
-                        # Cache the processed data
-                        st.session_state[df_cache_key] = allocations_df_raw
-                        st.session_state[tickers_cache_key] = all_tickers
-                    else:
-                        st.warning("Could not process allocation data")
-                        st.stop()
-                else:
-                    # Use cached data
-                    allocations_df_raw = st.session_state[df_cache_key]
-                    all_tickers = st.session_state[tickers_cache_key]
-                
-                # Corrected styling logic for alternating row colors (no green background for Historical Allocations)
-                def highlight_rows_by_index(s):
-                    is_even_row = allocations_df_raw.index.get_loc(s.name) % 2 == 0
-                    bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
-                    return [f'{bg_color}; color: white;'] * len(s)
+                if allocations_df_raw is not None:
+                    # Corrected styling logic for alternating row colors (no green background for Historical Allocations)
+                    def highlight_rows_by_index(s):
+                        is_even_row = allocations_df_raw.index.get_loc(s.name) % 2 == 0
+                        bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
+                        return [f'{bg_color}; color: white;'] * len(s)
 
-                try:
-                    # Check if dataframe is too large for styling
-                    total_cells = allocations_df_raw.shape[0] * allocations_df_raw.shape[1]
-                    if total_cells > 200000:  # Conservative limit
-                        st.warning(f"Allocations table is very large ({total_cells:,} cells). Showing simplified view.")
-                        # Show only recent data (last 100 rows)
-                        recent_data = allocations_df_raw.tail(100)
-                        st.dataframe(recent_data.round(0), use_container_width=True)
-                        st.caption("Showing last 100 rows. Use filters to narrow down the data.")
-                    else:
-                        # Increase pandas styler limit for smaller datasets
-                        pd.set_option("styler.render.max_elements", max(total_cells * 2, 500000))
-                        styler = allocations_df_raw.style.apply(highlight_rows_by_index, axis=1)
-                        styler.format('{:,.0f}%', na_rep='N/A')
-                        st.dataframe(styler, use_container_width=True)
-                except Exception as e:
-                    st.error(f"Error displaying allocations table: {str(e)}")
-                    st.write("Raw allocations data (first 1000 rows):")
-                    st.dataframe(allocations_df_raw.head(1000))
+                    try:
+                        # Check if dataframe is too large for styling
+                        total_cells = allocations_df_raw.shape[0] * allocations_df_raw.shape[1]
+                        if total_cells > 200000:  # Conservative limit
+                            st.warning(f"Allocations table is very large ({total_cells:,} cells). Showing simplified view.")
+                            # Show only recent data (last 100 rows)
+                            recent_data = allocations_df_raw.tail(100)
+                            st.dataframe(recent_data.round(0), use_container_width=True)
+                            st.caption("Showing last 100 rows. Use filters to narrow down the data.")
+                        else:
+                            # Increase pandas styler limit for smaller datasets
+                            pd.set_option("styler.render.max_elements", max(total_cells * 2, 500000))
+                            styler = allocations_df_raw.style.apply(highlight_rows_by_index, axis=1)
+                            styler.format('{:,.0f}%', na_rep='N/A')
+                            st.dataframe(styler, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error displaying allocations table: {str(e)}")
+                        st.write("Raw allocations data (first 1000 rows):")
+                        st.dataframe(allocations_df_raw.head(1000))
+                else:
+                    st.warning("No allocation data available for this portfolio.")
 
             # Table 2: Momentum Metrics and Calculated Weights (moved right after Historical Allocations)
             if selected_portfolio_detail in st.session_state.multi_all_metrics:
@@ -16828,18 +17305,49 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             
             # Create the main "Target Allocation if Rebalanced Today" pie chart (CENTER)
             st.markdown(f"**Target Allocation if Rebalanced Today**")
-            fig_today = go.Figure()
-            fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
-            fig_today.update_traces(textinfo='percent+label')
-            fig_today.update_layout(
-                template='plotly_dark', 
-                margin=dict(t=30),
-                height=600,  # Make it bigger as the main chart
-                showlegend=True
-            )
-            st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
-            # Store in session state for PDF export
-            st.session_state[f'pie_chart_{selected_portfolio_detail}'] = fig_today
+            
+            # ULTRA-OPTIMIZED: Use comprehensive cache for instant display
+            if 'individual_portfolio_cache' in st.session_state and selected_portfolio_detail in st.session_state.individual_portfolio_cache:
+                # Use pre-computed chart from comprehensive cache - INSTANT!
+                portfolio_cache = st.session_state.individual_portfolio_cache[selected_portfolio_detail]
+                fig_today = portfolio_cache.get('pie_chart_figure')
+                
+                if fig_today is not None:
+                    st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
+                    # Store in session state for PDF export
+                    st.session_state[f'pie_chart_{selected_portfolio_detail}'] = fig_today
+                else:
+                    # Fallback if chart not in cache
+                    pie_data = portfolio_cache.get('pie_chart_data', {})
+                    labels_today = pie_data.get('labels', [])
+                    vals_today = pie_data.get('values', [])
+                    
+                    if labels_today and vals_today:
+                        fig_today = go.Figure()
+                        fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
+                        fig_today.update_traces(textinfo='percent+label')
+                        fig_today.update_layout(
+                            template='plotly_dark', 
+                            margin=dict(t=30),
+                            height=600,
+                            showlegend=True
+                        )
+                        st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
+                        st.session_state[f'pie_chart_{selected_portfolio_detail}'] = fig_today
+            else:
+                # Fallback to real-time calculation if comprehensive cache is not available
+                fig_today = go.Figure()
+                fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
+                fig_today.update_traces(textinfo='percent+label')
+                fig_today.update_layout(
+                    template='plotly_dark', 
+                    margin=dict(t=30),
+                    height=600,  # Make it bigger as the main chart
+                    showlegend=True
+                )
+                st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
+                # Store in session state for PDF export
+                st.session_state[f'pie_chart_{selected_portfolio_detail}'] = fig_today
 
             # Add the "Target Allocation if Rebalanced Today" table right under the main pie chart
             if selected_portfolio_detail in st.session_state.multi_all_allocations:
@@ -17197,10 +17705,20 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         with col_plot1:
                             st.markdown(f"**Last Rebalance Allocation (as of {last_rebal_date.date()})**")
                             if labels_rebal and vals_rebal:
+                                # ULTRA-OPTIMIZED: Use comprehensive cache for instant display
+                                if 'individual_portfolio_cache' in st.session_state and selected_portfolio_detail in st.session_state.individual_portfolio_cache:
+                                    portfolio_cache = st.session_state.individual_portfolio_cache[selected_portfolio_detail]
+                                    rebalancing_data = portfolio_cache.get('rebalancing_data', {})
+                                    
+                                    # Use pre-computed data from cache
+                                    labels_rebal = rebalancing_data.get('labels_rebal', labels_rebal)
+                                    vals_rebal = rebalancing_data.get('vals_rebal', vals_rebal)
+                                
                                 fig_rebal = go.Figure()
                                 fig_rebal.add_trace(go.Pie(labels=labels_rebal, values=vals_rebal, hole=0.3))
                                 fig_rebal.update_traces(textinfo='percent+label')
                                 fig_rebal.update_layout(template='plotly_dark', margin=dict(t=30), height=400)
+                                
                                 st.plotly_chart(fig_rebal, use_container_width=True, key=f"multi_rebal_{selected_portfolio_detail}")
                             else:
                                 st.warning("No valid allocation data for last rebalance.")
@@ -17210,10 +17728,20 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                             if final_date == last_rebal_date:
                                 st.info("ℹ️ **Note**: Current allocation shows the same as last rebalance because this portfolio has not been rebalanced yet. After rebalancing, this will show the actual drifted allocation.")
                             if labels_final and vals_final:
+                                # ULTRA-OPTIMIZED: Use comprehensive cache for instant display
+                                if 'individual_portfolio_cache' in st.session_state and selected_portfolio_detail in st.session_state.individual_portfolio_cache:
+                                    portfolio_cache = st.session_state.individual_portfolio_cache[selected_portfolio_detail]
+                                    rebalancing_data = portfolio_cache.get('rebalancing_data', {})
+                                    
+                                    # Use pre-computed data from cache
+                                    labels_final = rebalancing_data.get('labels_final', labels_final)
+                                    vals_final = rebalancing_data.get('vals_final', vals_final)
+                                
                                 fig_final = go.Figure()
                                 fig_final.add_trace(go.Pie(labels=labels_final, values=vals_final, hole=0.3))
                                 fig_final.update_traces(textinfo='percent+label')
                                 fig_final.update_layout(template='plotly_dark', margin=dict(t=30), height=400)
+                                
                                 st.plotly_chart(fig_final, use_container_width=True, key=f"multi_final_{selected_portfolio_detail}")
                             else:
                                 st.warning("No valid allocation data for current allocation.")
