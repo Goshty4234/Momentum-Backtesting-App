@@ -4750,6 +4750,164 @@ def precompute_ma_columns(reindexed_data, ma_window, ma_type='SMA', ma_multiplie
                 # If MA cannot be computed, skip this ticker
                 continue
 
+def precompute_ma_crossings(reindexed_data, ma_window, ma_type='SMA', tolerance_percent=2.0, confirmation_days=3):
+    """
+    ULTRA OPTIMIZATION: Precompute ALL MA crossings once at the start!
+    This eliminates the need to check crossings every day during backtest.
+    
+    Returns:
+        dict: {date: {ticker: cross_info}} for all dates with confirmed crossings
+    """
+    ma_col_name = f"MA_{ma_type}_{ma_window}"
+    crossings_data = {}
+    tolerance_ratio = 1 + (tolerance_percent / 100.0)
+    
+    for ticker, df in reindexed_data.items():
+        if df is None or ma_col_name not in df.columns:
+            continue
+            
+        # Get price and MA series
+        prices = df['Close']
+        ma_values = df[ma_col_name]
+        
+        # Find all significant crossings
+        for i in range(1, len(df)):
+            if pd.isna(prices.iloc[i]) or pd.isna(ma_values.iloc[i]):
+                continue
+                
+            current_price = prices.iloc[i]
+            current_ma = ma_values.iloc[i]
+            current_ratio = current_price / current_ma
+            
+            # Check if crossing is significant
+            significant_above = current_ratio >= tolerance_ratio
+            significant_below = current_ratio <= (1.0 / tolerance_ratio)
+            
+            if significant_above or significant_below:
+                # Check confirmation
+                if confirmation_days == 0:
+                    # Immediate confirmation
+                    date = df.index[i]
+                    if date not in crossings_data:
+                        crossings_data[date] = {}
+                    crossings_data[date][ticker] = {
+                        'type': 'above' if significant_above else 'below',
+                        'price': current_price,
+                        'ma': current_ma,
+                        'ratio': current_ratio
+                    }
+                else:
+                    # Check if crossing persists for confirmation_days
+                    confirmed = True
+                    for j in range(1, confirmation_days + 1):
+                        if i - j < 0:
+                            confirmed = False
+                            break
+                        hist_price = prices.iloc[i - j]
+                        hist_ma = ma_values.iloc[i - j]
+                        if pd.isna(hist_price) or pd.isna(hist_ma):
+                            confirmed = False
+                            break
+                        hist_ratio = hist_price / hist_ma
+                        if significant_above and hist_ratio < tolerance_ratio:
+                            confirmed = False
+                            break
+                        if significant_below and hist_ratio > (1.0 / tolerance_ratio):
+                            confirmed = False
+                            break
+                    
+                    if confirmed:
+                        date = df.index[i]
+                        if date not in crossings_data:
+                            crossings_data[date] = {}
+                        crossings_data[date][ticker] = {
+                            'type': 'above' if significant_above else 'below',
+                            'price': current_price,
+                            'ma': current_ma,
+                            'ratio': current_ratio
+                        }
+    
+    return crossings_data
+
+def precompute_ma_filters(reindexed_data, ma_window, ma_type='SMA', ma_multiplier=1.48, stocks_config=None):
+    """
+    ULTRA OPTIMIZATION: Precompute ALL MA filter results for all dates!
+    This eliminates the need to check MA filters every day during backtest.
+    
+    Returns:
+        dict: {date: {ticker: is_above_ma}} for all dates and tickers
+    """
+    ma_col_name = f"MA_{ma_type}_{ma_window}"
+    filter_results = {}
+    
+    # Create mappings from stocks_config
+    include_in_ma = {}
+    ma_reference = {}
+    if stocks_config:
+        for stock in stocks_config:
+            ticker = stock.get('ticker')
+            if ticker:
+                include_in_ma[ticker] = stock.get('include_in_sma_filter', True)
+                ref = stock.get('ma_reference_ticker', '').strip()
+                if ref:
+                    ref = resolve_ticker_alias(ref)
+                ma_reference[ticker] = ref if ref else ticker
+    
+    # Get all unique dates from all tickers
+    all_dates = set()
+    for df in reindexed_data.values():
+        if df is not None and isinstance(df, pd.DataFrame):
+            all_dates.update(df.index)
+    
+    all_dates = sorted(list(all_dates))
+    
+    for date in all_dates:
+        filter_results[date] = {}
+        
+        for ticker, df in reindexed_data.items():
+            if df is None or not isinstance(df, pd.DataFrame) or 'Close' not in df.columns:
+                filter_results[date][ticker] = True  # Include by default
+                continue
+            
+            # Check if ticker should be included in MA filter
+            is_included = include_in_ma.get(ticker, True)
+            if not is_included:
+                filter_results[date][ticker] = True  # Include if not in filter
+                continue
+            
+            # Get reference ticker
+            reference_ticker = ma_reference.get(ticker, ticker)
+            df_ref = reindexed_data.get(reference_ticker)
+            
+            if df_ref is None or ma_col_name not in df_ref.columns:
+                filter_results[date][ticker] = True  # Include by default
+                continue
+            
+            # Check if we have enough data
+            required_days = int(ma_window * ma_multiplier)
+            df_ref_up_to_date = df_ref[df_ref.index <= date]
+            if len(df_ref_up_to_date) < required_days:
+                filter_results[date][ticker] = True  # Include by default
+                continue
+            
+            try:
+                # Get current price and MA
+                if date in df_ref.index:
+                    current_price = df_ref.loc[date, 'Close']
+                    current_ma = df_ref.loc[date, ma_col_name]
+                else:
+                    current_price = df_ref_up_to_date['Close'].iloc[-1]
+                    current_ma = df_ref_up_to_date[ma_col_name].iloc[-1]
+                
+                if pd.isna(current_price) or pd.isna(current_ma):
+                    filter_results[date][ticker] = True  # Include by default
+                else:
+                    filter_results[date][ticker] = current_price >= current_ma
+            except Exception:
+                filter_results[date][ticker] = True  # Include by default
+    
+    return filter_results
+
 def detect_ma_cross_with_anti_whipsaw(valid_assets, reindexed_data, date, ma_window, ma_type='SMA', config=None, stocks_config=None, tolerance_percent=2.0, confirmation_days=3):
     """
     Detect if any ticker has crossed its Moving Average with anti-whipsaw filtering.
@@ -4803,24 +4961,31 @@ def detect_ma_cross_with_anti_whipsaw(valid_assets, reindexed_data, date, ma_win
         # Get data up to current date
         df_ref_up_to_date = df_ref[df_ref.index <= date]
         
-        # Need enough data for MA calculation + confirmation period
-        min_required_days = ma_window + max(confirmation_days, 1)  # At least 1 day for MA calculation
-        if len(df_ref_up_to_date) < min_required_days:
+        # Use precomputed MA column - this is the key optimization!
+        ma_col_name = f"MA_{ma_type}_{ma_window}"
+        if ma_col_name not in df_ref.columns:
+            # MA not precomputed, skip this ticker
             continue
         
-        # Calculate MA on the REFERENCE ticker
-        if ma_type == 'EMA':
-            ma = calculate_ema(df_ref_up_to_date, ma_window)
-        else:  # Default to SMA
-            ma = calculate_sma(df_ref_up_to_date, ma_window)
+        # Get MA from precomputed column
+        ma = df_ref[ma_col_name]
+        
+        # Need enough data for confirmation period
+        if len(df_ref_up_to_date) < max(confirmation_days, 1):
+            continue
             
         if ma is None or len(ma) < confirmation_days + 1:
             continue
         
         try:
-            # Get current price and MA
-            current_price = df_ref_up_to_date['Close'].iloc[-1]
-            current_ma = ma.iloc[-1]
+            # Get current price and MA from precomputed data
+            if date in df_ref.index:
+                current_price = df_ref.loc[date, 'Close']
+                current_ma = df_ref.loc[date, ma_col_name]
+            else:
+                # If exact date not found, use the last available values
+                current_price = df_ref_up_to_date['Close'].iloc[-1]
+                current_ma = df_ref_up_to_date[ma_col_name].iloc[-1]
             
             if pd.isna(current_price) or pd.isna(current_ma):
                 continue
@@ -4844,13 +5009,13 @@ def detect_ma_cross_with_anti_whipsaw(valid_assets, reindexed_data, date, ma_win
                 else:
                     # Look back confirmation_days to see if crossing has been consistent
                     for i in range(1, confirmation_days + 1):
-                        if len(df_ref_up_to_date) <= i or len(ma) <= i:
+                        if len(df_ref_up_to_date) <= i:
                             crossing_confirmed = False
                             break
                         
-                        # Get historical data
+                        # Get historical data from precomputed columns
                         hist_price = df_ref_up_to_date['Close'].iloc[-(i+1)]
-                        hist_ma = ma.iloc[-(i+1)]
+                        hist_ma = df_ref_up_to_date[ma_col_name].iloc[-(i+1)]
                         
                         if pd.isna(hist_price) or pd.isna(hist_ma):
                             crossing_confirmed = False
@@ -4935,24 +5100,39 @@ def detect_ma_cross(valid_assets, reindexed_data, date, ma_window, ma_type='SMA'
         # Get data up to current date
         df_ref_up_to_date = df_ref[df_ref.index <= date]
         
-        if len(df_ref_up_to_date) < ma_window + 1:  # Need at least ma_window + 1 for comparison
+        # Use precomputed MA column - this is the key optimization!
+        ma_col_name = f"MA_{ma_type}_{ma_window}"
+        if ma_col_name not in df_ref.columns:
+            # MA not precomputed, skip this ticker
             continue
         
-        # Calculate MA on the REFERENCE ticker
-        if ma_type == 'EMA':
-            ma = calculate_ema(df_ref_up_to_date, ma_window)
-        else:  # Default to SMA
-            ma = calculate_sma(df_ref_up_to_date, ma_window)
+        # Get MA from precomputed column
+        ma = df_ref[ma_col_name]
+        
+        if len(df_ref_up_to_date) < 2:  # Need at least 2 days for comparison
+            continue
             
         if ma is None or len(ma) < 2:
             continue
         
         try:
-            # Get current and previous prices and MA values
-            current_price = df_ref_up_to_date['Close'].iloc[-1]
-            previous_price = df_ref_up_to_date['Close'].iloc[-2]
-            current_ma = ma.iloc[-1]
-            previous_ma = ma.iloc[-2]
+            # Get current and previous prices and MA values from precomputed data
+            if date in df_ref.index:
+                current_price = df_ref.loc[date, 'Close']
+                current_ma = df_ref.loc[date, ma_col_name]
+                # Get previous day data
+                prev_date = df_ref.index[df_ref.index < date][-1] if len(df_ref.index[df_ref.index < date]) > 0 else None
+                if prev_date is not None:
+                    previous_price = df_ref.loc[prev_date, 'Close']
+                    previous_ma = df_ref.loc[prev_date, ma_col_name]
+                else:
+                    continue
+            else:
+                # If exact date not found, use the last available values
+                current_price = df_ref_up_to_date['Close'].iloc[-1]
+                previous_price = df_ref_up_to_date['Close'].iloc[-2]
+                current_ma = df_ref_up_to_date[ma_col_name].iloc[-1]
+                previous_ma = df_ref_up_to_date[ma_col_name].iloc[-2]
             
             if pd.isna(current_price) or pd.isna(previous_price) or pd.isna(current_ma) or pd.isna(previous_ma):
                 continue
@@ -5234,13 +5414,25 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     # Get regular rebalancing dates
     dates_rebal = sorted(get_dates_by_freq(rebalancing_frequency, sim_index[0], sim_index[-1], sim_index))
     
-    # OPTIMIZATION: Precompute MA columns once at the start if MA filter is enabled
+    # OPTIMIZATION: Precompute MA columns once at the start if MA filter OR MA cross rebalancing is enabled
     # This is the key performance improvement - compute MA once instead of every day!
-    if config.get('use_sma_filter', False):
+    ma_crossings_data = None
+    ma_filter_data = None
+    if config.get('use_sma_filter', False) or config.get('ma_cross_rebalance', False):
         ma_window = config.get('sma_window', 200)
         ma_type = config.get('ma_type', 'SMA')
         ma_multiplier = config.get('ma_multiplier', 1.48)  # Default multiplier for market days
         precompute_ma_columns(reindexed_data, ma_window, ma_type, ma_multiplier)
+        
+        # ULTRA OPTIMIZATION: Precompute ALL MA filters if MA filter is enabled
+        if config.get('use_sma_filter', False):
+            ma_filter_data = precompute_ma_filters(reindexed_data, ma_window, ma_type, ma_multiplier, config.get('stocks', []))
+        
+        # ULTRA OPTIMIZATION: Precompute ALL MA crossings if MA cross rebalancing is enabled
+        if config.get('ma_cross_rebalance', False):
+            tolerance_percent = config.get('ma_tolerance_percent', 2.0)
+            confirmation_days = config.get('ma_confirmation_days', 3)
+            ma_crossings_data = precompute_ma_crossings(reindexed_data, ma_window, ma_type, tolerance_percent, confirmation_days)
     
     # Handle first rebalance strategy - replace first rebalance date if needed
     first_rebalance_strategy = st.session_state.get('multi_backtest_first_rebalance_strategy', 'rebalancing_date')
@@ -5270,12 +5462,11 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     def calculate_momentum(date, current_assets, momentum_windows, stocks_config=None):
         cumulative_returns, valid_assets = {}, []
         
-        # Apply MA filter BEFORE calculating momentum (more efficient)
+        # Apply MA filter BEFORE calculating momentum (ULTRA OPTIMIZED!)
         assets_to_calculate = current_assets
-        if config.get('use_sma_filter', False):
-            ma_window = config.get('sma_window', 200)
-            ma_type = config.get('ma_type', 'SMA')
-            filtered_assets, excluded_assets = filter_assets_by_ma(list(current_assets), reindexed_data, date, ma_window, ma_type, config, stocks_config or config['stocks'])
+        if config.get('use_sma_filter', False) and ma_filter_data is not None:
+            # ULTRA FAST: Use precomputed filter results!
+            filtered_assets = [t for t in current_assets if ma_filter_data.get(date, {}).get(t, True)]
             
             # If no assets remain after MA filtering, go to cash immediately
             if not filtered_assets:
@@ -5711,13 +5902,13 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     if not use_momentum:
         current_allocations = {t: allocations.get(t,0) for t in tickers}
         
-        # Apply MA filter even when momentum is disabled
-        if config.get('use_sma_filter', False):
-            ma_window = config.get('sma_window', 200)
-            ma_type = config.get('ma_type', 'SMA')
+        # Apply MA filter even when momentum is disabled (ULTRA OPTIMIZED!)
+        if config.get('use_sma_filter', False) and ma_filter_data is not None:
             # Get list of current tickers (excluding CASH)
             current_tickers = [t for t in tickers if t != 'CASH']
-            filtered_tickers, excluded_assets = filter_assets_by_ma(current_tickers, reindexed_data, sim_index[0], ma_window, ma_type, config, config['stocks'])
+            # ULTRA FAST: Use precomputed filter results!
+            filtered_tickers = [t for t in current_tickers if ma_filter_data.get(sim_index[0], {}).get(t, True)]
+            excluded_assets = {t: f"Below MA" for t in current_tickers if t not in filtered_tickers}
             
             # Redistribute allocations of excluded tickers proportionally among remaining tickers
             if excluded_assets:
@@ -6100,24 +6291,14 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         date_normalized = pd.Timestamp(date).normalize()
         dates_rebal_normalized = {pd.Timestamp(d).normalize() for d in dates_rebal}
         
-        # Check for MA cross rebalancing (if enabled)
+        # Check for MA cross rebalancing (if enabled) - ULTRA OPTIMIZED!
         ma_cross_rebalance = config.get('ma_cross_rebalance', False)
-        if ma_cross_rebalance and config.get('use_sma_filter', False) and set(tickers):
-            # Check if any ticker has crossed its MA with anti-whipsaw filtering
-            ma_window = config.get('sma_window', 200)
-            ma_type = config.get('ma_type', 'SMA')
-            tolerance_percent = config.get('ma_tolerance_percent', 2.0)
-            confirmation_days = config.get('ma_confirmation_days', 3)
-            
-            crossed_assets, cross_details = detect_ma_cross_with_anti_whipsaw(
-                list(tickers), reindexed_data, date, ma_window, ma_type, config, config['stocks'],
-                tolerance_percent, confirmation_days
-            )
-            
-            if crossed_assets:
-                # MA cross detected with confirmation - trigger immediate rebalancing
+        if ma_cross_rebalance and ma_crossings_data is not None:
+            # ULTRA FAST: Just check if this date has precomputed crossings!
+            if date in ma_crossings_data:
+                crossed_assets = list(ma_crossings_data[date].keys())
                 should_rebalance = True
-                print(f"[MA CROSS] Detected confirmed MA cross for {crossed_assets} at {date} (tolerance: {tolerance_percent}%, confirmation: {confirmation_days} days), triggering immediate rebalancing")
+                print(f"[MA CROSS] Detected confirmed MA cross for {crossed_assets} at {date} (precomputed), triggering immediate rebalancing")
         
         if date_normalized in dates_rebal_normalized and set(tickers):
             # If targeted rebalancing is enabled, check thresholds first
@@ -6176,12 +6357,11 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         
         if should_rebalance:
             if use_momentum:
-                # Apply MA filter BEFORE calculating momentum (CRITICAL FIX)
+                # Apply MA filter BEFORE calculating momentum (ULTRA OPTIMIZED!)
                 assets_to_calculate = set(tickers)
-                if config.get('use_sma_filter', False):
-                    ma_window = config.get('sma_window', 200)
-                    ma_type = config.get('ma_type', 'SMA')
-                    filtered_assets, excluded_assets = filter_assets_by_ma(list(tickers), reindexed_data, date, ma_window, ma_type, config, config['stocks'])
+                if config.get('use_sma_filter', False) and ma_filter_data is not None:
+                    # ULTRA FAST: Use precomputed filter results!
+                    filtered_assets = [t for t in tickers if ma_filter_data.get(date, {}).get(t, True)]
                     
                     # If no assets remain after MA filtering, go to cash immediately
                     if not filtered_assets:
@@ -6195,6 +6375,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     
                     # Only calculate momentum for filtered assets
                     assets_to_calculate = filtered_assets
+                    excluded_assets = [t for t in tickers if t not in filtered_assets]
                     print(f"[MA FILTER] Assets after MA filter at {date}: {filtered_assets}, excluded: {excluded_assets}")
                 
                 returns, valid_assets = calculate_momentum(date, assets_to_calculate, momentum_windows, config['stocks'])
@@ -6207,11 +6388,11 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                     )
                     historical_metrics[date] = metrics_on_rebal
                     
-                    # Apply MA filter to weights: set excluded assets to 0 and redistribute
-                    if config.get('use_sma_filter', False):
-                        ma_window = config.get('sma_window', 200)
-                        ma_type = config.get('ma_type', 'SMA')
-                        filtered_assets, excluded_assets = filter_assets_by_ma(list(tickers), reindexed_data, date, ma_window, ma_type, config, config['stocks'])
+                    # Apply MA filter to weights: set excluded assets to 0 and redistribute (ULTRA OPTIMIZED!)
+                    if config.get('use_sma_filter', False) and ma_filter_data is not None:
+                        # ULTRA FAST: Use precomputed filter results!
+                        filtered_assets = [t for t in tickers if ma_filter_data.get(date, {}).get(t, True)]
+                        excluded_assets = {t: f"Below MA" for t in tickers if t not in filtered_assets}
                         
                         if excluded_assets:
                             excluded_ticker_list = list(excluded_assets.keys())
@@ -6372,13 +6553,13 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 # Start with original allocations
                 rebalance_allocations = {t: allocations.get(t, 0) for t in tickers}
                 
-                # Apply MA filter if enabled (for non-momentum strategies)
-                if config.get('use_sma_filter', False):
-                    ma_window = config.get('sma_window', 200)
-                    ma_type = config.get('ma_type', 'SMA')
+                # Apply MA filter if enabled (for non-momentum strategies) (ULTRA OPTIMIZED!)
+                if config.get('use_sma_filter', False) and ma_filter_data is not None:
                     # Get list of current tickers (excluding CASH)
                     current_tickers = [t for t in tickers if t != 'CASH']
-                    filtered_tickers, excluded_assets = filter_assets_by_ma(current_tickers, reindexed_data, date, ma_window, ma_type, config, config['stocks'])
+                    # ULTRA FAST: Use precomputed filter results!
+                    filtered_tickers = [t for t in current_tickers if ma_filter_data.get(date, {}).get(t, True)]
+                    excluded_assets = {t: f"Below MA" for t in current_tickers if t not in filtered_tickers}
                     
                     
                     # Redistribute allocations of excluded tickers proportionally among remaining tickers
@@ -6712,12 +6893,11 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
         """Momentum calculation function (same as in single_backtest)"""
         cumulative_returns, valid_assets = {}, []
         
-        # Apply MA filter BEFORE calculating momentum (more efficient)
+        # Apply MA filter BEFORE calculating momentum (ULTRA OPTIMIZED!)
         assets_to_calculate = current_assets
-        if config.get('use_sma_filter', False):
-            ma_window = config.get('sma_window', 200)
-            ma_type = config.get('ma_type', 'SMA')
-            filtered_assets, excluded_assets = filter_assets_by_ma(list(current_assets), reindexed_data, date, ma_window, ma_type, config, stocks_config or config['stocks'])
+        if config.get('use_sma_filter', False) and ma_filter_data is not None:
+            # ULTRA FAST: Use precomputed filter results!
+            filtered_assets = [t for t in current_assets if ma_filter_data.get(date, {}).get(t, True)]
             
             # If no assets remain after MA filtering, go to cash immediately
             if not filtered_assets:
@@ -7018,6 +7198,26 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
     added_amount = config.get('added_amount', 0)
     added_frequency = config.get('added_frequency', 'None')
     
+    # OPTIMIZATION: Precompute MA columns once at the start if MA filter OR MA cross rebalancing is enabled
+    # This is the key performance improvement - compute MA once instead of every day!
+    ma_crossings_data = None
+    ma_filter_data = None
+    if config.get('use_sma_filter', False) or config.get('ma_cross_rebalance', False):
+        ma_window = config.get('sma_window', 200)
+        ma_type = config.get('ma_type', 'SMA')
+        ma_multiplier = config.get('ma_multiplier', 1.48)  # Default multiplier for market days
+        precompute_ma_columns(reindexed_data, ma_window, ma_type, ma_multiplier)
+        
+        # ULTRA OPTIMIZATION: Precompute ALL MA filters if MA filter is enabled
+        if config.get('use_sma_filter', False):
+            ma_filter_data = precompute_ma_filters(reindexed_data, ma_window, ma_type, ma_multiplier, config.get('stocks', []))
+        
+        # ULTRA OPTIMIZATION: Precompute ALL MA crossings if MA cross rebalancing is enabled
+        if config.get('ma_cross_rebalance', False):
+            tolerance_percent = config.get('ma_tolerance_percent', 2.0)
+            confirmation_days = config.get('ma_confirmation_days', 3)
+            ma_crossings_data = precompute_ma_crossings(reindexed_data, ma_window, ma_type, tolerance_percent, confirmation_days)
+    
     # Initialize portfolio values
     values = {t: [initial_value if t == 'SP500TOP20' else 0] for t in all_tickers + ['SP500TOP20']}
     unallocated_cash = [0]
@@ -7085,6 +7285,15 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
             should_rebalance = date == sim_index[0]
         elif rebalancing_frequency in ["Never", "none"]:
             should_rebalance = False
+        
+        # Check for MA cross rebalancing (if enabled) - ULTRA OPTIMIZED!
+        ma_cross_rebalance = config.get('ma_cross_rebalance', False)
+        if ma_cross_rebalance and ma_crossings_data is not None:
+            # ULTRA FAST: Just check if this date has precomputed crossings!
+            if date in ma_crossings_data:
+                crossed_assets = list(ma_crossings_data[date].keys())
+                should_rebalance = True
+                print(f"[MA CROSS] Detected confirmed MA cross for {crossed_assets} at {date} (precomputed), triggering immediate rebalancing")
         
         if should_rebalance and available_tickers:
             # CALCULATE CURRENT TOTAL VALUE
@@ -13406,9 +13615,15 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                             # Get list of current tickers (excluding CASH)
                                             current_tickers = [t for t in today_weights_map.keys() if t != 'CASH']
                                             
-                                            # Apply MA filter using data_reindexed
+                                            # Apply MA filter using data_reindexed (ULTRA OPTIMIZED!)
                                             try:
-                                                filtered_tickers, excluded_assets = filter_assets_by_ma(current_tickers, data_reindexed, final_d, ma_window, ma_type, cfg, cfg.get('stocks', []))
+                                                # ULTRA FAST: Use precomputed filter results if available!
+                                                if hasattr(cfg, '_ma_filter_data') and cfg._ma_filter_data is not None:
+                                                    filtered_tickers = [t for t in current_tickers if cfg._ma_filter_data.get(final_d, {}).get(t, True)]
+                                                    excluded_assets = {t: f"Below MA" for t in current_tickers if t not in filtered_tickers}
+                                                else:
+                                                    # Fallback to original method if not precomputed
+                                                    filtered_tickers, excluded_assets = filter_assets_by_ma(current_tickers, data_reindexed, final_d, ma_window, ma_type, cfg, cfg.get('stocks', []))
                                                 
                                                 # Redistribute allocations of excluded tickers
                                                 if excluded_assets:
@@ -13501,7 +13716,13 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                     
                                     if alloc_dates:
                                         final_d = alloc_dates[-1]
-                                        filtered_tickers, excluded_assets = filter_assets_by_ma(current_tickers, data_reindexed, final_d, ma_window, ma_type, cfg, cfg.get('stocks', []))
+                                        # ULTRA FAST: Use precomputed filter results if available!
+                                        if hasattr(cfg, '_ma_filter_data') and cfg._ma_filter_data is not None:
+                                            filtered_tickers = [t for t in current_tickers if cfg._ma_filter_data.get(final_d, {}).get(t, True)]
+                                            excluded_assets = {t: f"Below MA" for t in current_tickers if t not in filtered_tickers}
+                                        else:
+                                            # Fallback to original method if not precomputed
+                                            filtered_tickers, excluded_assets = filter_assets_by_ma(current_tickers, data_reindexed, final_d, ma_window, ma_type, cfg, cfg.get('stocks', []))
                                         
                                         if excluded_assets:
                                             excluded_ticker_list = list(excluded_assets.keys())
@@ -14462,7 +14683,23 @@ def paste_all_json_callback():
                 """NUCLEAR: Force sync ALL MA parameters after JSON import"""
                 for i, portfolio in enumerate(obj):
                     if isinstance(portfolio, dict):
-                        pass  # No special treatment for ma_multiplier
+                        # Force sync MA parameters with session state - USE PORTFOLIO INDEX
+                        ma_filter_key = f"multi_backtest_active_use_sma_filter_{i}"
+                        ma_window_key = f"multi_backtest_active_ma_window_{i}"
+                        ma_type_key = f"multi_backtest_active_ma_type_{i}"
+                        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{i}"
+                        
+                        st.session_state[ma_filter_key] = portfolio.get('use_sma_filter', False)
+                        st.session_state[ma_window_key] = portfolio.get('sma_window', 200)
+                        st.session_state[ma_type_key] = portfolio.get('ma_type', 'SMA')
+                        st.session_state[ma_multiplier_key] = portfolio.get('ma_multiplier', 1.48)
+                        
+                        # ALSO sync the active portfolio if it's the current one
+                        if i == st.session_state.get('multi_backtest_active_portfolio_index', 0):
+                            # Force update the active portfolio config
+                            if 'multi_backtest_portfolio_configs' in st.session_state:
+                                if i < len(st.session_state.multi_backtest_portfolio_configs):
+                                    st.session_state.multi_backtest_portfolio_configs[i]['ma_multiplier'] = portfolio.get('ma_multiplier', 1.48)
             
             # Execute the FUCKING NUKE
             force_ma_sync_after_import()
@@ -14695,6 +14932,7 @@ def paste_all_json_callback():
                 st.session_state['multi_backtest_active_use_sma_filter_0'] = bool(processed_configs[0].get('use_sma_filter', False))
                 st.session_state['multi_backtest_active_ma_window_0'] = processed_configs[0].get('sma_window', 200)
                 st.session_state['multi_backtest_active_ma_type_0'] = processed_configs[0].get('ma_type', 'SMA')
+                st.session_state['multi_backtest_active_ma_multiplier_0'] = processed_configs[0].get('ma_multiplier', 1.48)
                 st.session_state['multi_backtest_active_ma_cross_rebalance_0'] = bool(processed_configs[0].get('ma_cross_rebalance', False))
                 st.session_state['multi_backtest_active_ma_tolerance_0'] = processed_configs[0].get('ma_tolerance_percent', 2.0)
                 st.session_state['multi_backtest_active_ma_delay_0'] = processed_configs[0].get('ma_confirmation_days', 3)
@@ -14704,6 +14942,7 @@ def paste_all_json_callback():
                     st.session_state[f'multi_backtest_active_use_sma_filter_{idx}'] = bool(cfg.get('use_sma_filter', False))
                     st.session_state[f'multi_backtest_active_ma_window_{idx}'] = cfg.get('sma_window', 200)
                     st.session_state[f'multi_backtest_active_ma_type_{idx}'] = cfg.get('ma_type', 'SMA')
+                    st.session_state[f'multi_backtest_active_ma_multiplier_{idx}'] = cfg.get('ma_multiplier', 1.48)
                     st.session_state[f'multi_backtest_active_ma_cross_rebalance_{idx}'] = bool(cfg.get('ma_cross_rebalance', False))
                     st.session_state[f'multi_backtest_active_ma_tolerance_{idx}'] = cfg.get('ma_tolerance_percent', 2.0)
                     st.session_state[f'multi_backtest_active_ma_delay_{idx}'] = cfg.get('ma_confirmation_days', 3)
