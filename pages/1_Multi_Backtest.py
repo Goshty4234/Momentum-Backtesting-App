@@ -12503,7 +12503,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
     st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
     st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
     st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
-    # MA Multiplier - RECONSTRUCTED (no complex sync)
+    st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
 
     # MA Filter options - LEFT ALIGNED STYLE
     st.checkbox("Enable MA Filter", 
@@ -12749,6 +12749,7 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     ma_filter_key = f"multi_backtest_active_use_sma_filter_{portfolio_index}"
     ma_window_key = f"multi_backtest_active_ma_window_{portfolio_index}"
     ma_type_key = f"multi_backtest_active_ma_type_{portfolio_index}"
+    ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{portfolio_index}"
     
     cleaned_config['use_sma_filter'] = st.session_state.get(ma_filter_key, False)
     cleaned_config['sma_window'] = st.session_state.get(ma_window_key, 200)
