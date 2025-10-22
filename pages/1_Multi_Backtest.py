@@ -10663,11 +10663,160 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                     st.session_state[f"ema_values_{portfolio_index}"] = values[:i] + values[i+1:]
                     st.rerun()
     
+    # MA Cross Rebalancing Section - ONLY show if at least one MA type is enabled
+    if include_sma or include_ema:
+        st.markdown("**MA Cross Rebalancing:**")
+        
+        # Initialize session state for MA cross rebalancing
+        if f"ma_cross_rebalance_{portfolio_index}" not in st.session_state:
+            st.session_state[f"ma_cross_rebalance_{portfolio_index}"] = False
+        
+        # Initialize session state for tolerance and confirmation days
+        if f"ma_tolerance_values_{portfolio_index}" not in st.session_state:
+            st.session_state[f"ma_tolerance_values_{portfolio_index}"] = [2.0]
+        if f"ma_delay_values_{portfolio_index}" not in st.session_state:
+            st.session_state[f"ma_delay_values_{portfolio_index}"] = [3]
+        
+        # Checkboxes for MA cross rebalancing options
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            disable_ma_cross = st.checkbox(
+                "Disable MA Cross Rebalancing",
+                value=True,
+                key=f"ma_cross_disabled_{portfolio_index}"
+            )
+        
+        with col2:
+            enable_ma_cross = st.checkbox(
+                "Enable MA Cross Rebalancing",
+                key=f"ma_cross_enabled_{portfolio_index}"
+            )
+        
+        with col3:
+            # Show tolerance and delay options only if MA cross is enabled
+            if enable_ma_cross:
+                st.markdown("**Anti-Whipsaw Settings:**")
+        
+        # Build MA cross rebalancing options
+        ma_cross_options = []
+        
+        if disable_ma_cross:
+            ma_cross_options.append(False)
+        
+        if enable_ma_cross:
+            ma_cross_options.append(True)
+            
+            # Tolerance Band Options
+            st.markdown("**Tolerance Band Values:**")
+            
+            # Add button for tolerance
+            if st.button("➕ Add Tolerance", key=f"add_tolerance_{portfolio_index}"):
+                st.session_state[f"ma_tolerance_values_{portfolio_index}"].append(2.0)
+                st.rerun()
+            
+            # Display tolerance values
+            tolerance_values = st.session_state[f"ma_tolerance_values_{portfolio_index}"]
+            for i in range(len(tolerance_values)):
+                col1, col2 = st.columns([4, 1])
+                
+                unique_id = f"tolerance_{portfolio_index}_{i}_{id(tolerance_values)}"
+                
+                with col1:
+                    val = st.number_input(
+                        f"Tolerance {i+1} (%)",
+                        min_value=0.0,
+                        max_value=10.0,
+                        value=tolerance_values[i],
+                        step=0.1,
+                        key=f"tolerance_input_{unique_id}"
+                    )
+                    tolerance_values[i] = val
+                
+                with col2:
+                    if len(tolerance_values) > 1 and st.button("🗑️", key=f"del_tolerance_{unique_id}"):
+                        st.session_state[f"ma_tolerance_values_{portfolio_index}"] = tolerance_values[:i] + tolerance_values[i+1:]
+                        st.rerun()
+            
+            # Confirmation Delay Options
+            st.markdown("**Confirmation Delay Values:**")
+            
+            # Add button for delay
+            if st.button("➕ Add Delay", key=f"add_delay_{portfolio_index}"):
+                st.session_state[f"ma_delay_values_{portfolio_index}"].append(3)
+                st.rerun()
+            
+            # Display delay values
+            delay_values = st.session_state[f"ma_delay_values_{portfolio_index}"]
+            for i in range(len(delay_values)):
+                col1, col2 = st.columns([4, 1])
+                
+                unique_id = f"delay_{portfolio_index}_{i}_{id(delay_values)}"
+                
+                with col1:
+                    val = st.number_input(
+                        f"Delay {i+1} (days)",
+                        min_value=0,
+                        max_value=10,
+                        value=delay_values[i],
+                        step=1,
+                        key=f"delay_input_{unique_id}"
+                    )
+                    delay_values[i] = val
+                
+                with col2:
+                    if len(delay_values) > 1 and st.button("🗑️", key=f"del_delay_{unique_id}"):
+                        st.session_state[f"ma_delay_values_{portfolio_index}"] = delay_values[:i] + delay_values[i+1:]
+                        st.rerun()
+    else:
+        # If no MA types are enabled, set default values and clean session state
+        ma_cross_options = [False]
+        st.session_state[f"ma_cross_rebalance_{portfolio_index}"] = False
+        
+        # Clean up MA cross session state when not needed
+        if f"ma_tolerance_values_{portfolio_index}" in st.session_state:
+            del st.session_state[f"ma_tolerance_values_{portfolio_index}"]
+        if f"ma_delay_values_{portfolio_index}" in st.session_state:
+            del st.session_state[f"ma_delay_values_{portfolio_index}"]
+        if f"ma_cross_disabled_{portfolio_index}" in st.session_state:
+            del st.session_state[f"ma_cross_disabled_{portfolio_index}"]
+        if f"ma_cross_enabled_{portfolio_index}" in st.session_state:
+            del st.session_state[f"ma_cross_enabled_{portfolio_index}"]
+    
     # Add to variant params
     if ma_options:
         variant_params["ma_windows"] = ma_options
     else:
         variant_params["ma_windows"] = [None]
+    
+    # Add MA cross rebalancing to variant params
+    if ma_cross_options:
+        variant_params["ma_cross_rebalance"] = ma_cross_options
+        if include_sma or include_ema:  # Only add tolerance/delay if MA types are enabled
+            if enable_ma_cross:
+                variant_params["ma_tolerance_percent"] = st.session_state[f"ma_tolerance_values_{portfolio_index}"]
+                variant_params["ma_confirmation_days"] = st.session_state[f"ma_delay_values_{portfolio_index}"]
+            else:
+                variant_params["ma_tolerance_percent"] = [2.0]
+                variant_params["ma_confirmation_days"] = [3]
+        else:
+            # If no MA types enabled, use default values
+            variant_params["ma_tolerance_percent"] = [2.0]
+            variant_params["ma_confirmation_days"] = [3]
+    else:
+        variant_params["ma_cross_rebalance"] = [False]
+        variant_params["ma_tolerance_percent"] = [2.0]
+        variant_params["ma_confirmation_days"] = [3]
+        
+        # CLEAN SESSION STATE: When MA cross is disabled, clean up MA cross session state
+        if f"ma_tolerance_values_{portfolio_index}" in st.session_state:
+            del st.session_state[f"ma_tolerance_values_{portfolio_index}"]
+        if f"ma_delay_values_{portfolio_index}" in st.session_state:
+            del st.session_state[f"ma_delay_values_{portfolio_index}"]
+        if f"ma_cross_disabled_{portfolio_index}" in st.session_state:
+            del st.session_state[f"ma_cross_disabled_{portfolio_index}"]
+        if f"ma_cross_enabled_{portfolio_index}" in st.session_state:
+            del st.session_state[f"ma_cross_enabled_{portfolio_index}"]
         
         # CLEAN SESSION STATE: When MA is disabled, clean up MA session state
         if f"sma_values_{portfolio_index}" in st.session_state:
@@ -10870,6 +11019,12 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                                     variant["use_sma_filter"] = False
                                     variant["sma_window"] = 200
                                     variant["ma_type"] = "SMA"
+                            elif param == "ma_cross_rebalance":
+                                variant["ma_cross_rebalance"] = value
+                            elif param == "ma_tolerance_percent":
+                                variant["ma_tolerance_percent"] = value
+                            elif param == "ma_confirmation_days":
+                                variant["ma_confirmation_days"] = value
                             else:
                                 # For any other parameters, use the original name
                                 variant[param] = value
@@ -10992,6 +11147,10 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                         ma_type = variant.get('ma_type', 'SMA')
                         ma_window = variant.get('sma_window', 200)
                         clear_name_parts.append(f"- {ma_type}{ma_window}")
+                    
+                    # Add MA Cross Rebalancing information (only show when enabled)
+                    if variant.get('ma_cross_rebalance', False):
+                        clear_name_parts.append("- Cross")
                     
                     # Create the new clear name WITH custom tags before parentheses
                     # Format: BASE_NAME [tags] (details...)
@@ -12311,6 +12470,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
     ma_filter_key = f"multi_backtest_active_use_sma_filter_{st.session_state.multi_backtest_active_portfolio_index}"
     ma_window_key = f"multi_backtest_active_ma_window_{st.session_state.multi_backtest_active_portfolio_index}"
     ma_type_key = f"multi_backtest_active_ma_type_{st.session_state.multi_backtest_active_portfolio_index}"
+    ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{st.session_state.multi_backtest_active_portfolio_index}"
     
     # FORCE sync with current portfolio values (like momentum checkbox does)
     st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
@@ -12345,7 +12505,6 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
             st.session_state[ma_window_key] = ma_window
         
         # Add MA Multiplier input
-        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{st.session_state.multi_backtest_active_portfolio_index}"
         if ma_multiplier_key not in st.session_state:
             st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
         
