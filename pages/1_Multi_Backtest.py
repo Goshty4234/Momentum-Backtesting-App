@@ -12767,17 +12767,19 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
         # New option for immediate rebalancing on MA cross
         ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{st.session_state.multi_backtest_active_portfolio_index}"
         
-        # Initialize the new option if not exists
+        # Initialize the new option if not exists - PRESERVE EXISTING VALUE
         if ma_cross_rebalance_key not in st.session_state:
             st.session_state[ma_cross_rebalance_key] = active_portfolio.get('ma_cross_rebalance', False)
-        
-        # MA Multiplier - RECONSTRUCTED (no complex sync)
+        else:
+            # Preserve existing session state value and sync with portfolio
+            current_value = st.session_state[ma_cross_rebalance_key]
+            active_portfolio['ma_cross_rebalance'] = current_value
         
         st.checkbox("Immediate Rebalance on MA Cross", 
                    key=ma_cross_rebalance_key,
                    help="Rebalance portfolio immediately when any ticker crosses its moving average, in addition to regular rebalancing schedule")
         
-        # Store the new option in active portfolio
+        # Store the new option in active portfolio - ALWAYS sync
         active_portfolio['ma_cross_rebalance'] = st.session_state.get(ma_cross_rebalance_key, False)
         
         # Anti-whipsaw options (only show when MA cross rebalancing is enabled)
