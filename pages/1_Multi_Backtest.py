@@ -8938,16 +8938,9 @@ def update_active_portfolio_index():
         st.session_state['multi_backtest_active_sma_window'] = active_portfolio.get('sma_window', 200)
         # MA Multiplier - RECONSTRUCTED (no complex sync)
         
-        # NUCLEAR: FORCE MA Filter widgets to sync with portfolio-specific keys
-        portfolio_index = st.session_state.multi_backtest_active_portfolio_index
-        ma_filter_key = f"multi_backtest_active_use_sma_filter_{portfolio_index}"
-        ma_window_key = f"multi_backtest_active_ma_window_{portfolio_index}"
-        ma_type_key = f"multi_backtest_active_ma_type_{portfolio_index}"
-        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{portfolio_index}"
-        st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
-        st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
-        st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
-        # MA Multiplier - RECONSTRUCTED (no complex sync)
+        # Force sync MA Multiplier widget with imported JSON value
+        ma_multiplier_key = f"ma_multiplier_working_{portfolio_index}"
+        st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
         
         # Initialize MA cross rebalance setting
         ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{portfolio_index}"
@@ -11688,16 +11681,12 @@ active_portfolio = st.session_state.multi_backtest_portfolio_configs[st.session_
 ma_filter_key = f"multi_backtest_active_use_sma_filter_{st.session_state.multi_backtest_active_portfolio_index}"
 ma_window_key = f"multi_backtest_active_ma_window_{st.session_state.multi_backtest_active_portfolio_index}"
 ma_type_key = f"multi_backtest_active_ma_type_{st.session_state.multi_backtest_active_portfolio_index}"
-ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{st.session_state.multi_backtest_active_portfolio_index}"
-
 if ma_filter_key not in st.session_state:
     st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
 if ma_window_key not in st.session_state:
     st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
 if ma_type_key not in st.session_state:
     st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
-if ma_multiplier_key not in st.session_state:
-    st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
 
 for i in range(len(active_portfolio['stocks'])):
     stock = active_portfolio['stocks'][i]
@@ -12706,13 +12695,10 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
     ma_filter_key = f"multi_backtest_active_use_sma_filter_{st.session_state.multi_backtest_active_portfolio_index}"
     ma_window_key = f"multi_backtest_active_ma_window_{st.session_state.multi_backtest_active_portfolio_index}"
     ma_type_key = f"multi_backtest_active_ma_type_{st.session_state.multi_backtest_active_portfolio_index}"
-    ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{st.session_state.multi_backtest_active_portfolio_index}"
-    
     # FORCE sync with current portfolio values (like momentum checkbox does)
     st.session_state[ma_filter_key] = active_portfolio.get('use_sma_filter', False)
     st.session_state[ma_window_key] = active_portfolio.get('sma_window', 200)
     st.session_state[ma_type_key] = active_portfolio.get('ma_type', 'SMA')
-    st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
 
     # MA Filter options - LEFT ALIGNED STYLE
     st.checkbox("Enable MA Filter", 
@@ -12741,22 +12727,25 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                        help="Moving average window in days")
             st.session_state[ma_window_key] = ma_window
         
-        # MA Multiplier - COPY EXACT LOGIC FROM OTHER PARAMETERS
-        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{portfolio_index}"
+        # MA Multiplier - USING WORKING LOGIC FROM TEST WIDGET
+        portfolio_index = st.session_state.multi_backtest_active_portfolio_index
+        actual_portfolio = st.session_state.multi_backtest_portfolio_configs[portfolio_index]
+        
+        # Initialize MA Multiplier widget only if it doesn't exist yet
+        ma_multiplier_key = f"ma_multiplier_working_{portfolio_index}"
         if ma_multiplier_key not in st.session_state:
-            st.session_state[ma_multiplier_key] = active_portfolio.get('ma_multiplier', 1.48)
+            st.session_state[ma_multiplier_key] = actual_portfolio.get('ma_multiplier', 1.48)
         
         ma_multiplier = st.number_input("MA Multiplier", 
-                                       value=st.session_state.get(ma_multiplier_key, 1.48),
+                                       value=st.session_state[ma_multiplier_key],
                                        min_value=1.0,
                                        max_value=3.0,
                                        step=0.01,
-                                       key=f"ma_multiplier_main_{portfolio_index}",
+                                       key=ma_multiplier_key,
                                        help="Multiplier to convert market days to calendar days (default 1.48 for ffill data)")
         
-        # Update session state and portfolio config - EXACT SAME LOGIC AS OTHER PARAMETERS
-        st.session_state[ma_multiplier_key] = ma_multiplier
-        active_portfolio['ma_multiplier'] = ma_multiplier
+        # Update portfolio with widget value (widget controls portfolio)
+        actual_portfolio['ma_multiplier'] = ma_multiplier
         
         # New option for immediate rebalancing on MA cross
         ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{st.session_state.multi_backtest_active_portfolio_index}"
@@ -12958,12 +12947,10 @@ with st.expander("JSON Configuration (Copy & Paste)", expanded=False):
     ma_filter_key = f"multi_backtest_active_use_sma_filter_{portfolio_index}"
     ma_window_key = f"multi_backtest_active_ma_window_{portfolio_index}"
     ma_type_key = f"multi_backtest_active_ma_type_{portfolio_index}"
-    ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{portfolio_index}"
-    
     cleaned_config['use_sma_filter'] = st.session_state.get(ma_filter_key, False)
     cleaned_config['sma_window'] = st.session_state.get(ma_window_key, 200)
     cleaned_config['ma_type'] = st.session_state.get(ma_type_key, 'SMA')
-    cleaned_config['ma_multiplier'] = st.session_state.get(ma_multiplier_key, 1.48)
+    # MA Multiplier is handled by the widget itself
     
     # Add MA cross rebalance setting
     ma_cross_rebalance_key = f"multi_backtest_active_ma_cross_rebalance_{portfolio_index}"
@@ -14678,31 +14665,11 @@ def paste_all_json_callback():
             for key in widget_keys_to_clear:
                 if key in st.session_state:
                     del st.session_state[key]
-            # FUCKING NUKE: Force sync ALL MA parameters after import
-            def force_ma_sync_after_import():
-                """NUCLEAR: Force sync ALL MA parameters after JSON import"""
-                for i, portfolio in enumerate(obj):
-                    if isinstance(portfolio, dict):
-                        # Force sync MA parameters with session state - USE PORTFOLIO INDEX
-                        ma_filter_key = f"multi_backtest_active_use_sma_filter_{i}"
-                        ma_window_key = f"multi_backtest_active_ma_window_{i}"
-                        ma_type_key = f"multi_backtest_active_ma_type_{i}"
-                        ma_multiplier_key = f"multi_backtest_active_ma_multiplier_{i}"
-                        
-                        st.session_state[ma_filter_key] = portfolio.get('use_sma_filter', False)
-                        st.session_state[ma_window_key] = portfolio.get('sma_window', 200)
-                        st.session_state[ma_type_key] = portfolio.get('ma_type', 'SMA')
-                        st.session_state[ma_multiplier_key] = portfolio.get('ma_multiplier', 1.48)
-                        
-                        # ALSO sync the active portfolio if it's the current one
-                        if i == st.session_state.get('multi_backtest_active_portfolio_index', 0):
-                            # Force update the active portfolio config
-                            if 'multi_backtest_portfolio_configs' in st.session_state:
-                                if i < len(st.session_state.multi_backtest_portfolio_configs):
-                                    st.session_state.multi_backtest_portfolio_configs[i]['ma_multiplier'] = portfolio.get('ma_multiplier', 1.48)
-            
-            # Execute the FUCKING NUKE
-            force_ma_sync_after_import()
+            # Force sync MA Multiplier widgets for all portfolios after JSON import
+            for i, portfolio in enumerate(obj):
+                if isinstance(portfolio, dict):
+                    ma_multiplier_working_key = f"ma_multiplier_working_{i}"
+                    st.session_state[ma_multiplier_working_key] = portfolio.get('ma_multiplier', 1.48)
             
             
             # NUCLEAR OPTION: FORCE REPLACE ALL EXISTING PORTFOLIOS
