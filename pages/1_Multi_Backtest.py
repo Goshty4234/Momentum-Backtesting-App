@@ -11097,6 +11097,23 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
         if use_momentum_vary and "max_allocation" not in variant_params:
             validation_errors.append("⚠️ Select at least one **Maximum Allocation Filter** option when momentum is enabled")
         
+        # VALIDATION MA FILTER - Au moins une option cochée
+        # 1. Vérifier MA Filter - au moins une option cochée
+        if not disabled and not include_sma and not include_ema:
+            validation_errors.append("❌ **MA Filter** : Au moins une option doit être cochée (Disable MA, Include SMA, ou Include EMA)")
+        
+        # 2. Vérifier SMA/EMA - si Include SMA ou Include EMA est coché, au moins une valeur doit être définie
+        if include_sma and not st.session_state.get(f"sma_values_{portfolio_index}", []):
+            validation_errors.append("❌ **SMA Values** : Si Include SMA est coché, au moins une valeur SMA doit être définie")
+        
+        if include_ema and not st.session_state.get(f"ema_values_{portfolio_index}", []):
+            validation_errors.append("❌ **EMA Values** : Si Include EMA est coché, au moins une valeur EMA doit être définie")
+        
+        # 3. Vérifier MA Cross Rebalancing - au moins une option cochée
+        if include_sma or include_ema:
+            if not disable_ma_cross and not enable_ma_cross:
+                validation_errors.append("❌ **MA Cross Rebalancing** : Au moins une option doit être cochée (Disable MA Cross ou Enable MA Cross)")
+        
         # Show validation errors
         if validation_errors:
             for error in validation_errors:
