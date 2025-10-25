@@ -869,6 +869,9 @@ def generate_zero_return_data(period="max"):
     try:
         ref_ticker = yf.Ticker("SPY")
         ref_hist = ref_ticker.history(period=period)
+        # Track individual API call
+        if 'api_call_count' in st.session_state:
+            st.session_state.api_call_count += 1
         if ref_hist.empty:
             end_date = pd.Timestamp.now()
             start_date = end_date - pd.Timedelta(days=365)
@@ -908,6 +911,9 @@ def get_gold_complete_data(period="max"):
         # Get GLD data for recent updates
         gld_ticker = yf.Ticker("GLD")
         gld_data = gld_ticker.history(period="max", auto_adjust=True)
+        # Track individual API call
+        if 'api_call_count' in st.session_state:
+            st.session_state.api_call_count += 1
         
         if not gld_data.empty:
             # Make timezone-naive for comparison
@@ -1286,6 +1292,9 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
             try:
                 ticker = yf.Ticker(resolved)
                 hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
+                # Track individual API call
+                if 'api_call_count' in st.session_state:
+                    st.session_state.api_call_count += 1
                 
                 if not hist.empty:
                     # Apply leverage/expense if needed
@@ -1401,6 +1410,9 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=
         
         ticker = yf.Ticker(resolved_ticker)
         hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
+        # Track individual API call
+        if 'api_call_count' in st.session_state:
+            st.session_state.api_call_count += 1
         
         if hist.empty:
             return hist
@@ -1414,21 +1426,300 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=
         return pd.DataFrame()
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_ticker_info(ticker_symbol):
-    """Cache ticker info to improve performance across multiple tabs - 24 hours TTL"""
+def get_ticker_info_batch(ticker_list):
+    """
+    TRUE BATCH: Fetch ticker info for multiple tickers using yahooquery library.
+    This makes only 1 API call for all tickers instead of 1 call per ticker!
+    Returns dict[ticker_symbol, info_dict]
+    """
     try:
-        # Parse leverage from ticker symbol
-        base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
+        if not ticker_list:
+            return {}
         
-        # Resolve ticker alias if it exists
-        resolved_ticker = resolve_ticker_alias(base_ticker)
+        # Parse and resolve all tickers
+        resolved_tickers = {}
+        for ticker_symbol in ticker_list:
+            base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
+            resolved_ticker = resolve_ticker_alias(base_ticker)
+            resolved_tickers[ticker_symbol] = resolved_ticker
         
-        ticker = yf.Ticker(resolved_ticker)
-        info = ticker.info
+        # Get unique resolved tickers to avoid duplicate API calls
+        unique_resolved = list(set(resolved_tickers.values()))
         
-        return info
+        # Try to use yahooquery for true batching (1 API call for all tickers)
+        try:
+            from yahooquery import Ticker as YahooQueryTicker
+            
+            # Create batch ticker object with all unique tickers
+            batch_ticker = YahooQueryTicker(unique_resolved)
+            
+            # Try different yahooquery methods to get PE data
+            key_stats = {}
+            try:
+                # Method 1: Try summary_detail first (often has PE data)
+                key_stats = batch_ticker.summary_detail
+            except:
+                try:
+                    # Method 2: key_stats
+                    key_stats = batch_ticker.key_stats
+                except:
+                    try:
+                        # Method 3: financial_data
+                        key_stats = batch_ticker.financial_data
+                    except:
+                        try:
+                            # Method 4: all_modules
+                            key_stats = batch_ticker.all_modules
+                        except:
+                            st.error("❌ All yahooquery methods failed")
+                            return {}
+            
+            
+            # Check if these are ETFs (which don't have PE ratios)
+            etf_indicators = ['SPY', 'GLD', 'TLT', 'QQQ', 'VTI', 'VEA', 'VWO', 'AGG', 'BND', 'IEF', 'TLT', 'GLD', 'SLV', 'DIA', 'QQQ', 'IWM']
+            etf_tickers = [t for t in key_stats.keys() if t in etf_indicators]
+            stock_tickers = [t for t in key_stats.keys() if t not in etf_indicators]
+            
+            
+            
+            # Process the batch results
+            batch_info = {}
+            for resolved_ticker in unique_resolved:
+                try:
+                    if resolved_ticker in key_stats:
+                        # Convert yahooquery format to yfinance format
+                        stats = key_stats[resolved_ticker]
+                        info = {
+                            'trailingPE': stats.get('trailingPE'),
+                            'forwardPE': stats.get('forwardPE'),
+                            'priceToBook': stats.get('priceToBook'),
+                            'priceToSalesTrailing12Months': stats.get('priceToSalesTrailing12Months'),
+                            'marketCap': stats.get('marketCap'),
+                            'enterpriseValue': stats.get('enterpriseValue'),
+                            'returnOnEquity': stats.get('returnOnEquity'),
+                            'debtToEquity': stats.get('debtToEquity'),
+                            'currentRatio': stats.get('currentRatio'),
+                            'quickRatio': stats.get('quickRatio'),
+                            'grossMargins': stats.get('grossMargins'),
+                            'operatingMargins': stats.get('operatingMargins'),
+                            'profitMargins': stats.get('profitMargins'),
+                            'revenueGrowth': stats.get('revenueGrowth'),
+                            'earningsGrowth': stats.get('earningsGrowth'),
+                            'beta': stats.get('beta'),
+                            'dividendYield': stats.get('dividendYield'),
+                            'payoutRatio': stats.get('payoutRatio'),
+                            '52WeekHigh': stats.get('fiftyTwoWeekHigh'),
+                            '52WeekLow': stats.get('fiftyTwoWeekLow'),
+                            'averageVolume': stats.get('averageVolume'),
+                            'volume': stats.get('volume'),
+                            'regularMarketPrice': stats.get('regularMarketPrice'),
+                            'previousClose': stats.get('previousClose'),
+                            'open': stats.get('open'),
+                            'dayHigh': stats.get('dayHigh'),
+                            'dayLow': stats.get('dayLow'),
+                            'currency': stats.get('currency'),
+                            'exchange': stats.get('exchange'),
+                            'shortName': stats.get('shortName'),
+                            'longName': stats.get('longName'),
+                            'sector': stats.get('sector'),
+                            'industry': stats.get('industry'),
+                            'fullTimeEmployees': stats.get('fullTimeEmployees'),
+                            'website': stats.get('website'),
+                            'city': stats.get('city'),
+                            'state': stats.get('state'),
+                            'country': stats.get('country'),
+                            'zip': stats.get('zip'),
+                            'phone': stats.get('phone'),
+                            'fax': stats.get('fax'),
+                            'address1': stats.get('address1'),
+                            'address2': stats.get('address2'),
+                            'businessSummary': stats.get('businessSummary'),
+                            'auditRisk': stats.get('auditRisk'),
+                            'boardRisk': stats.get('boardRisk'),
+                            'compensationRisk': stats.get('compensationRisk'),
+                            'shareHolderRightsRisk': stats.get('shareHolderRightsRisk'),
+                            'overallRisk': stats.get('overallRisk'),
+                            'governanceEpochDate': stats.get('governanceEpochDate'),
+                            'compensationAsOfEpochDate': stats.get('compensationAsOfEpochDate'),
+                            'maxAge': stats.get('maxAge'),
+                            'priceHint': stats.get('priceHint'),
+                            'totalCash': stats.get('totalCash'),
+                            'totalCashPerShare': stats.get('totalCashPerShare'),
+                            'totalDebt': stats.get('totalDebt'),
+                            'totalRevenue': stats.get('totalRevenue'),
+                            'revenuePerShare': stats.get('revenuePerShare'),
+                            'revenueQuarterlyGrowth': stats.get('revenueQuarterlyGrowth'),
+                            'grossProfits': stats.get('grossProfits'),
+                            'operatingCashflow': stats.get('operatingCashflow'),
+                            'leveredFreeCashflow': stats.get('leveredFreeCashflow'),
+                            'heldPercentInstitutions': stats.get('heldPercentInstitutions'),
+                            'heldPercentInsiders': stats.get('heldPercentInsiders'),
+                            'bookValue': stats.get('bookValue'),
+                            'priceToBook': stats.get('priceToBook'),
+                            'enterpriseToRevenue': stats.get('enterpriseToRevenue'),
+                            'enterpriseToEbitda': stats.get('enterpriseToEbitda'),
+                            'pegRatio': stats.get('pegRatio'),
+                            'lastFiscalYearEnd': stats.get('lastFiscalYearEnd'),
+                            'nextFiscalYearEnd': stats.get('nextFiscalYearEnd'),
+                            'mostRecentQuarter': stats.get('mostRecentQuarter'),
+                            'netIncomeToCommon': stats.get('netIncomeToCommon'),
+                            'trailingAnnualDividendRate': stats.get('trailingAnnualDividendRate'),
+                            'trailingAnnualDividendYield': stats.get('trailingAnnualDividendYield'),
+                            'dividendRate': stats.get('dividendRate'),
+                            'dividendYield': stats.get('dividendYield'),
+                            'exDividendDate': stats.get('exDividendDate'),
+                            'dividendDate': stats.get('dividendDate'),
+                            'payoutRatio': stats.get('payoutRatio'),
+                            'lastSplitFactor': stats.get('lastSplitFactor'),
+                            'lastSplitDate': stats.get('lastSplitDate'),
+                            'floatShares': stats.get('floatShares'),
+                            'sharesOutstanding': stats.get('sharesOutstanding'),
+                            'sharesShort': stats.get('sharesShort'),
+                            'sharesShortPriorMonth': stats.get('sharesShortPriorMonth'),
+                            'sharesShortPreviousMonthDate': stats.get('sharesShortPreviousMonthDate'),
+                            'dateShortInterest': stats.get('dateShortInterest'),
+                            'sharesPercentSharesOut': stats.get('sharesPercentSharesOut'),
+                            'heldPercentInsiders': stats.get('heldPercentInsiders'),
+                            'heldPercentInstitutions': stats.get('heldPercentInstitutions'),
+                            'impliedSharesOutstanding': stats.get('impliedSharesOutstanding'),
+                            'twoHundredDayAverage': stats.get('twoHundredDayAverage'),
+                            'fiftyDayAverage': stats.get('fiftyDayAverage'),
+                            'fiftyTwoWeekHigh': stats.get('fiftyTwoWeekHigh'),
+                            'fiftyTwoWeekLow': stats.get('fiftyTwoWeekLow'),
+                            'regularMarketDayHigh': stats.get('regularMarketDayHigh'),
+                            'regularMarketDayLow': stats.get('regularMarketDayLow'),
+                            'regularMarketOpen': stats.get('regularMarketOpen'),
+                            'regularMarketPreviousClose': stats.get('regularMarketPreviousClose'),
+                            'regularMarketPrice': stats.get('regularMarketPrice'),
+                            'regularMarketVolume': stats.get('regularMarketVolume'),
+                            'averageDailyVolume10Day': stats.get('averageDailyVolume10Day'),
+                            'averageDailyVolume3Month': stats.get('averageDailyVolume3Month'),
+                            'averageVolume': stats.get('averageVolume'),
+                            'averageVolume10days': stats.get('averageVolume10days'),
+                            'volume': stats.get('volume'),
+                            'quoteType': stats.get('quoteType'),
+                            'symbol': stats.get('symbol'),
+                            'underlyingSymbol': stats.get('underlyingSymbol'),
+                            'shortName': stats.get('shortName'),
+                            'longName': stats.get('longName'),
+                            'firstTradeDateEpochUtc': stats.get('firstTradeDateEpochUtc'),
+                            'timeZoneFullName': stats.get('timeZoneFullName'),
+                            'timeZoneShortName': stats.get('timeZoneShortName'),
+                            'uuid': stats.get('uuid'),
+                            'messageBoardId': stats.get('messageBoardId'),
+                            'gmtOffSetMilliseconds': stats.get('gmtOffSetMilliseconds'),
+                            'market': stats.get('market'),
+                            'esgPopulated': stats.get('esgPopulated'),
+                            'exchangeTimezoneName': stats.get('exchangeTimezoneName'),
+                            'exchangeTimezoneShortName': stats.get('exchangeTimezoneShortName'),
+                            'gmtOffSetMilliseconds': stats.get('gmtOffSetMilliseconds'),
+                            'marketState': stats.get('marketState'),
+                            'quoteSourceName': stats.get('quoteSourceName'),
+                            'priceHint': stats.get('priceHint'),
+                            'postMarketChangePercent': stats.get('postMarketChangePercent'),
+                            'postMarketTime': stats.get('postMarketTime'),
+                            'postMarketPrice': stats.get('postMarketPrice'),
+                            'postMarketChange': stats.get('postMarketChange'),
+                            'regularMarketChangePercent': stats.get('regularMarketChangePercent'),
+                            'regularMarketTime': stats.get('regularMarketTime'),
+                            'regularMarketChange': stats.get('regularMarketChange'),
+                            'regularMarketDayHigh': stats.get('regularMarketDayHigh'),
+                            'regularMarketDayLow': stats.get('regularMarketDayLow'),
+                            'regularMarketOpen': stats.get('regularMarketOpen'),
+                            'regularMarketPreviousClose': stats.get('regularMarketPreviousClose'),
+                            'regularMarketPrice': stats.get('regularMarketPrice'),
+                            'regularMarketVolume': stats.get('regularMarketVolume'),
+                            'bid': stats.get('bid'),
+                            'ask': stats.get('ask'),
+                            'bidSize': stats.get('bidSize'),
+                            'askSize': stats.get('askSize'),
+                            'lastMarket': stats.get('lastMarket'),
+                            'maxAge': stats.get('maxAge'),
+                            'fromCurrency': stats.get('fromCurrency'),
+                            'toCurrency': stats.get('toCurrency'),
+                            'lastMarket': stats.get('lastMarket'),
+                            'volume24Hr': stats.get('volume24Hr'),
+                            'volumeAllCurrencies': stats.get('volumeAllCurrencies'),
+                            'circulatingSupply': stats.get('circulatingSupply'),
+                            'maxAge': stats.get('maxAge')
+                        }
+                        batch_info[resolved_ticker] = info
+                    else:
+                        batch_info[resolved_ticker] = {}
+                except:
+                    batch_info[resolved_ticker] = {}
+            
+            # Track only 1 API call for the entire batch!
+            if 'api_call_count' in st.session_state:
+                st.session_state.api_call_count += 1
+            
+            # Map back to original ticker symbols
+            result = {}
+            for ticker_symbol, resolved_ticker in resolved_tickers.items():
+                result[ticker_symbol] = batch_info.get(resolved_ticker, {})
+            
+            return result
+            
+        except ImportError:
+            # Fallback to yfinance if yahooquery is not available
+            st.warning("⚠️ yahooquery not available, falling back to individual yfinance calls")
+            st.info("💡 To get TRUE BATCH PE data (1 API call for all tickers), install: pip install yahooquery")
+            return get_ticker_info_batch_fallback(ticker_list)
+        except Exception as e:
+            # Fallback to yfinance if yahooquery fails
+            st.warning(f"⚠️ yahooquery failed: {e}, falling back to individual yfinance calls")
+            return get_ticker_info_batch_fallback(ticker_list)
+            
     except Exception:
         return {}
+
+def get_ticker_info_batch_fallback(ticker_list):
+    """Fallback to individual yfinance calls if yahooquery fails"""
+    try:
+        if not ticker_list:
+            return {}
+        
+        
+        # Parse and resolve all tickers
+        resolved_tickers = {}
+        for ticker_symbol in ticker_list:
+            base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
+            resolved_ticker = resolve_ticker_alias(base_ticker)
+            resolved_tickers[ticker_symbol] = resolved_ticker
+        
+        # Get unique resolved tickers to avoid duplicate API calls
+        unique_resolved = list(set(resolved_tickers.values()))
+        
+        # Fetch info for all unique tickers individually
+        batch_info = {}
+        for resolved_ticker in unique_resolved:
+            try:
+                ticker = yf.Ticker(resolved_ticker)
+                info = ticker.info
+                batch_info[resolved_ticker] = info
+                # Track individual API call
+                if 'api_call_count' in st.session_state:
+                    st.session_state.api_call_count += 1
+            except:
+                batch_info[resolved_ticker] = {}
+                # Still track the failed call
+                if 'api_call_count' in st.session_state:
+                    st.session_state.api_call_count += 1
+        
+        # Map back to original ticker symbols
+        result = {}
+        for ticker_symbol, resolved_ticker in resolved_tickers.items():
+            result[ticker_symbol] = batch_info.get(resolved_ticker, {})
+        
+        return result
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_ticker_info(ticker_symbol):
+    """Legacy function - now redirects to batch version for single ticker"""
+    batch_result = get_ticker_info_batch([ticker_symbol])
+    return batch_result.get(ticker_symbol, {})
 
 # Matplotlib configuration for high-quality PDF generation
 import matplotlib.pyplot as plt
@@ -9992,8 +10283,8 @@ st.sidebar.radio(
     ["all", "oldest"],
     format_func=lambda x: "Start when ALL assets are available" if x == "all" else "Start with OLDEST asset",
     help="""
-    **All:** Starts the backtest when all selected assets are available.
-    **Oldest:** Starts at the oldest date of any asset and adds assets as they become available.
+    **All:** Wait until all selected assets have data before starting the backtest. Ensures complete portfolio from day 1.
+    **Oldest:** Start immediately with the oldest available asset, then add other assets as their data becomes available. May have incomplete portfolio initially, but allocation is still normalized to 100%.
     """,
     key="multi_backtest_start_with_radio",
     on_change=update_start_with
@@ -10007,8 +10298,8 @@ st.sidebar.radio(
     ["rebalancing_date", "momentum_window_complete"],
     format_func=lambda x: "First rebalance on rebalancing date" if x == "rebalancing_date" else "First rebalance when momentum window complete",
     help="""
-    **First rebalance on rebalancing date:** Wait for the momentum window to complete, then rebalance on the next regular rebalancing date (e.g., wait a few more days to get to the 1st of the month).
-    **First rebalance when momentum window complete:** Rebalance immediately on an irregular date as soon as the momentum window is completed (e.g., on a random day like the 15th).
+    **First rebalance on rebalancing date:** Wait for momentum calculation, then rebalance on the next scheduled date (e.g., 1st of month). More realistic but may delay start.
+    **First rebalance when momentum window complete:** Rebalance immediately when momentum data is ready, even on irregular dates. Faster start but less realistic timing.
     """,
     key="multi_backtest_first_rebalance_strategy_radio",
     on_change=update_first_rebalance_strategy
@@ -11746,7 +12037,7 @@ for i in range(len(active_portfolio['stocks'])):
                 format="%d", 
                 key=max_cap_key, 
                 label_visibility="visible",
-                help="Individual cap for this ticker (0 = no cap, uses global cap if enabled)"
+                help="Individual cap for this ticker (0 = no cap, uses global cap if enabled). This overrides the Min and Max Threshold filters for this specific ticker."
             )
             
             # Update the portfolio config
@@ -12495,7 +12786,8 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
             "Momentum strategy when NOT all negative:",
             ["Classic", "Relative Momentum", "Near-Zero Symmetry"],
             index=["Classic", "Relative Momentum", "Near-Zero Symmetry"].index(active_portfolio.get('momentum_strategy', 'Classic')),
-            key=f"multi_backtest_momentum_strategy_{st.session_state.multi_backtest_active_portfolio_index}"
+            key=f"multi_backtest_momentum_strategy_{st.session_state.multi_backtest_active_portfolio_index}",
+            help="Classic: Uses absolute momentum values. Only assets with positive momentum get allocated, weighted by their momentum strength. Assets with negative momentum get 0% allocation.\n\nRelative Momentum: Shifts all momentum scores to be positive by adding an offset, then allocates proportionally. This ensures all assets get some allocation even when all have negative momentum.\n\nNear-Zero Symmetry: Creates a neutral zone around 0% momentum (±5%). Assets in this zone get similar allocations, while negative assets get progressively compressed allocations."
         )
         # Check if this is SP500TOP20 to set default to Relative instead of Cash
         is_sp500top20 = any(is_special_dynamic_ticker(stock['ticker']) for stock in active_portfolio.get('stocks', []))
@@ -12508,7 +12800,8 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
             "Strategy when ALL momentum scores are negative:",
             ["Cash", "Equal weight", "Relative momentum", "Near-Zero Symmetry"],
             index=["Cash", "Equal weight", "Relative momentum", "Near-Zero Symmetry"].index(current_negative_strategy),
-            key=f"multi_backtest_negative_momentum_strategy_{st.session_state.multi_backtest_active_portfolio_index}"
+            key=f"multi_backtest_negative_momentum_strategy_{st.session_state.multi_backtest_active_portfolio_index}",
+            help="Cash: All assets get 0% allocation, portfolio goes to 100% cash when all momentum scores are negative.\n\nEqual weight: All assets get equal allocation (1/n) regardless of their negative momentum values.\n\nRelative momentum: Shifts all negative momentum scores to be positive by adding an offset, then allocates proportionally based on relative performance.\n\nNear-Zero Symmetry: Creates a neutral zone around 0% momentum (±5%). Assets in this zone get similar allocations, while more negative assets get progressively compressed allocations."
         )
         
         # Show warning for SP500TOP20 if Cash is selected
@@ -12521,7 +12814,7 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
     with col_beta_vol:
         if "multi_backtest_active_calc_beta" not in st.session_state:
             st.session_state["multi_backtest_active_calc_beta"] = active_portfolio['calc_beta']
-        st.checkbox("Include Beta in momentum weighting", key="multi_backtest_active_calc_beta", on_change=update_calc_beta, help="Incorporates a stock's Beta (volatility relative to the benchmark) into its momentum score. The momentum scores will be divided by Beta and then normalized.")
+        st.checkbox("Include Beta in momentum weighting", key="multi_backtest_active_calc_beta", on_change=update_calc_beta, help="Penalizes high-beta stocks by reducing their allocation. Stocks with Beta > 1.0 (more volatile than market) get lower weights, while stocks with Beta < 1.0 (less volatile) get higher weights. This reduces portfolio risk by favoring stable stocks.")
         # Reset Beta button
         if st.button("Reset Beta", key=f"multi_backtest_reset_beta_btn_{st.session_state.multi_backtest_active_portfolio_index}", on_click=reset_beta_callback):
             pass
@@ -12539,7 +12832,7 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
             st.number_input("Beta Exclude (days)", min_value=0, key="multi_backtest_active_beta_exclude", on_change=update_beta_exclude)
         if "multi_backtest_active_calc_vol" not in st.session_state:
             st.session_state["multi_backtest_active_calc_vol"] = active_portfolio['calc_volatility']
-        st.checkbox("Include Volatility in momentum weighting", key="multi_backtest_active_calc_vol", on_change=update_calc_vol, help="Incorporates a stock's volatility (standard deviation of returns) into its momentum score. The momentum scores will be divided by Volatility and then normalized.")
+        st.checkbox("Include Volatility in momentum weighting", key="multi_backtest_active_calc_vol", on_change=update_calc_vol, help="Penalizes high-volatility stocks by reducing their allocation. Stocks with high price swings get lower weights, while stable stocks get higher weights. This reduces portfolio risk by favoring less volatile investments.")
         # Reset Volatility button
         if st.button("Reset Volatility", key=f"multi_backtest_reset_vol_btn_{st.session_state.multi_backtest_active_portfolio_index}", on_click=reset_vol_callback):
             pass
@@ -12727,7 +13020,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
     st.checkbox("Enable MA Filter", 
                 key=ma_filter_key,
                 on_change=update_use_sma_filter,
-                help="Enable the Moving Average filter")
+                help="MA Filter means the tickers with MA filter will be excluded when price below MA at rebalancing. This helps avoid buying assets that are in a downtrend.")
 
     # MA Type and Window (only show when MA filter is enabled)
     if st.session_state.get(ma_filter_key, False):
@@ -12738,7 +13031,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                    options=["SMA", "EMA"], 
                                    index=0 if st.session_state.get(ma_type_key, "SMA") == "SMA" else 1,
                                    key=f"ma_type_main_{st.session_state.multi_backtest_active_portfolio_index}",
-                                   help="Select the type of moving average")
+                                   help="SMA (Simple Moving Average): Equal weight to all prices in the window. EMA (Exponential Moving Average): More weight to recent prices, reacts faster to price changes.")
             st.session_state[ma_type_key] = ma_type
         
         with col_ma2:
@@ -12747,7 +13040,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                        min_value=1,
                                        max_value=1000,
                                        key=f"ma_window_main_{st.session_state.multi_backtest_active_portfolio_index}",
-                                       help="Moving average window in days")
+                                       help="Number of days to calculate the moving average. Longer windows = smoother trend, shorter windows = more responsive to price changes.")
             st.session_state[ma_window_key] = ma_window
         
         # MA Multiplier - USING WORKING LOGIC FROM TEST WIDGET
@@ -12765,7 +13058,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                        max_value=3.0,
                                        step=0.01,
                                        key=ma_multiplier_key,
-                                       help="Multiplier to convert market days to calendar days (default 1.48 for ffill data)")
+                                       help="Multiplier to convert market days to calendar days. 1.48 means 200 market days = 296 calendar days (accounts for weekends and holidays).")
         
         # Update portfolio with widget value (widget controls portfolio)
         actual_portfolio['ma_multiplier'] = ma_multiplier
@@ -12783,7 +13076,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
         
         st.checkbox("Immediate Rebalance on MA Cross", 
                    key=ma_cross_rebalance_key,
-                   help="Rebalance portfolio immediately when any ticker crosses its moving average, in addition to regular rebalancing schedule")
+                   help="Rebalance portfolio immediately when any ticker crosses its moving average, in addition to regular rebalancing schedule. This allows faster response to trend changes.")
         
         # Store the new option in active portfolio - ALWAYS sync
         active_portfolio['ma_cross_rebalance'] = st.session_state.get(ma_cross_rebalance_key, False)
@@ -12808,7 +13101,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                              max_value=10.0,
                                              step=0.1,
                                              key=f"ma_tolerance_input_{st.session_state.multi_backtest_active_portfolio_index}",
-                                             help="Price must exceed MA by this percentage to trigger rebalancing")
+                                             help="Tolerance band around the moving average. Only trigger rebalancing if price moves beyond this percentage from the MA. Prevents whipsaw from small price fluctuations.")
                 st.session_state[ma_tolerance_key] = ma_tolerance
             
             with col_delay:
@@ -12825,7 +13118,7 @@ if not st.session_state.get("multi_backtest_active_use_targeted_rebalancing", Fa
                                         max_value=10,
                                         step=1,
                                         key=f"ma_delay_input_{st.session_state.multi_backtest_active_portfolio_index}",
-                                        help="Crossing must persist for this many days to trigger rebalancing (0 = immediate)")
+                                        help="Number of days to wait before confirming an MA cross. Prevents false signals from temporary price movements. Higher values = more conservative approach.")
                 st.session_state[ma_delay_key] = ma_delay
             
             # Store the anti-whipsaw settings in active portfolio
@@ -12859,7 +13152,7 @@ if not st.session_state.get(ma_filter_key, False) and not st.session_state.get('
         "Enable Targeted Rebalancing", 
         key="multi_backtest_active_use_targeted_rebalancing", 
         on_change=update_use_targeted_rebalancing,
-        help="Automatically rebalance when ticker allocations exceed min/max thresholds"
+        help="Rebalance at the next scheduled rebalancing date when ticker allocations exceed min/max thresholds. Does not trigger immediate rebalancing, only checks thresholds on rebalance dates."
     )
 
     # Update active portfolio with current targeted rebalancing state
@@ -13341,7 +13634,12 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             check_kill_request()
             
             # Use batch download for all regular tickers (much faster!)
+            # Initialize API call counter
+            api_call_count = 0
+            st.session_state.api_call_count = 0  # Initialize individual API call counter
+            
             batch_results = get_multiple_tickers_batch(list(all_tickers_to_download), period="max", auto_adjust=False)
+            api_call_count += 1  # Batch download = 1 API call for all tickers
             
             # Process batch results
             for t in all_tickers_to_download:
@@ -13508,6 +13806,15 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 
                 
                 progress_bar.progress(1.0, text="Executing multi-portfolio backtest analysis...")
+                
+                # Display API call efficiency
+                total_api_calls = api_call_count + st.session_state.get('api_call_count', 0)
+                individual_calls = st.session_state.get('api_call_count', 0)
+                
+                if individual_calls > 0:
+                    st.success(f"🚀 **API Efficiency**: Downloaded data for {len(all_tickers_to_download)} tickers using **{api_call_count} batch call(s) + {individual_calls} individual call(s) = {total_api_calls} total API calls** (PE data TRUE BATCHED with yahooquery!)")
+                else:
+                    st.success(f"🚀 **API Efficiency**: Downloaded data for {len(all_tickers_to_download)} tickers using only **{api_call_count} API call(s)** (TRUE BATCH MODE - optimal!)")
                 
                 # Emergency stop is now handled by the existing emergency_kill function
                 
@@ -15402,6 +15709,9 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         try:
             # Get VIX data for the same date range
             vix_data = yf.download('^VIX', start=first_date, end=last_date, progress=False)
+            # Track VIX API call
+            if 'api_call_count' in st.session_state:
+                st.session_state.api_call_count += 1
             
             # VIX data has multi-level columns, need to access it properly
             # The structure is ('Close', '^VIX') instead of just 'Close'
@@ -15683,17 +15993,31 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     all_tickers = sorted(list(all_tickers))
                     
                     if all_tickers:
-                        # Fetch PE data for all tickers (cached per portfolio)
+                        # Fetch PE data for all tickers using batch function (more efficient)
                         pe_data = {}
+                        batch_info = get_ticker_info_batch(all_tickers)
+                        
+                        
                         for ticker in all_tickers:
                             try:
-                                stock = yf.Ticker(ticker)
-                                info = stock.info
+                                info = batch_info.get(ticker, {})
                                 pe_ratio = info.get('trailingPE', None)
-                                if pe_ratio is not None and pe_ratio > 0:
-                                    pe_data[ticker] = pe_ratio
-                            except:
+                                
+                                # Debug: Show PE ratio for each ticker
+                                if pe_ratio is not None and pe_ratio != 'N/A':
+                                    if pe_ratio > 0:
+                                        pe_data[ticker] = pe_ratio
+                                else:
+                                    # Check if this is an ETF (which doesn't have PE ratios)
+                                    etf_indicators = ['SPY', 'GLD', 'TLT', 'QQQ', 'VTI', 'VEA', 'VWO', 'AGG', 'BND', 'IEF', 'TLT', 'GLD', 'SLV', 'DIA', 'QQQ', 'IWM']
+                                    if ticker in etf_indicators:
+                                        pass  # ETF - no PE ratio expected
+                                    else:
+                                        st.info(f"❌ {ticker}: No PE data available")
+                            except Exception as e:
+                                st.info(f"❌ {ticker}: Error - {e}")
                                 continue
+                        
                         
                         if pe_data:
                             # Calculate weighted average PE for this portfolio
@@ -20202,18 +20526,31 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         all_tickers = sorted(list(all_tickers))
                         
                         if all_tickers:
-                            # Fetch PE data for all tickers sequentially to avoid threading issues
+                            # Fetch PE data for all tickers using batch function (more efficient)
                             pe_data = {}
                             historical_pe_data = {}
                             with st.spinner("Fetching PE ratio data..."):
+                                # Use batch function for all tickers at once
+                                batch_info = get_ticker_info_batch(all_tickers)
+                                
+                                
                                 for ticker in all_tickers:
                                     try:
-                                        # Get stock info for current PE ratio
-                                        stock = yf.Ticker(ticker)
-                                        info = stock.info
+                                        # Get stock info for current PE ratio from batch result
+                                        info = batch_info.get(ticker, {})
                                         pe_ratio = info.get('trailingPE', None)
-                                        if pe_ratio is not None and pe_ratio > 0:
-                                            pe_data[ticker] = pe_ratio
+                                        
+                                        # Debug: Show PE ratio for each ticker
+                                        if pe_ratio is not None and pe_ratio != 'N/A':
+                                            if pe_ratio > 0:
+                                                pe_data[ticker] = pe_ratio
+                                        else:
+                                            # Check if this is an ETF (which doesn't have PE ratios)
+                                            etf_indicators = ['SPY', 'GLD', 'TLT', 'QQQ', 'VTI', 'VEA', 'VWO', 'AGG', 'BND', 'IEF', 'TLT', 'GLD', 'SLV', 'DIA', 'QQQ', 'IWM']
+                                            if ticker in etf_indicators:
+                                                pass  # ETF - no PE ratio expected
+                                            else:
+                                                st.info(f"❌ {ticker}: No PE data available")
                                         
                                         # Try to get historical earnings data (placeholder for future implementation)
                                         try:
@@ -20222,8 +20559,12 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                             pass
                                         except:
                                             pass
-                                    except:
+                                    except Exception as e:
+                                        st.info(f"❌ {ticker}: Error - {e}")
                                         continue
+                                
+                                # Debug: Show final PE data count
+                                st.info(f"✅ Found PE data for {len(pe_data)} out of {len(all_tickers)} tickers")
                             
                             if pe_data:
                                 # Calculate daily weighted PE ratio using the same approach as portfolio allocation evolution
@@ -20393,7 +20734,6 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                         st.metric("Std Deviation", f"{std_pe:.2f}")
                                     
                                     # Show individual ticker PE ratios
-                                    st.info(f"📊 **Individual PE Ratios**: {len(pe_data)} tickers with PE data")
                                     pe_cols = st.columns(4)
                                     for i, (ticker, pe) in enumerate(pe_data.items()):
                                         with pe_cols[i % 4]:
@@ -20450,3 +20790,18 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         except Exception as e:
             st.error(f"❌ Error generating PDF: {str(e)}")
             st.exception(e)
+    
+    # Footer - Always visible
+    st.markdown("---")
+    st.markdown("""
+    <div style="
+        text-align: center; 
+        color: #666; 
+        margin: 2rem 0; 
+        padding: 1rem; 
+        font-size: 0.9rem;
+        font-weight: 500;
+    ">
+        Made by Nicolas Cool
+    </div>
+    """, unsafe_allow_html=True)
