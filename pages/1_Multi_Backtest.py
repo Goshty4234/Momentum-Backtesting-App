@@ -18802,64 +18802,50 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                     labels_final = []
                                     vals_final = []
                         
+                        # Use the same prepare_bar_data function as page 2 for consistency
+                        def prepare_bar_data(d):
+                            labels = []
+                            values = []
+                            for k, v in sorted(d.items(), key=lambda x: (-x[1], x[0])):
+                                try:
+                                    val = float(v) * 100
+                                    if val > 0:  # Only include tickers with allocation > 0%
+                                        labels.append(k)
+                                        values.append(val)
+                                except Exception:
+                                    pass  # Skip invalid values
+                            return labels, values
+
                         if rebal_alloc and isinstance(rebal_alloc, dict):
-                            # Filter out non-numeric values and ensure they're valid
-                            valid_rebal = {k: v for k, v in rebal_alloc.items() if isinstance(v, (int, float)) and not pd.isna(v)}
-                            
-                            # NUCLEAR OPTION: Portfolio names are never stored, only individual stocks
-                            
-                            labels_rebal = [k for k, v in sorted(valid_rebal.items(), key=lambda x: (-x[1], x[0])) if v > 0]
-                            vals_rebal = [float(valid_rebal[k]) * 100 for k in labels_rebal]
+                            labels_rebal, vals_rebal = prepare_bar_data(rebal_alloc)
                         else:
                             labels_rebal = []
                             vals_rebal = []
                         
-                        # Use standard pie chart display for all portfolios
+                        # Use standard pie chart display for all portfolios - EXACT COPY FROM PAGE 2
                         col_plot1, col_plot2 = st.columns(2)
                         
                         with col_plot1:
-                            st.markdown(f"**Last Rebalance Allocation (as of {last_rebal_date.date()})**")
-                            if labels_rebal and vals_rebal:
-                                # ULTRA-OPTIMIZED: Use comprehensive cache for instant display
-                                if 'individual_portfolio_cache' in st.session_state and selected_portfolio_detail in st.session_state.individual_portfolio_cache:
-                                    portfolio_cache = st.session_state.individual_portfolio_cache[selected_portfolio_detail]
-                                    rebalancing_data = portfolio_cache.get('rebalancing_data', {})
-                                    
-                                    # Use pre-computed data from cache
-                                    labels_rebal = rebalancing_data.get('labels_rebal', labels_rebal)
-                                    vals_rebal = rebalancing_data.get('vals_rebal', vals_rebal)
-                                
-                                fig_rebal = go.Figure()
-                                fig_rebal.add_trace(go.Pie(labels=labels_rebal, values=vals_rebal, hole=0.3))
-                                fig_rebal.update_traces(textinfo='percent+label')
-                                fig_rebal.update_layout(template='plotly_dark', margin=dict(t=30), height=400)
-                                
-                                st.plotly_chart(fig_rebal, use_container_width=True, key=f"multi_rebal_{selected_portfolio_detail}")
-                            else:
-                                st.warning("No valid allocation data for last rebalance.")
+                            st.markdown(f"**Target Allocation at Last Rebalance ({last_rebal_date.date()})**")
+                            fig_rebal_small = go.Figure(data=[go.Pie(
+                                labels=labels_rebal,
+                                values=vals_rebal,
+                                hole=0.35
+                            )])
+                            fig_rebal_small.update_traces(textinfo='percent+label')
+                            fig_rebal_small.update_layout(template='plotly_dark', margin=dict(t=10))
+                            st.plotly_chart(fig_rebal_small, key=f"alloc_rebal_small_{selected_portfolio_detail}")
                         
                         with col_plot2:
-                            st.markdown(f"**Current Allocation (as of {final_date.date()})**")
-                            if final_date == last_rebal_date:
-                                st.info("ℹ️ **Note**: Current allocation shows the same as last rebalance because this portfolio has not been rebalanced yet. After rebalancing, this will show the actual drifted allocation.")
-                            if labels_final and vals_final:
-                                # ULTRA-OPTIMIZED: Use comprehensive cache for instant display
-                                if 'individual_portfolio_cache' in st.session_state and selected_portfolio_detail in st.session_state.individual_portfolio_cache:
-                                    portfolio_cache = st.session_state.individual_portfolio_cache[selected_portfolio_detail]
-                                    rebalancing_data = portfolio_cache.get('rebalancing_data', {})
-                                    
-                                    # Use pre-computed data from cache
-                                    labels_final = rebalancing_data.get('labels_final', labels_final)
-                                    vals_final = rebalancing_data.get('vals_final', vals_final)
-                                
-                                fig_final = go.Figure()
-                                fig_final.add_trace(go.Pie(labels=labels_final, values=vals_final, hole=0.3))
-                                fig_final.update_traces(textinfo='percent+label')
-                                fig_final.update_layout(template='plotly_dark', margin=dict(t=30), height=400)
-                                
-                                st.plotly_chart(fig_final, use_container_width=True, key=f"multi_final_{selected_portfolio_detail}")
-                            else:
-                                st.warning("No valid allocation data for current allocation.")
+                            st.markdown(f"**Portfolio Evolution (Current Allocation)**")
+                            fig_today_small = go.Figure(data=[go.Pie(
+                                labels=labels_final,
+                                values=vals_final,
+                                hole=0.35
+                            )])
+                            fig_today_small.update_traces(textinfo='percent+label')
+                            fig_today_small.update_layout(template='plotly_dark', margin=dict(t=10))
+                            st.plotly_chart(fig_today_small, key=f"alloc_today_small_{selected_portfolio_detail}")
                     else:
                         st.warning("No allocation data available for pie charts.")
                 else:
@@ -20454,25 +20440,43 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                             
                             # For fallback, we only have one allocation snapshot, so show it as both current and last rebalance
                             # This is a limitation when we don't have historical rebalancing data
-                            labels_final = list(final_alloc.keys())
-                            vals_final = [float(final_alloc[k]) * 100 for k in labels_final]
+                            # Use the same prepare_bar_data function as page 2 for consistency
+                            def prepare_bar_data_fallback(d):
+                                labels = []
+                                values = []
+                                for k, v in sorted(d.items(), key=lambda x: (-x[1], x[0])):
+                                    try:
+                                        val = float(v) * 100
+                                        if val > 0:  # Only include tickers with allocation > 0%
+                                            labels.append(k)
+                                            values.append(val)
+                                    except Exception:
+                                        pass  # Skip invalid values
+                                return labels, values
+                            
+                            labels_final, vals_final = prepare_bar_data_fallback(final_alloc)
                             
                             col_plot1, col_plot2 = st.columns(2)
                             with col_plot1:
-                                st.markdown(f"**Last Rebalance Allocation (as of {final_date.date()})**")
-                                fig_rebal = go.Figure()
-                                fig_rebal.add_trace(go.Pie(labels=labels_final, values=vals_final, hole=0.3))
-                                fig_rebal.update_traces(textinfo='percent+label')
-                                fig_rebal.update_layout(template='plotly_dark', margin=dict(t=30))
-                                st.plotly_chart(fig_rebal, use_container_width=True, key=f"multi_rebal_fallback_{selected_portfolio_detail}")
+                                st.markdown(f"**Target Allocation at Last Rebalance ({final_date.date()})**")
+                                fig_rebal_small = go.Figure(data=[go.Pie(
+                                    labels=labels_final,
+                                    values=vals_final,
+                                    hole=0.35
+                                )])
+                                fig_rebal_small.update_traces(textinfo='percent+label')
+                                fig_rebal_small.update_layout(template='plotly_dark', margin=dict(t=10))
+                                st.plotly_chart(fig_rebal_small, key=f"alloc_rebal_small_fallback_{selected_portfolio_detail}")
                             with col_plot2:
-                                st.markdown(f"**Current Allocation (as of {final_date.date()})**")
-                                st.info("⚠️ **Note**: Current allocation shows the same as last rebalance because this is the only allocation snapshot available. For accurate current allocation, ensure the portfolio has been rebalanced at least once.")
-                                fig_final = go.Figure()
-                                fig_final.add_trace(go.Pie(labels=labels_final, values=vals_final, hole=0.3))
-                                fig_final.update_traces(textinfo='percent+label')
-                                fig_final.update_layout(template='plotly_dark', margin=dict(t=30))
-                                st.plotly_chart(fig_final, use_container_width=True, key=f"multi_final_fallback_{selected_portfolio_detail}")
+                                st.markdown(f"**Portfolio Evolution (Current Allocation)**")
+                                fig_today_small = go.Figure(data=[go.Pie(
+                                    labels=labels_final,
+                                    values=vals_final,
+                                    hole=0.35
+                                )])
+                                fig_today_small.update_traces(textinfo='percent+label')
+                                fig_today_small.update_layout(template='plotly_dark', margin=dict(t=10))
+                                st.plotly_chart(fig_today_small, key=f"alloc_today_small_fallback_{selected_portfolio_detail}")
                         except Exception as e:
                             pass
 
