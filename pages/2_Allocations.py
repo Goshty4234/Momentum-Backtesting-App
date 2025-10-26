@@ -10909,9 +10909,13 @@ if st.session_state.get('alloc_backtest_run', False):
                 try:
                     # Get EXACT same data as Portfolio Weighted Returns table
                     all_results = st.session_state.get('alloc_all_results', {})
+                    print(f"[DEBUG] all_results keys: {list(all_results.keys())}")
+                    print(f"[DEBUG] active_name: {active_name}")
                     if active_name in all_results:
                         portfolio_result = all_results[active_name]
+                        print(f"[DEBUG] portfolio_result keys: {list(portfolio_result.keys())}")
                         total_series = portfolio_result.get('no_additions', None)
+                        print(f"[DEBUG] total_series type: {type(total_series)}, length: {len(total_series) if total_series is not None else 'None'}")
                         if total_series is not None and len(total_series) > 0:
                             # Calculate returns EXACTLY like the first table
                             historical_returns = {}
@@ -10998,8 +11002,9 @@ if st.session_state.get('alloc_backtest_run', False):
                             # Add period returns
                             for period_name, return_value in historical_returns.items():
                                 portfolio_returns_dict[period_name] = return_value
-                            else:
-                                # Fallback if no data
+                            
+                            # Only use fallback if historical_returns is empty
+                            if not historical_returns:
                                 portfolio_returns_dict = {
                                     'Ticker': 'PORTFOLIO (Historical)',
                                     'PE': 'N/A',
