@@ -12127,35 +12127,19 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
             pass
 
 # Special tickers and leverage guide sections
-with st.expander("📈 Broad Long-Term Tickers", expanded=False):
+with st.expander("The Power of Sticking to One Strategy", expanded=False):
     st.markdown("""
-    **Recommended tickers for long-term strategies:**
-    
-    **Core ETFs:**
-    - **SPY** - S&P 500 (0.09% expense ratio)
-    - **QQQ** - NASDAQ-100 (0.20% expense ratio)  
-    - **VTI** - Total Stock Market (0.03% expense ratio)
-    - **VEA** - Developed Markets (0.05% expense ratio)
-    - **VWO** - Emerging Markets (0.10% expense ratio)
-    
-    **Sector ETFs:**
-    - **XLK** - Technology (0.10% expense ratio)
-    - **XLF** - Financials (0.10% expense ratio)
-    - **XLE** - Energy (0.10% expense ratio)
-    - **XLV** - Healthcare (0.10% expense ratio)
-    - **XLI** - Industrials (0.10% expense ratio)
-    
-    **Bond ETFs:**
-    - **TLT** - 20+ Year Treasury (0.15% expense ratio)
-    - **IEF** - 7-10 Year Treasury (0.15% expense ratio)
-    - **LQD** - Investment Grade Corporate (0.14% expense ratio)
-    - **HYG** - High Yield Corporate (0.49% expense ratio)
-    
-    **Commodity ETFs:**
-    - **GLD** - Gold (0.40% expense ratio)
-    - **SLV** - Silver (0.50% expense ratio)
-    - **DBA** - Agriculture (0.93% expense ratio)
-    - **USO** - Oil (0.60% expense ratio)
+    ### The Power of Sticking to One Strategy
+    In investing, consistency almost always beats constant change. Many investors believe that switching strategies frequently will help them capture small incremental gains, but the data tells a very different story.
+    ### The Performance Gap is Real
+    A study by DALBAR, Inc. (1985-2015) found that the average equity fund investor earned just 3.66% annually while the S&P 500 returned 11.06% annually. This represents a performance penalty of over 7 percentage points per year.
+    Research by Morningstar, Inc. (2013-2022) revealed that investors underperformed by an average of 1.7 percentage points annually due to timing decisions.
+    In the study by Terrence Barber and Brad Odean (2000) tracking 66,465 households (1991-1996), the 20% most active traders earned 11.4% annually, while the market returned 17.9%.
+    A study by J.P. Morgan Asset Management shows that if an investor in the S&P 500 from July 2004 to July 2024 missed the 10 best days, their annualized return dropped from 10.5% to 6.2%; missing the 20 best days dropped it to 3.6%, and missing 30 best days to 1.4%. *(JPMorgan)*
+    Another study (1994-2024) found that missing the best 30 days dropped the annual return of the S&P 500 from 8.0% to 1.8%, and missing the best 50 days resulted in a negative return of –0.86%. *(Wells Fargo Advisors)*
+    ### The Bottom Line
+    Over multiple decades and market cycles, those who stay disciplined with a simple, well-understood strategy tend to outperform 80 to 90% of active investors across all time horizons.
+    Master one strategy and stick with it. Constantly changing direction not only increases risk and stress, it almost always lowers returns. In investing, patience and consistency are the real sources of alpha.
     """)
 
 # Special Tickers Section
@@ -13650,7 +13634,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 successful_portfolios = 0
                 failed_portfolios = []
                 
-                st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios (with 4h ticker cache)...**")
+                st.info(f"**Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios (with 4h ticker cache)...**")
                 
                 # Start timing for performance measurement
                 import time as time_module
@@ -13744,6 +13728,62 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                             ticker = stock.get('ticker', '').strip()
                                             if ticker:
                                                 today_weights_map[ticker] = stock.get('allocation', 0)
+                                        
+                                        # Apply Targeted Rebalancing logic if enabled
+                                        if cfg.get('use_targeted_rebalancing', False):
+                                            targeted_settings = cfg.get('targeted_rebalancing_settings', {})
+                                            rebalanced_allocations = {}
+                                            
+                                            # Apply min/max thresholds
+                                            for ticker, allocation in today_weights_map.items():
+                                                if ticker in targeted_settings and targeted_settings[ticker].get('enabled', False):
+                                                    min_threshold = targeted_settings[ticker].get('min_threshold', 0) / 100.0
+                                                    max_threshold = targeted_settings[ticker].get('max_threshold', 100) / 100.0
+                                                    
+                                                    # Apply thresholds
+                                                    capped_allocation = max(min_threshold, min(allocation, max_threshold))
+                                                    rebalanced_allocations[ticker] = capped_allocation
+                                                else:
+                                                    rebalanced_allocations[ticker] = allocation
+                                            
+                                            # Redistribute excess/deficit proportionally
+                                            total_capped = sum(rebalanced_allocations.values())
+                                            if total_capped != 1.0:
+                                                # Calculate excess/deficit
+                                                excess = total_capped - 1.0
+                                                
+                                                # Find eligible tickers for redistribution (not at their limits)
+                                                eligible_tickers = {}
+                                                for ticker, allocation in rebalanced_allocations.items():
+                                                    if ticker in targeted_settings and targeted_settings[ticker].get('enabled', False):
+                                                        min_threshold = targeted_settings[ticker].get('min_threshold', 0) / 100.0
+                                                        max_threshold = targeted_settings[ticker].get('max_threshold', 100) / 100.0
+                                                        
+                                                        # Check if ticker can receive more allocation
+                                                        if allocation < max_threshold:
+                                                            eligible_tickers[ticker] = allocation
+                                                    else:
+                                                        # Non-targeted tickers can always be adjusted
+                                                        eligible_tickers[ticker] = allocation
+                                                
+                                                # Redistribute excess/deficit proportionally
+                                                if eligible_tickers:
+                                                    total_eligible = sum(eligible_tickers.values())
+                                                    if total_eligible > 0:
+                                                        for ticker in eligible_tickers:
+                                                            proportion = eligible_tickers[ticker] / total_eligible
+                                                            additional_allocation = excess * proportion
+                                                            new_allocation = rebalanced_allocations[ticker] + additional_allocation
+                                                            
+                                                            # Apply limits again
+                                                            if ticker in targeted_settings and targeted_settings[ticker].get('enabled', False):
+                                                                min_threshold = targeted_settings[ticker].get('min_threshold', 0) / 100.0
+                                                                max_threshold = targeted_settings[ticker].get('max_threshold', 100) / 100.0
+                                                                new_allocation = max(min_threshold, min(new_allocation, max_threshold))
+                                                            
+                                                            rebalanced_allocations[ticker] = new_allocation
+                                            
+                                            today_weights_map = rebalanced_allocations
                                         
                                         # Apply MA filter even when momentum is disabled
                                         if cfg.get('use_sma_filter', False):
@@ -14036,7 +14076,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     
                     processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and len(regular_portfolios) > 1 else "sequential"
                     worker_info = f" using {max_workers} workers" if processing_mode == "parallel" else ""
-                    st.info(f"🚀 **Phase 1: Processing {len(regular_portfolios)} regular portfolios in {processing_mode} mode{worker_info}...**")
+                    st.info(f"**Phase 1: Processing {len(regular_portfolios)} regular portfolios in {processing_mode} mode{worker_info}...**")
                     
                     if st.session_state.get('use_parallel_processing', True) and len(regular_portfolios) > 1:
                         # Process regular portfolios in parallel using optimized threading
@@ -14130,7 +14170,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     
                     processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and len(fusion_portfolios) > 1 else "sequential"
                     worker_info = f" using {max_workers} workers" if processing_mode == "parallel" else ""
-                    st.info(f"🚀 **Phase 2: Processing {len(fusion_portfolios)} fusion portfolios in {processing_mode} mode{worker_info} (depends on regular portfolios)...**")
+                    st.info(f"**Phase 2: Processing {len(fusion_portfolios)} fusion portfolios in {processing_mode} mode{worker_info} (depends on regular portfolios)...**")
                     
                     if st.session_state.get('use_parallel_processing', True) and len(fusion_portfolios) > 1:
                         # Process fusion portfolios in parallel using optimized threading
@@ -14238,8 +14278,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 if successful_portfolios > 0:
                     processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and total_portfolios > 1 else "sequential"
                     phase_info = f" (Phase 1: {len(regular_portfolios)} regular, Phase 2: {len(fusion_portfolios)} fusion)" if fusion_portfolios else f" ({len(regular_portfolios)} regular portfolios only)"
-                    st.success(f"🎉 **Successfully processed {successful_portfolios}/{len(st.session_state.multi_backtest_portfolio_configs)} portfolios in {processing_mode} mode{phase_info}!**")
-                    st.info(f"⏱️ **Performance:** Total time: {total_time:.2f}s | Average per portfolio: {avg_time_per_portfolio:.2f}s | Mode: {processing_mode.upper()}")
+                    st.success(f"**Successfully processed {successful_portfolios}/{len(st.session_state.multi_backtest_portfolio_configs)} portfolios in {processing_mode} mode{phase_info}**")
+                    st.info(f"**Performance:** Total time: {total_time:.2f}s | Average per portfolio: {avg_time_per_portfolio:.2f}s | Mode: {processing_mode.upper()}")
                 else:
                     st.error("❌ **No portfolios were processed successfully!** Please check your configuration.")
                     # Don't stop - let the rest of the page render (including JSON section)
@@ -14681,7 +14721,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             st.session_state.multi_backtest_ran = True
             
             # OPTIMIZATION: Pre-compute and cache allocation evolution charts for all portfolios
-            st.info("🔄 Pre-computing charts for instant portfolio selection...")
+            st.info("Pre-computing charts for instant portfolio selection...")
             
             # Pre-compute and cache individual portfolio charts
             precompute_individual_portfolio_charts()
@@ -17791,6 +17831,27 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 """, unsafe_allow_html=True)
 
                                 st.dataframe(styler_metrics, use_container_width=True)
+                                
+                                # Add informational message for non-momentum portfolios
+                                portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                                portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
+                                
+                                if portfolio_cfg:
+                                    momentum_strategy = portfolio_cfg.get('momentum_strategy', 'none')
+                                    
+                                    # Check if this is a non-momentum portfolio (broader condition)
+                                    is_non_momentum = (
+                                        momentum_strategy.lower() in ['none', 'never', 'disabled', ''] or
+                                        portfolio_cfg.get('name', '').lower().find('no momentum') != -1 or
+                                        portfolio_cfg.get('name', '').lower().find('equal weight') != -1
+                                    )
+                                    
+                                    if is_non_momentum:
+                                        st.info("""
+                                        **Note:** This portfolio does not use momentum-based allocation. 
+                                        The "Momentum Metrics and Calculated Weights" table above can be **completely ignored** 
+                                        as it has no impact on the actual portfolio allocation strategy.
+                                        """)
                         except Exception as e:
                             st.error(f"Error displaying metrics table: {str(e)}")
                             st.write("Raw data (first 1000 rows):")
@@ -17833,16 +17894,20 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         else:
                             today_weights['CASH'] = 0.0
             else:
-                # NON-MOMENTUM: Use portfolio configuration
+                # NON-MOMENTUM: Use today_weights_map from backtest data ONLY - NO FALLBACKS
                 if portfolio_cfg and portfolio_cfg.get('stocks'):
-                    total_allocation = sum(stock.get('allocation', 0) for stock in portfolio_cfg['stocks'] if stock.get('ticker'))
-                    
-                    if total_allocation > 0:
-                        for stock in portfolio_cfg['stocks']:
-                            ticker = stock.get('ticker', '').strip()
-                            allocation = stock.get('allocation', 0)
-                            if ticker and allocation > 0:
-                                today_weights[ticker] = allocation / total_allocation
+                    # Try to get today_weights from backtest data first (same logic as page 2)
+                    if 'multi_backtest_snapshot_data' in st.session_state:
+                        snapshot = st.session_state.multi_backtest_snapshot_data
+                        today_weights_map = snapshot.get('today_weights_map', {})
+                        if selected_portfolio_detail in today_weights_map:
+                            today_weights = today_weights_map[selected_portfolio_detail]
+                        else:
+                            # NO FALLBACK - if no snapshot data, show nothing
+                            today_weights = {}
+                    else:
+                        # NO FALLBACK - if no snapshot data, show nothing
+                        today_weights = {}
             
             # Create labels and values for the plot
             labels_today = [k for k, v in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])) if v > 0]
