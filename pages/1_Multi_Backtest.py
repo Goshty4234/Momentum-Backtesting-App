@@ -24,6 +24,7 @@ import threading
 import logging
 import warnings
 import multiprocessing as mp
+import diskcache as dc
 
 # Suppress specific Streamlit threading warnings
 warnings.filterwarnings('ignore')
@@ -223,13 +224,8 @@ def parse_raw_sp500_csv():
     try:
         import pandas as pd
         
-        st.write("🔍 DEBUG: Starting to parse raw S&P 500 CSV")
-        
         # Read the raw CSV file
         df = pd.read_csv('TOP 20 S&P 500 compagnies over time.csv', header=None)
-        
-        st.write(f"🔍 DEBUG: Raw CSV has {len(df)} rows")
-        st.write(f"🔍 DEBUG: First 10 rows: {df.head(10).values.tolist()}")
         
         # The data is structured as: value, company, value, company, etc.
         # We need to parse it into Year, Rank, Company, Ticker, Market_Cap_Billions format
@@ -268,13 +264,8 @@ def parse_raw_sp500_csv():
                             'Market_Cap_Billions': market_cap
                         })
                         
-                        # Debug output for first few entries
-                        if len(parsed_data) <= 25:  # First year + some of second year
-                            st.write(f"🔍 DEBUG: Parsed {company} -> {ticker} (Rank {rank}, Year {current_year})")
-                        
                         rank += 1
                         if rank > 20:  # Reset for next year
-                            st.write(f"🔍 DEBUG: Completed year {current_year}, moving to {current_year + 1}")
                             rank = 1
                             current_year += 1
                 
@@ -398,73 +389,6 @@ def _get_default_risk_free_rate(dates):
         result.index = result.index.tz_convert(None)
     return result
 
-def get_risk_free_rate_robust(dates):
-    """Simple risk-free rate fetcher using Yahoo Finance treasury data."""
-    try:
-        dates = pd.to_datetime(dates)
-        if isinstance(dates, pd.DatetimeIndex):
-            if getattr(dates, "tz", None) is not None:
-                dates = dates.tz_convert(None)
-        
-        # Get treasury data - use ^IRX (13-week treasury) as primary for leverage calculations
-        # Fallback hierarchy: ^IRX → ^FVX → ^TNX → ^TYX
-        symbols = ["^IRX", "^FVX", "^TNX", "^TYX"]
-        ticker = None
-        for symbol in symbols:
-            try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="max", auto_adjust=False)
-                if hist is not None and not hist.empty and 'Close' in hist.columns:
-                    break
-            except Exception:
-                continue
-        
-        if ticker is None:
-            # Final fallback to ^TNX
-            ticker = yf.Ticker("^TNX")
-        hist = ticker.history(period="max", auto_adjust=False)
-        
-        if hist is not None and not hist.empty and 'Close' in hist.columns:
-            # Filter valid data
-            valid_data = hist[hist['Close'].notnull() & (hist['Close'] > 0)]
-            
-            if not valid_data.empty:
-                # Convert annual percentage to daily rate
-                annual_rates = valid_data['Close'] / 100.0
-                daily_rates = (1 + annual_rates) ** (1 / 365.25) - 1.0
-                
-                # Create series with timezone-naive index
-                daily_rate_series = pd.Series(daily_rates.values, index=daily_rates.index)
-                if getattr(daily_rate_series.index, "tz", None) is not None:
-                    daily_rate_series.index = daily_rate_series.index.tz_convert(None)
-                
-                # For each target date, use the most recent available rate
-                result = pd.Series(index=dates, dtype=float)
-                
-                for i, target_date in enumerate(dates):
-                    # Find the most recent treasury date <= target_date
-                    valid_dates = daily_rate_series.index[daily_rate_series.index <= target_date]
-                    
-                    if len(valid_dates) > 0:
-                        closest_date = valid_dates.max()
-                        result.iloc[i] = daily_rate_series.loc[closest_date]
-                    else:
-                        # If no data before target date, use the earliest available
-                        result.iloc[i] = daily_rate_series.iloc[0]
-                
-                # Handle any remaining NaN values
-                if result.isna().any():
-                    result = result.fillna(method='ffill').fillna(method='bfill')
-                    if result.isna().any():
-                        result = result.fillna(0.000105)  # Default daily rate
-                
-                return result
-        
-        # Fallback to default if all else fails
-        return _get_default_risk_free_rate(dates)
-        
-    except Exception:
-        return _get_default_risk_free_rate(dates)
 import contextlib
 from datetime import datetime, timedelta, date, time
 import warnings
@@ -550,22 +474,20 @@ def get_risk_free_rate_robust(dates):
                         closest_date = valid_dates.max()
                         result.iloc[i] = daily_rate_series.loc[closest_date]
                     else:
-                        # If no data before target date, use the earliest available
+                        # Use the earliest available rate
                         result.iloc[i] = daily_rate_series.iloc[0]
                 
-                # Handle any remaining NaN values
-                if result.isna().any():
-                    result = result.fillna(method='ffill').fillna(method='bfill')
-                    if result.isna().any():
-                        result = result.fillna(0.000105)  # Default daily rate
-                
                 return result
-        
-        # Fallback to default if all else fails
-        return _get_default_risk_free_rate(dates)
-        
-    except Exception:
-        return _get_default_risk_free_rate(dates)
+            else:
+                # No valid data - return constant rate
+                return pd.Series(0.0001, index=dates)
+        else:
+            # No data available - return constant rate
+            return pd.Series(0.0001, index=dates)
+            
+    except Exception as e:
+        # Fallback to constant rate
+        return pd.Series(0.0001, index=dates)
 
 def parse_ticker_parameters(ticker_symbol: str) -> tuple[str, float, float]:
     """
@@ -677,21 +599,32 @@ def apply_daily_leverage(price_data: pd.DataFrame, leverage: float, expense_rati
     # Create a copy to avoid modifying original data
     leveraged_data = price_data.copy()
     
-    # Get time-varying risk-free rates for the entire period
+    # Calculate daily cost drag from risk-free rate: (leverage - 1) × risk_free_rate / 365.25
+    # This simulates the cost of borrowing money for leveraged positions
     try:
-        risk_free_rates = get_risk_free_rate_robust(price_data.index)
-        # Ensure risk-free rates are timezone-naive to match price_data
-        if getattr(risk_free_rates.index, "tz", None) is not None:
-            risk_free_rates.index = risk_free_rates.index.tz_localize(None)
+        # Get risk-free rate data for the same period as price data
+        risk_free_data = get_risk_free_rate_robust(price_data.index)
+        if not risk_free_data.empty:
+            # Ensure both indices are timezone-naive for comparison
+            risk_free_data.index = risk_free_data.index.tz_localize(None) if risk_free_data.index.tz is not None else risk_free_data.index
+            price_index_naive = price_data.index.tz_localize(None) if price_data.index.tz is not None else price_data.index
+            
+            # Reindex risk-free rates to match price data dates
+            risk_free_rates = risk_free_data.reindex(price_index_naive, method='ffill')
+            # Calculate daily cost drag: (leverage - 1) × daily_risk_free_rate
+            # risk_free_rates are already daily rates, so no need to divide by 365.25
+            daily_cost_drag = (leverage - 1) * risk_free_rates
+            # Clean up any NaN values at the beginning
+            daily_cost_drag = daily_cost_drag.fillna(0)
+            
+        else:
+            # Fallback: use 0% risk-free rate if data unavailable
+            daily_cost_drag = 0
+            st.warning("⚠️ Risk-free rate data unavailable - using 0% drag for leveraged positions. Results may be inaccurate.")
     except Exception as e:
-        raise
-    
-    # Calculate daily cost drag: (leverage - 1) × risk_free_rate
-    # risk_free_rates is already in daily format, so we don't need to divide by 365.25
-    try:
-        daily_cost_drag = (leverage - 1) * risk_free_rates
-    except Exception as e:
-        raise
+        # Fallback: use 0% risk-free rate if any error occurs
+        daily_cost_drag = 0
+        st.warning(f"⚠️ Risk-free rate calculation failed ({str(e)}) - using 0% drag for leveraged positions. Results may be inaccurate.")
     
     # Calculate daily expense ratio drag: expense_ratio / 100 / 365.25 (annual to daily)
     daily_expense_drag = expense_ratio / 100.0 / 365.25
@@ -703,7 +636,11 @@ def apply_daily_leverage(price_data: pd.DataFrame, leverage: float, expense_rati
     daily_returns[1:] = prices[1:] / prices[:-1] - 1  # Vectorized returns calculation
     
     # Apply leverage to returns and subtract cost drag
-    leveraged_returns = (daily_returns * leverage) - daily_cost_drag.values - daily_expense_drag
+    # daily_cost_drag is now a Series, so we need to handle it properly
+    if isinstance(daily_cost_drag, pd.Series):
+        leveraged_returns = (daily_returns * leverage) - daily_cost_drag.values - daily_expense_drag
+    else:
+        leveraged_returns = (daily_returns * leverage) - daily_cost_drag - daily_expense_drag
     leveraged_returns[0] = 0  # First day has no return
     
     # Compound the leveraged returns to get prices (cumulative product)
@@ -1255,7 +1192,18 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
                 period=period,
                 auto_adjust=auto_adjust,
                 progress=False,
-                group_by='ticker'
+                group_by='ticker',
+                actions=True  # Include dividends and stock splits
+            )
+        else:
+            # Single ticker - still use batch download for consistency
+            batch_data = yf.download(
+                resolved_list,
+                period=period,
+                auto_adjust=auto_adjust,
+                progress=False,
+                group_by='ticker',
+                actions=True  # Include dividends and stock splits
             )
             
             # Process batch data
@@ -1273,8 +1221,14 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
                             else:
                                 ticker_data = pd.DataFrame()
                         else:
-                            # Single ticker batch
-                            ticker_data = batch_data[['Close', 'Dividends']]
+                            # Single ticker batch - but still has multi-level columns!
+                            if (resolved, 'Close') in batch_data.columns:
+                                # Even single ticker has multi-level columns with group_by='ticker'
+                                ticker_data = pd.DataFrame({
+                                    'Close': batch_data[(resolved, 'Close')],
+                                    'Dividends': pd.Series(0, index=batch_data.index)  # No dividends data
+                                })
+                                ticker_data = pd.DataFrame()
                         
                         if not ticker_data.empty:
                             # Apply leverage/expense if needed
@@ -1292,6 +1246,119 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
         # NO FALLBACK - Force batch mode only
         st.error(f"❌ Batch download failed: {e}")
         return {}
+    
+    return results
+
+def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
+    """
+    Smart batch download for multiple tickers.
+    
+    Args:
+        ticker_list: List of ticker symbols (can include leverage format)
+        period: Data period
+        auto_adjust: Auto-adjust setting
+    
+    Returns:
+        Dict[ticker_symbol, DataFrame]: Data for each ticker
+    """
+    if not ticker_list:
+        return {}
+    
+    results = {}
+    yahoo_tickers = []
+    
+    for ticker_symbol in ticker_list:
+        # Parse parameters from ticker if it has ?L= or ?E= format
+        base_ticker = ticker_symbol
+        leverage = 1.0
+        expense_ratio = 0.0
+        
+        if '?L=' in ticker_symbol or '?E=' in ticker_symbol:
+            parts = ticker_symbol.split('?')
+            base_ticker = parts[0]
+            for part in parts[1:]:
+                if part.startswith('L='):
+                    try:
+                        leverage = float(part[2:])
+                    except:
+                        pass
+                elif part.startswith('E='):
+                    try:
+                        expense_ratio = float(part[2:])
+                    except:
+                        pass
+        
+        resolved = resolve_ticker_alias(base_ticker)
+        yahoo_tickers.append((ticker_symbol, resolved, leverage, expense_ratio))
+    
+    # Extract unique resolved tickers for batch download (exclude _COMPLETE tickers and ZEROX)
+    resolved_list = list(set([resolved for _, resolved, _, _ in yahoo_tickers if not resolved.endswith('_COMPLETE') and resolved != 'ZEROX']))
+    
+    try:
+        # BATCH DOWNLOAD - Fast path (1 API call for all)
+        if len(resolved_list) > 1:
+            batch_data = yf.download(
+                resolved_list,
+                period=period,
+                auto_adjust=auto_adjust,
+                progress=False,
+                group_by='ticker',
+                actions=True  # Include dividends and stock splits
+            )
+        else:
+            # Single ticker - still use batch download for consistency
+            batch_data = yf.download(
+                resolved_list,
+                period=period,
+                auto_adjust=auto_adjust,
+                progress=False,
+                group_by='ticker',
+                actions=True  # Include dividends and stock splits
+            )
+            
+        # Process batch data
+        if not batch_data.empty:
+            for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
+                try:
+                    # Skip _COMPLETE tickers and ZEROX (they will be handled in fallback section)
+                    if resolved.endswith('_COMPLETE') or resolved == 'ZEROX':
+                        continue
+                    
+                    if len(resolved_list) > 1:
+                        # Multi-ticker batch - need to access multi-level columns
+                        if (resolved, 'Close') in batch_data.columns:
+                            # Create DataFrame with Close and Dividends columns
+                            dividends_data = batch_data.get((resolved, 'Dividends'), pd.Series(0, index=batch_data.index))
+                            ticker_data = pd.DataFrame({
+                                'Close': batch_data[(resolved, 'Close')],
+                                'Dividends': dividends_data
+                            })
+                        else:
+                            ticker_data = pd.DataFrame()
+                    else:
+                        # Single ticker batch - but still has multi-level columns!
+                        if (resolved, 'Close') in batch_data.columns:
+                            # Even single ticker has multi-level columns with group_by='ticker'
+                            dividends_data = batch_data.get((resolved, 'Dividends'), pd.Series(0, index=batch_data.index))
+                            ticker_data = pd.DataFrame({
+                                'Close': batch_data[(resolved, 'Close')],
+                                'Dividends': dividends_data
+                            })
+                            ticker_data = pd.DataFrame()
+                    
+                    if not ticker_data.empty:
+                        # Apply leverage/expense if needed
+                        if leverage != 1.0 or expense_ratio != 0.0:
+                            ticker_data = apply_daily_leverage(ticker_data, leverage, expense_ratio)
+                        results[ticker_symbol] = ticker_data
+                except Exception as e:
+                    pass
+            else:
+                raise Exception("Batch download returned empty")
+                
+    except Exception as e:
+        # NO FALLBACK - Pure batch mode only
+        pass
     
     return results
 
@@ -1415,7 +1482,7 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_ticker_info_batch(ticker_list):
     """
-    TRUE BATCH: Fetch ticker info for multiple tickers using yahooquery library.
+    TRUE BATCH: Fetch ticker info for multiple tickers using yahooquery library + disk cache.
     This makes only 1 API call for all tickers instead of 1 call per ticker!
     Returns dict[ticker_symbol, info_dict]
     """
@@ -1423,15 +1490,35 @@ def get_ticker_info_batch(ticker_list):
         if not ticker_list:
             return {}
         
+        # Initialize disk cache for ticker info
+        cache_dir = '.streamlit/ticker_info_cache'
+        os.makedirs(cache_dir, exist_ok=True)
+        info_cache = dc.Cache(cache_dir)
+        
         # Parse and resolve all tickers
         resolved_tickers = {}
+        cached_results = {}
+        uncached_tickers = []
+        
         for ticker_symbol in ticker_list:
             base_ticker, leverage = parse_leverage_ticker(ticker_symbol)
             resolved_ticker = resolve_ticker_alias(base_ticker)
             resolved_tickers[ticker_symbol] = resolved_ticker
+            
+            # Check cache first
+            cache_key = f"info_{resolved_ticker}"
+            cached_info = info_cache.get(cache_key)
+            if cached_info is not None:
+                cached_results[ticker_symbol] = cached_info
+            else:
+                uncached_tickers.append(resolved_ticker)
+        
+        # Return cached results if all were cached
+        if not uncached_tickers:
+            return cached_results
         
         # Get unique resolved tickers to avoid duplicate API calls
-        unique_resolved = list(set(resolved_tickers.values()))
+        unique_resolved = list(set(uncached_tickers))
         
         # Try to use yahooquery for true batching (1 API call for all tickers)
         try:
@@ -1640,10 +1727,18 @@ def get_ticker_info_batch(ticker_list):
             if 'api_call_count' in st.session_state:
                 st.session_state.api_call_count += 1
             
+            # Store results in disk cache for 4 hours
+            for resolved_ticker, info in batch_info.items():
+                cache_key = f"info_{resolved_ticker}"
+                info_cache.set(cache_key, info, expire=4*3600)
+            
             # Map back to original ticker symbols
             result = {}
             for ticker_symbol, resolved_ticker in resolved_tickers.items():
                 result[ticker_symbol] = batch_info.get(resolved_ticker, {})
+            
+            # Merge with cached results
+            result.update(cached_results)
             
             return result
             
@@ -5702,6 +5797,15 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
     # Dictionaries to store historical data for new tables
     historical_allocations = {}
     historical_metrics = {}
+    
+    # Precompute start dates for all tickers (same as Page 4 and 5)
+    start_dates_config = {}
+    for t in tickers:
+        if t in reindexed_data and isinstance(reindexed_data.get(t), pd.DataFrame):
+            fd = reindexed_data[t].first_valid_index()
+            start_dates_config[t] = fd if fd is not None else pd.NaT
+        else:
+            start_dates_config[t] = pd.NaT
 
     def calculate_momentum(date, current_assets, momentum_windows, stocks_config=None):
         cumulative_returns, valid_assets = {}, []
@@ -5718,6 +5822,9 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             
             # Only calculate momentum for filtered assets
             assets_to_calculate = filtered_assets
+        else:
+            # No MA filter - use all assets
+            pass
         filtered_windows = [w for w in momentum_windows if w["weight"] > 0]
         # Normalize weights so they sum to 1 (same as app.py)
         total_weight = sum(w["weight"] for w in filtered_windows)
@@ -5725,27 +5832,41 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             normalized_weights = [0 for _ in filtered_windows]
         else:
             normalized_weights = [w["weight"] / total_weight for w in filtered_windows]
-        start_dates_config = {t: reindexed_data[t].first_valid_index() for t in tickers if t in reindexed_data and not isinstance(reindexed_data[t], str)}
+        
+        # Only consider assets that exist in current_data (filtered earlier)
+        candidate_assets = [t for t in assets_to_calculate if t in current_data]
         
         # Calculate momentum only for SMA-filtered assets
-        for t in assets_to_calculate:
+        for t in candidate_assets:
             is_valid, asset_returns = True, 0.0
+            df_t = current_data.get(t)
+            if not (isinstance(df_t, pd.DataFrame) and 'Close' in df_t.columns and not df_t['Close'].dropna().empty):
+                # no usable data for this ticker
+                continue
             for idx, window in enumerate(filtered_windows):
                 lookback, exclude = window["lookback"], window["exclude"]
                 weight = normalized_weights[idx]
                 start_mom = date - pd.Timedelta(days=lookback)
                 end_mom = date - pd.Timedelta(days=exclude)
-                if start_dates_config.get(t, pd.Timestamp.max) > start_mom:
-                    is_valid = False; break
-                df_t = current_data[t]
-                price_start_index = df_t.index.asof(start_mom)
-                price_end_index = df_t.index.asof(end_mom)
+                sd = start_dates_config.get(t, pd.NaT)
+                # If no start date or asset starts after required lookback, mark invalid
+                if pd.isna(sd) or sd > start_mom:
+                    is_valid = False
+                    break
+                try:
+                    price_start_index = df_t.index.asof(start_mom)
+                    price_end_index = df_t.index.asof(end_mom)
+                except Exception:
+                    is_valid = False
+                    break
                 if pd.isna(price_start_index) or pd.isna(price_end_index):
-                    is_valid = False; break
+                    is_valid = False
+                    break
                 price_start = df_t.loc[price_start_index, "Close"]
                 price_end = df_t.loc[price_end_index, "Close"]
                 if pd.isna(price_start) or pd.isna(price_end) or price_start == 0:
-                    is_valid = False; break
+                    is_valid = False
+                    break
                 
                 # ACADEMIC FIX: Include dividends in momentum calculation if configured (Jegadeesh & Titman 1993)
                 if include_dividends.get(t, False):
@@ -7654,8 +7775,8 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
     if use_momentum:
         # MOMENTUM: Calculate what allocation would be TODAY using momentum
         try:
-            # Get today's date (last date in simulation)
-            today_date = sim_index[-1]
+            # Get today's date (actual current date, not last simulation date)
+            today_date = pd.Timestamp.now().normalize()
             
             # Get current year tickers for today
             current_year = today_date.year
@@ -7713,7 +7834,7 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
         # EQUAL WEIGHT: Calculate what allocation would be TODAY (5% each)
         try:
             # Get current year tickers for today
-            today_date = sim_index[-1]
+            today_date = pd.Timestamp.now().normalize()
             current_year = today_date.year
             
             if current_year in year_tickers_map:
@@ -7745,15 +7866,9 @@ def calculate_momentum_allocations_dynamic(tickers, reindexed_data, momentum_win
     import pandas as pd
     import numpy as np
     
-    st.write(f"🔍 DEBUG: calculate_momentum_allocations_dynamic called with:")
-    st.write(f"🔍 DEBUG: tickers = {tickers} (type: {type(tickers)})")
-    st.write(f"🔍 DEBUG: momentum_windows = {momentum_windows} (type: {type(momentum_windows)})")
-    st.write(f"🔍 DEBUG: current_year = {current_year} (type: {type(current_year)})")
-    
     # Ensure tickers is a list
     if not isinstance(tickers, list):
         tickers = list(tickers) if hasattr(tickers, '__iter__') else []
-        st.write(f"🔍 DEBUG: Converted tickers to list: {tickers}")
     
     # Get momentum scores for each ticker
     momentum_scores = {}
@@ -9603,6 +9718,33 @@ if st.sidebar.button("📈 Convert to SPY Total Return",
     st.toast("✅ Portfolio converted to SPY Total Return!")
     st.rerun()
 
+# Clear ticker cache button
+if st.sidebar.button("🗑️ Clear Ticker Cache", 
+                    help="Clear the 4-hour ticker cache to force fresh data downloads", 
+                    use_container_width=True):
+    total_cleared = 0
+    
+    # Clear ticker historical data cache
+    cache_dir = '.streamlit/ticker_cache'
+    if os.path.exists(cache_dir):
+        disk_cache = dc.Cache(cache_dir)
+        cache_size = len(disk_cache)
+        disk_cache.clear()
+        total_cleared += cache_size
+    
+    # Clear ticker info cache (PE/valuations)
+    info_cache_dir = '.streamlit/ticker_info_cache'
+    if os.path.exists(info_cache_dir):
+        info_cache = dc.Cache(info_cache_dir)
+        info_cache_size = len(info_cache)
+        info_cache.clear()
+        total_cleared += info_cache_size
+    
+    if total_cleared > 0:
+        st.sidebar.success(f"✅ Cleared {total_cleared} cached items (tickers + PE/valuations)")
+    else:
+        st.sidebar.info("No cache to clear")
+
 # Clear all portfolios button - quick access outside dropdown
 if st.sidebar.button("🗑️ Clear All Portfolios", key="multi_backtest_clear_all_portfolios_immediate", 
                     help="Delete ALL portfolios and create a blank one", use_container_width=True):
@@ -9937,8 +10079,6 @@ if portfolio_count >= 2:
                     )
                     
                     if selected_portfolios:
-                        # Debug: Show current portfolio count
-                        st.info(f"🔍 Creating fusion with {len(selected_portfolios)} portfolios: {', '.join(selected_portfolios)}")
                         
                         # Simple allocation inputs
                         st.markdown("**Allocations (%)**")
@@ -12242,35 +12382,29 @@ with st.expander("🔧 Bulk Leverage Controls", expanded=False):
             pass
 
 # Special tickers and leverage guide sections
-with st.expander("📈 Broad Long-Term Tickers", expanded=False):
+with st.expander("The Power of Sticking to One Strategy", expanded=False):
     st.markdown("""
-    **Recommended tickers for long-term strategies:**
+    **Why staying invested beats market timing**
     
-    **Core ETFs:**
-    - **SPY** - S&P 500 (0.09% expense ratio)
-    - **QQQ** - NASDAQ-100 (0.20% expense ratio)  
-    - **VTI** - Total Stock Market (0.03% expense ratio)
-    - **VEA** - Developed Markets (0.05% expense ratio)
-    - **VWO** - Emerging Markets (0.10% expense ratio)
+    Decades of research show that investors who try to time the market consistently underperform those who stay invested. The Dalbar study found that from 2001 to 2020, the average investor earned just 5.04 percent annually while the S&P 500 returned 9.85 percent over the same period. A nearly five percentage point difference compounds dramatically over time.
     
-    **Sector ETFs:**
-    - **XLK** - Technology (0.10% expense ratio)
-    - **XLF** - Financials (0.10% expense ratio)
-    - **XLE** - Energy (0.10% expense ratio)
-    - **XLV** - Healthcare (0.10% expense ratio)
-    - **XLI** - Industrials (0.10% expense ratio)
+    **The performance penalty of emotion**
     
-    **Bond ETFs:**
-    - **TLT** - 20+ Year Treasury (0.15% expense ratio)
-    - **IEF** - 7-10 Year Treasury (0.15% expense ratio)
-    - **LQD** - Investment Grade Corporate (0.14% expense ratio)
-    - **HYG** - High Yield Corporate (0.49% expense ratio)
+    Morningstar research found that during the volatile year of 2020, investors cost themselves between 1.5 and 2 percent in annual returns by trading at the wrong times. The industry average investor trailed their own fund returns by around 1.7 percent annually over 10 years ending 2019. This gap, while seemingly small, can reduce a $100,000 portfolio to about $65,000 over three decades.
     
-    **Commodity ETFs:**
-    - **GLD** - Gold (0.40% expense ratio)
-    - **SLV** - Silver (0.50% expense ratio)
-    - **DBA** - Agriculture (0.93% expense ratio)
-    - **USO** - Oil (0.60% expense ratio)
+    **Why missing the best days destroys returns**
+    
+    The impact of missing just the best trading days is profound. JP Morgan Asset Management found that an investor in the S&P 500 from July 2004 to July 2024 would have earned 10.5 percent annually. Missing just the 10 best days dropped returns to 6.2 percent. Missing the 20 best days dropped it to 3.6 percent, and missing the 30 best days to just 1.4 percent. The best trading days often cluster around market downturns, precisely when fear drives investors away.
+    
+    **The discipline of long-term investing**
+    
+    Barber and Odean analyzed trading data from 66,465 U.S. households from 1991 to 1996. They found that the most active traders earned 11.4 percent annually while the market returned 17.9 percent. The least active traders underperformed by about 6 percent. Trading more led to lower returns, not higher ones.
+    
+    **The solution: time in market beats timing the market**
+    
+    Rather than trying to time market movements, successful investors focus on consistent allocation, regular contributions, and letting compounding work over decades. Wells Fargo Advisors found that from 1994 to 2024, missing the best 30 days dropped annual returns from 8.0 percent to 1.8 percent. Missing the best 50 days resulted in a negative return of 0.86 percent per year.
+    
+    Staying invested through market cycles is one of the most powerful wealth-building strategies available.
     """)
 
 # Special Tickers Section
@@ -12666,11 +12800,16 @@ if leveraged_tickers:
     st.markdown("---")
     st.markdown("### 🚀 Leverage Summary")
     
-    # Get risk-free rate for drag calculation
+    # Get risk-free rate for drag calculation (same logic as apply_daily_leverage)
     try:
-        risk_free_rates = get_risk_free_rate_robust([pd.Timestamp.now()])
-        daily_rf = risk_free_rates.iloc[0] if len(risk_free_rates) > 0 else 0.000105
-        annual_rf = daily_rf * 365.25 * 100  # Convert daily to annual percentage
+        # Use the same logic as apply_daily_leverage for consistency
+        risk_free_data = get_risk_free_rate_robust([pd.Timestamp.now()])
+        if not risk_free_data.empty:
+            daily_rf = risk_free_data.iloc[0]
+            annual_rf = ((1 + daily_rf)**365.25 - 1) * 100  # Convert daily to annual percentage (compounded)
+        else:
+            daily_rf = 0.000105  # fallback
+            annual_rf = 3.86  # fallback annual rate
     except:
         daily_rf = 0.000105  # fallback
         annual_rf = 3.86  # fallback annual rate
@@ -13584,38 +13723,138 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             # Check for kill request before batch
             check_kill_request()
             
-            # SEPARATE batch download: portfolio tickers vs benchmark tickers
+            # PORTFOLIO-BY-PORTFOLIO download strategy (like page 4)
             # Initialize API call counter
             api_call_count = 0
             st.session_state.api_call_count = 0  # Initialize individual API call counter
             
-            # Separate portfolio tickers from benchmark tickers
-            portfolio_tickers_to_download = [t for t in all_tickers_to_download if t in portfolio_tickers]
-            benchmark_tickers_to_download = [t for t in all_tickers_to_download if t in benchmark_tickers]
+            # Download tickers by portfolio to maintain synchronization
+            all_results = {}
             
-            # Batch download for portfolio tickers (main batch)
-            batch_results = {}
-            if portfolio_tickers_to_download:
-                portfolio_batch = get_multiple_tickers_batch(portfolio_tickers_to_download, period="max", auto_adjust=False)
-                batch_results.update(portfolio_batch)
-                api_call_count += 1  # 1 API call for portfolio tickers
+            # First, download benchmark tickers individually
+            user_benchmark_tickers = []
+            for config in st.session_state.multi_backtest_portfolio_configs:
+                benchmark_ticker = config.get('benchmark_ticker')
+                if benchmark_ticker and benchmark_ticker in all_tickers_to_download:
+                    user_benchmark_tickers.append(benchmark_ticker)
             
-            # Individual download for benchmark tickers (separate)
-            for benchmark_ticker in benchmark_tickers_to_download:
+            # Remove duplicates
+            user_benchmark_tickers = list(set(user_benchmark_tickers))
+            
+            # INDIVIDUAL DOWNLOADS for benchmark tickers
+            for ticker in user_benchmark_tickers:
                 try:
-                    benchmark_data = get_ticker_data(benchmark_ticker, period="max", auto_adjust=False)
-                    batch_results[benchmark_ticker] = benchmark_data
-                    api_call_count += 1  # 1 API call per benchmark
+                    ticker_obj = yf.Ticker(ticker)
+                    data = ticker_obj.history(period="max", auto_adjust=False, actions=True)
+                    if not data.empty:
+                        all_results[ticker] = data
+                        st.session_state.api_call_count += 1
                 except Exception as e:
-                    batch_results[benchmark_ticker] = pd.DataFrame()
+                    print(f"Failed to download benchmark ticker {ticker}: {e}")
+                    continue
             
-            # Process batch results
+            # PORTFOLIO-BY-PORTFOLIO downloads for portfolio tickers
+            for config in st.session_state.multi_backtest_portfolio_configs:
+                portfolio_tickers = [stock['ticker'] for stock in config.get('stocks', []) if stock['ticker']]
+                # Filter to only tickers that need downloading and are not already downloaded
+                portfolio_tickers_to_download = [t for t in portfolio_tickers if t in all_tickers_to_download and t not in all_results]
+                
+                if portfolio_tickers_to_download:
+                    # Check if any ticker has parameters (?L= or ?E=) - use individual download for those
+                    has_parameters = any('?L=' in ticker or '?E=' in ticker for ticker in portfolio_tickers_to_download)
+                    if has_parameters or len(portfolio_tickers_to_download) == 1:
+                        # Use individual downloads for tickers with parameters or single tickers
+                        for ticker in portfolio_tickers_to_download:
+                            try:
+                                # Parse ticker parameters to get base ticker
+                                base_ticker, leverage, expense_ratio = parse_ticker_parameters(ticker)
+                                # Resolve ticker alias (SPYTR → ^SP500TR, XLVND → ^SP500-35, etc.)
+                                resolved_ticker = resolve_ticker_alias(base_ticker)
+                                
+                                # Check if it's a special ticker that needs custom handling
+                                custom_list = ["ZEROX", "GOLD_COMPLETE", "ZROZ_COMPLETE", "TLT_COMPLETE", 
+                                              "BTC_COMPLETE", "IEF_COMPLETE", "KMLM_COMPLETE", "DBMF_COMPLETE",
+                                              "TBILL_COMPLETE", "SPYSIM_COMPLETE", "GOLDSIM_COMPLETE"]
+                                
+                                # Also check if the original ticker (before resolution) is a special ticker
+                                special_aliases = ["GOLDX", "ZROZX", "TLTTR", "BITCOINX", "IEFTR", "KMLMX", "DBMFX", 
+                                                  "TBILL", "SPYSIM", "GOLDSIM", "GOLD50", "ZROZ50", "TLT50", 
+                                                  "BTC50", "IEF50", "KMLM50", "DBMF50", "TBILL50"]
+                                
+                                if resolved_ticker in custom_list or base_ticker.upper() in special_aliases:
+                                    # Use the existing get_ticker_data function which handles special tickers
+                                    data = get_ticker_data(ticker, period="max", auto_adjust=False)
+                                    if not data.empty:
+                                        all_results[ticker] = data
+                                else:
+                                    # Regular ticker - use yfinance directly with BASE ticker
+                                    ticker_obj = yf.Ticker(base_ticker)  # Use base_ticker, not resolved_ticker
+                                    data = ticker_obj.history(period="max", auto_adjust=False, actions=True)
+                                    if not data.empty:
+                                        # Apply leverage and expense if needed
+                                        if leverage != 1.0 or expense_ratio != 0.0:
+                                            data = apply_daily_leverage(data, leverage, expense_ratio)
+                                        all_results[ticker] = data
+                                        st.session_state.api_call_count += 1
+                            except Exception as e:
+                                print(f"Failed to download {ticker}: {e}")
+                                continue
+                    else:
+                        # Use batch download for multiple tickers without parameters
+                        try:
+                            portfolio_results = get_multiple_tickers_batch(portfolio_tickers_to_download, period="max", auto_adjust=False)
+                            all_results.update(portfolio_results)
+                            api_call_count += 1
+                        except Exception as e:
+                            print(f"Failed to download portfolio {config['name']} tickers: {e}")
+                            # Fallback to individual downloads for this portfolio
+                            for ticker in portfolio_tickers_to_download:
+                                try:
+                                    # Parse ticker parameters to get base ticker
+                                    base_ticker, leverage, expense_ratio = parse_ticker_parameters(ticker)
+                                    # Resolve ticker alias (SPYTR → ^SP500TR, XLVND → ^SP500-35, etc.)
+                                    resolved_ticker = resolve_ticker_alias(base_ticker)
+                                    
+                                    # Check if it's a special ticker that needs custom handling
+                                    custom_list = ["ZEROX", "GOLD_COMPLETE", "ZROZ_COMPLETE", "TLT_COMPLETE", 
+                                                  "BTC_COMPLETE", "IEF_COMPLETE", "KMLM_COMPLETE", "DBMF_COMPLETE",
+                                                  "TBILL_COMPLETE", "SPYSIM_COMPLETE", "GOLDSIM_COMPLETE"]
+                                    
+                                    # Also check if the original ticker (before resolution) is a special ticker
+                                    special_aliases = ["GOLDX", "ZROZX", "TLTTR", "BITCOINX", "IEFTR", "KMLMX", "DBMFX", 
+                                                      "TBILL", "SPYSIM", "GOLDSIM", "GOLD50", "ZROZ50", "TLT50", 
+                                                      "BTC50", "IEF50", "KMLM50", "DBMF50", "TBILL50"]
+                                    
+                                    if resolved_ticker in custom_list or base_ticker.upper() in special_aliases:
+                                        # Use the existing get_ticker_data function which handles special tickers
+                                        # Pass only the base ticker (without parameters) to get_ticker_data
+                                        data = get_ticker_data(base_ticker, period="max", auto_adjust=False)
+                                        if not data.empty:
+                                            # Apply leverage and expense if needed
+                                            if leverage != 1.0 or expense_ratio != 0.0:
+                                                data = apply_daily_leverage(data, leverage, expense_ratio)
+                                            all_results[ticker] = data
+                                    else:
+                                        # Regular ticker - use yfinance directly
+                                        ticker_obj = yf.Ticker(resolved_ticker)
+                                        data = ticker_obj.history(period="max", auto_adjust=False, actions=True)
+                                        if not data.empty:
+                                            # Apply leverage and expense if needed
+                                            if leverage != 1.0 or expense_ratio != 0.0:
+                                                data = apply_daily_leverage(data, leverage, expense_ratio)
+                                            all_results[ticker] = data
+                                            st.session_state.api_call_count += 1
+                                except Exception as e:
+                                    print(f"Failed to download {ticker}: {e}")
+                                    continue
+            
+            # Process all results (benchmark + batch)
             for t in all_tickers_to_download:
                 download_count += 1
                 progress_text = f"Processing {t} ({download_count}/{total_downloads})..."
                 progress_bar.progress(download_count / total_downloads, text=progress_text)
                 
-                hist = batch_results.get(t, pd.DataFrame())
+                hist = all_results.get(t, pd.DataFrame())
                 
                 # Check if ticker data is valid (not empty and has proper structure)
                 if hist.empty or not hasattr(hist, 'Close') or hist['Close'].isna().all():
@@ -13628,7 +13867,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     hist.index = hist.index.tz_localize(None)
                     
                     hist["Price_change"] = hist["Close"].pct_change(fill_method=None).fillna(0)
-                    data[t] = hist
+                    all_results[t] = hist
                 except Exception as e:
                     invalid_tickers.append(t)
             
@@ -13657,9 +13896,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             # But don't count special tickers as invalid
             special_tickers_in_portfolio = [t for t in all_tickers if is_special_dynamic_ticker(t)]
             regular_tickers = [t for t in all_tickers if not is_special_dynamic_ticker(t)]
-            valid_regular_tickers = [t for t in regular_tickers if t in data]
+            valid_regular_tickers = [t for t in regular_tickers if t in all_results]
             
-            if not data and not special_tickers_in_portfolio:
+            if not all_results and not special_tickers_in_portfolio:
                 if invalid_tickers and len(invalid_tickers) == len(regular_tickers):
                     st.error(f"❌ **No valid tickers found!** All regular tickers are invalid: {', '.join(invalid_tickers)}. Please check your ticker symbols and try again.")
                 else:
@@ -13671,9 +13910,9 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 st.stop()
             else:
                 # Persist raw downloaded price data so later recomputations can access benchmark series
-                st.session_state.multi_backtest_raw_data = data
+                st.session_state.multi_backtest_raw_data = all_results
                 # Determine common date range for all portfolios (filter out special ticker placeholders)
-                valid_data_frames = [df for df in data.values() if not isinstance(df, str)]
+                valid_data_frames = [df for df in all_results.values() if not isinstance(df, str)]
                 if valid_data_frames:
                     common_start = max(df.first_valid_index() for df in valid_data_frames)
                     common_end = min(df.last_valid_index() for df in valid_data_frames)
@@ -13693,8 +13932,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 check_currency_warning(list(all_portfolio_tickers))
                 
                 # Determine final start date based on global start_with setting
-                # Filter to only valid tickers that exist in data
-                valid_portfolio_tickers = [t for t in all_portfolio_tickers if t in data]
+                # Filter to only valid tickers that exist in all_results
+                valid_portfolio_tickers = [t for t in all_portfolio_tickers if t in all_results]
                 
                 if not valid_portfolio_tickers:
                     st.error("❌ **No valid tickers found!** None of your portfolio tickers have data available. Please check your ticker symbols and try again.")
@@ -13707,7 +13946,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 global_start_with = st.session_state.get('multi_backtest_start_with', 'all')
                 
                 # Filter out special ticker placeholders when calculating start date
-                valid_ticker_data = [data[t] for t in valid_portfolio_tickers if not isinstance(data[t], str)]
+                valid_ticker_data = [all_results[t] for t in valid_portfolio_tickers if not isinstance(all_results[t], str)]
                 
                 if valid_ticker_data:
                     if global_start_with == 'all':
@@ -13723,20 +13962,50 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         
                         final_start = max(actual_first_dates)
                     else:  # global_start_with == 'oldest'
-                        # "Oldest" means start with the OLDEST available asset - use the EARLIEST start date
-                        # Use actual data availability, not just index
-                        actual_first_dates = []
-                        for df in valid_ticker_data:
-                            non_null_data = df.dropna()
-                            if not non_null_data.empty:
-                                actual_first_dates.append(non_null_data.index[0])
-                            else:
-                                actual_first_dates.append(df.index[0])  # Fallback
+                        # For 'oldest', find the earliest date where each portfolio has at least one ticker available
+                        # This works with bulk download by checking each portfolio's ticker availability
+                        portfolio_earliest_dates = {}
                         
-                        final_start = min(actual_first_dates)
-                else:
-                    # Fallback for special tickers only - use a reasonable start date
-                    final_start = pd.Timestamp('1989-01-01')
+                        for cfg in st.session_state.multi_backtest_portfolio_configs:
+                            portfolio_tickers = [stock['ticker'] for stock in cfg.get('stocks', []) if stock['ticker']]
+                            valid_portfolio_tickers_for_cfg = [t for t in portfolio_tickers if t in all_results]
+                            
+                            if valid_portfolio_tickers_for_cfg:
+                                # Find the earliest date where this portfolio has at least one ticker available
+                                portfolio_earliest_dates_for_cfg = []
+                                for ticker in valid_portfolio_tickers_for_cfg:
+                                    if ticker in all_results and not isinstance(all_results[ticker], str):
+                                        df = all_results[ticker]
+                                        if not df.empty and 'Close' in df.columns:
+                                            # Find first valid (non-null) data point
+                                            first_valid_idx = df['Close'].first_valid_index()
+                                            if first_valid_idx is not None:
+                                                portfolio_earliest_dates_for_cfg.append(first_valid_idx)
+                                
+                                if portfolio_earliest_dates_for_cfg:
+                                    # This portfolio's earliest available date
+                                    portfolio_earliest = min(portfolio_earliest_dates_for_cfg)
+                                    portfolio_earliest_dates[cfg['name']] = portfolio_earliest
+                        
+                        if portfolio_earliest_dates:
+                            # Find the portfolio that starts the LATEST (most recent earliest date)
+                            # This ensures all portfolios can start at the same time
+                            latest_starting_portfolio = max(portfolio_earliest_dates.items(), key=lambda x: x[1])
+                            final_start = latest_starting_portfolio[1]
+                        else:
+                            # Fallback: use the earliest available date from all tickers
+                            all_earliest_dates = []
+                            for ticker, df in all_results.items():
+                                if not isinstance(df, str) and not df.empty and 'Close' in df.columns:
+                                    first_valid_idx = df['Close'].first_valid_index()
+                                    if first_valid_idx is not None:
+                                        all_earliest_dates.append(first_valid_idx)
+                            
+                            if all_earliest_dates:
+                                final_start = min(all_earliest_dates)
+                            else:
+                                # Ultimate fallback
+                                final_start = pd.Timestamp('1989-01-01')
                 
                 # Apply user date constraints if any
                 for cfg in st.session_state.multi_backtest_portfolio_configs:
@@ -13756,10 +14025,10 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 
                 # Reindex all data to the simulation period (all tickers that have data)
                 data_reindexed = {}
-                # Process ALL tickers in data, not just all_tickers (to include individual tickers from special tickers)
-                for t in data.keys():
-                    if t in data:  # Only process tickers that have data
-                        ticker_data = data[t]
+                # Process ALL tickers in all_results, not just all_tickers (to include individual tickers from special tickers)
+                for t in all_results.keys():
+                    if t in all_results:  # Only process tickers that have data
+                        ticker_data = all_results[t]
                         # Skip special ticker placeholders (they'll be handled in special backtest functions)
                         if isinstance(ticker_data, str):
                             data_reindexed[t] = ticker_data  # Keep as string for special handling
@@ -13779,7 +14048,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 individual_calls = st.session_state.get('api_call_count', 0)
                 
                 if individual_calls > 0:
-                    st.success(f"🚀 **API Efficiency**: Downloaded data for {len(all_tickers_to_download)} tickers using **{api_call_count} batch call(s) + {individual_calls} individual call(s) = {total_api_calls} total API calls** (PE data TRUE BATCHED with yahooquery!)")
+                    st.success(f"API Efficiency: Downloaded data for {len(all_tickers_to_download)} tickers using {api_call_count} batch call(s) + {individual_calls} individual call(s) = {total_api_calls} total API calls (PE data TRUE BATCHED with yahooquery)")
                 
                 # Emergency stop is now handled by the existing emergency_kill function
                 
@@ -13797,7 +14066,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 successful_portfolios = 0
                 failed_portfolios = []
                 
-                st.info(f"🚀 **Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability & caching...**")
+                st.info(f"Processing {len(st.session_state.multi_backtest_portfolio_configs)} portfolios with enhanced reliability and caching")
                 
                 # Start timing for performance measurement
                 import time as time_module
@@ -14183,7 +14452,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     
                     processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and len(regular_portfolios) > 1 else "sequential"
                     worker_info = f" using {max_workers} workers" if processing_mode == "parallel" else ""
-                    st.info(f"🚀 **Phase 1: Processing {len(regular_portfolios)} regular portfolios in {processing_mode} mode{worker_info}...**")
+                    st.info(f"Phase 1: Processing {len(regular_portfolios)} regular portfolios in {processing_mode} mode{worker_info}")
                     
                     if st.session_state.get('use_parallel_processing', True) and len(regular_portfolios) > 1:
                         # Process regular portfolios in parallel using optimized threading
@@ -14385,8 +14654,8 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                 if successful_portfolios > 0:
                     processing_mode = "parallel" if st.session_state.get('use_parallel_processing', True) and total_portfolios > 1 else "sequential"
                     phase_info = f" (Phase 1: {len(regular_portfolios)} regular, Phase 2: {len(fusion_portfolios)} fusion)" if fusion_portfolios else f" ({len(regular_portfolios)} regular portfolios only)"
-                    st.success(f"🎉 **Successfully processed {successful_portfolios}/{len(st.session_state.multi_backtest_portfolio_configs)} portfolios in {processing_mode} mode{phase_info}!**")
-                    st.info(f"⏱️ **Performance:** Total time: {total_time:.2f}s | Average per portfolio: {avg_time_per_portfolio:.2f}s | Mode: {processing_mode.upper()}")
+                    st.success(f"Successfully processed {successful_portfolios}/{len(st.session_state.multi_backtest_portfolio_configs)} portfolios in {processing_mode} mode{phase_info}")
+                    st.info(f"Performance: Total time: {total_time:.2f}s | Average per portfolio: {avg_time_per_portfolio:.2f}s | Mode: {processing_mode.upper()}")
                 else:
                     st.error("❌ **No portfolios were processed successfully!** Please check your configuration.")
                     # Don't stop - let the rest of the page render (including JSON section)
@@ -15971,13 +16240,13 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 if pe_ratio is not None and pe_ratio != 'N/A':
                                     if pe_ratio > 0:
                                         pe_data[ticker] = pe_ratio
-                                else:
-                                    # Check if this is an ETF (which doesn't have PE ratios)
-                                    etf_indicators = ['SPY', 'GLD', 'TLT', 'QQQ', 'VTI', 'VEA', 'VWO', 'AGG', 'BND', 'IEF', 'TLT', 'GLD', 'SLV', 'DIA', 'QQQ', 'IWM']
-                                    if ticker in etf_indicators:
-                                        pass  # ETF - no PE ratio expected
                                     else:
-                                        st.info(f"❌ {ticker}: No PE data available")
+                                        # Check if this is an ETF (which doesn't have PE ratios)
+                                        etf_indicators = ['SPY', 'GLD', 'TLT', 'QQQ', 'VTI', 'VEA', 'VWO', 'AGG', 'BND', 'IEF', 'TLT', 'GLD', 'SLV', 'DIA', 'QQQ', 'IWM']
+                                        if ticker in etf_indicators:
+                                            pass  # ETF - no PE ratio expected
+                                        else:
+                                            st.info(f"❌ {ticker}: No PE data available")
                             except Exception as e:
                                 st.info(f"❌ {ticker}: Error - {e}")
                                 continue
@@ -17964,31 +18233,53 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             st.markdown("---")
             st.markdown(f"**🔄 Rebalance as of Today ({pd.Timestamp.now().strftime('%Y-%m-%d')})**")
             
-            # Get momentum-based calculated weights for today's rebalancing from stored snapshot
+            # TARGET ALLOCATION IF REBALANCE TODAY - FROM SCRATCH USING ONLY MOMENTUM METRICS
             today_weights = {}
             
-            # Get the stored today_weights_map from snapshot data
-            snapshot = st.session_state.get('multi_backtest_snapshot_data', {})
-            today_weights_map = snapshot.get('today_weights_map', {}) if snapshot else {}
+            # Get portfolio configuration
+            portfolio_cfg = next((cfg for cfg in st.session_state.multi_backtest_portfolio_configs 
+                               if cfg.get('name') == selected_portfolio_detail), None)
+            use_momentum = portfolio_cfg.get('use_momentum', True) if portfolio_cfg else True
             
-            if selected_portfolio_detail in today_weights_map:
-                today_weights = today_weights_map.get(selected_portfolio_detail, {})
+            if use_momentum:
+                # MOMENTUM: Get data ONLY from Momentum Metrics table
+                if selected_portfolio_detail in st.session_state.multi_all_metrics:
+                    metrics_data = st.session_state.multi_all_metrics[selected_portfolio_detail]
+                    
+                    if metrics_data:
+                        # Get the most recent date from Momentum Metrics
+                        most_recent_date = max(metrics_data.keys())
+                        most_recent_metrics = metrics_data[most_recent_date]
+                        
+                        # Extract ONLY Calculated_Weight from Momentum Metrics
+                        for ticker, ticker_metrics in most_recent_metrics.items():
+                            if isinstance(ticker_metrics, dict) and 'Calculated_Weight' in ticker_metrics:
+                                weight = ticker_metrics.get('Calculated_Weight', 0)
+                                if weight > 0:  # Only include positive weights
+                                    today_weights[ticker] = weight
+                        
+                        # Add CASH if total < 1.0
+                        total_weight = sum(today_weights.values())
+                        if total_weight < 1.0:
+                            today_weights['CASH'] = 1.0 - total_weight
+                        else:
+                            today_weights['CASH'] = 0.0
             else:
-                # Fallback to current allocation if no stored weights found
-                if selected_portfolio_detail in st.session_state.multi_all_allocations:
-                    allocation_data = st.session_state.multi_all_allocations[selected_portfolio_detail]
-                    if allocation_data:
-                        # Get the most recent allocation
-                        last_date = max(allocation_data.keys())
-                        today_weights = allocation_data[last_date]
-                    else:
-                        today_weights = {}
-                else:
-                    today_weights = {}
+                # NON-MOMENTUM: Use portfolio configuration
+                if portfolio_cfg and portfolio_cfg.get('stocks'):
+                    total_allocation = sum(stock.get('allocation', 0) for stock in portfolio_cfg['stocks'] if stock.get('ticker'))
+                    
+                    if total_allocation > 0:
+                        for stock in portfolio_cfg['stocks']:
+                            ticker = stock.get('ticker', '').strip()
+                            allocation = stock.get('allocation', 0)
+                            if ticker and allocation > 0:
+                                today_weights[ticker] = allocation / total_allocation
             
             # Create labels and values for the plot
             labels_today = [k for k, v in sorted(today_weights.items(), key=lambda x: (-x[1], x[0])) if v > 0]
             vals_today = [float(today_weights[k]) * 100 for k in labels_today]
+            
             
             # Handle case where momentum goes to cash (all assets have negative momentum)
             # If no labels or all values are very small, show 100% CASH
@@ -18123,43 +18414,15 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             # Create the main "Target Allocation if Rebalanced Today" pie chart (CENTER)
             st.markdown(f"**Target Allocation if Rebalanced Today**")
             
-            # ULTRA-OPTIMIZED: Use comprehensive cache for instant display
-            if 'individual_portfolio_cache' in st.session_state and selected_portfolio_detail in st.session_state.individual_portfolio_cache:
-                # Use pre-computed chart from comprehensive cache - INSTANT!
-                portfolio_cache = st.session_state.individual_portfolio_cache[selected_portfolio_detail]
-                fig_today = portfolio_cache.get('pie_chart_figure')
-                
-                if fig_today is not None:
-                    st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
-                    # Store in session state for PDF export
-                    st.session_state[f'pie_chart_{selected_portfolio_detail}'] = fig_today
-                else:
-                    # Fallback if chart not in cache
-                    pie_data = portfolio_cache.get('pie_chart_data', {})
-                    labels_today = pie_data.get('labels', [])
-                    vals_today = pie_data.get('values', [])
-                    
-                    if labels_today and vals_today:
-                        fig_today = go.Figure()
-                        fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
-                        fig_today.update_traces(textinfo='percent+label')
-                        fig_today.update_layout(
-                            template='plotly_dark', 
-                            margin=dict(t=30),
-                            height=600,
-                            showlegend=True
-                        )
-                        st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
-                        st.session_state[f'pie_chart_{selected_portfolio_detail}'] = fig_today
-            else:
-                # Fallback to real-time calculation if comprehensive cache is not available
+            # Create pie chart using ONLY the momentum metrics data we calculated above
+            if labels_today and vals_today:
                 fig_today = go.Figure()
                 fig_today.add_trace(go.Pie(labels=labels_today, values=vals_today, hole=0.3))
                 fig_today.update_traces(textinfo='percent+label')
                 fig_today.update_layout(
                     template='plotly_dark', 
                     margin=dict(t=30),
-                    height=600,  # Make it bigger as the main chart
+                    height=600,
                     showlegend=True
                 )
                 st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
@@ -18491,18 +18754,42 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 labels_final = []
                                 vals_final = []
                         else:
-                            # For regular portfolios, use final_alloc as before
-                            if final_alloc and isinstance(final_alloc, dict):
-                                # Filter out non-numeric values and ensure they're valid
-                                valid_final = {k: v for k, v in final_alloc.items() if isinstance(v, (int, float)) and not pd.isna(v)}
-                                
-                                # NUCLEAR OPTION: Portfolio names are never stored, only individual stocks
-                                
-                                labels_final = [k for k, v in sorted(valid_final.items(), key=lambda x: (-x[1], x[0])) if v > 0]
-                                vals_final = [float(valid_final[k]) * 100 for k in labels_final]
+                            # For regular portfolios, use MOMENTUM METRICS instead of final_alloc
+                            if selected_portfolio_detail in st.session_state.multi_all_metrics:
+                                metrics_data = st.session_state.multi_all_metrics[selected_portfolio_detail]
+                                if metrics_data:
+                                    most_recent_date = max(metrics_data.keys())
+                                    most_recent_metrics = metrics_data[most_recent_date]
+                                    
+                                    # Convert metrics to allocation format
+                                    current_alloc_from_metrics = {}
+                                    for ticker, ticker_metrics in most_recent_metrics.items():
+                                        if isinstance(ticker_metrics, dict) and 'Calculated_Weight' in ticker_metrics:
+                                            weight = ticker_metrics.get('Calculated_Weight', 0)
+                                            if weight > 0:
+                                                current_alloc_from_metrics[ticker] = weight
+                                    
+                                    # Add CASH if total < 1.0
+                                    total_weight = sum(current_alloc_from_metrics.values())
+                                    if total_weight < 1.0:
+                                        current_alloc_from_metrics['CASH'] = 1.0 - total_weight
+                                    else:
+                                        current_alloc_from_metrics['CASH'] = 0.0
+                                    
+                                    labels_final = [k for k, v in sorted(current_alloc_from_metrics.items(), key=lambda x: (-x[1], x[0])) if v > 0]
+                                    vals_final = [float(current_alloc_from_metrics[k]) * 100 for k in labels_final]
+                                else:
+                                    labels_final = []
+                                    vals_final = []
                             else:
-                                labels_final = []
-                                vals_final = []
+                                # Fallback to final_alloc if no metrics available
+                                if final_alloc and isinstance(final_alloc, dict):
+                                    valid_final = {k: v for k, v in final_alloc.items() if isinstance(v, (int, float)) and not pd.isna(v)}
+                                    labels_final = [k for k, v in sorted(valid_final.items(), key=lambda x: (-x[1], x[0])) if v > 0]
+                                    vals_final = [float(valid_final[k]) * 100 for k in labels_final]
+                                else:
+                                    labels_final = []
+                                    vals_final = []
                         
                         if rebal_alloc and isinstance(rebal_alloc, dict):
                             # Filter out non-numeric values and ensure they're valid
@@ -18784,8 +19071,33 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         # Last rebalance table (use last_rebal_date)
                         build_table_from_alloc(rebal_alloc, last_rebal_date, f"Target Allocation at Last Rebalance ({last_rebal_date.date()})")
                         
-                        # Current / Today table (use final_date's latest available prices as of now)
-                        build_table_from_alloc(final_alloc, None, f"Portfolio Evolution (Current Allocation)")
+                        # Current / Today table - USE MOMENTUM METRICS INSTEAD OF final_alloc
+                        if selected_portfolio_detail in st.session_state.multi_all_metrics:
+                            metrics_data = st.session_state.multi_all_metrics[selected_portfolio_detail]
+                            if metrics_data:
+                                most_recent_date = max(metrics_data.keys())
+                                most_recent_metrics = metrics_data[most_recent_date]
+                                
+                                # Convert metrics to allocation format
+                                current_alloc_from_metrics = {}
+                                for ticker, ticker_metrics in most_recent_metrics.items():
+                                    if isinstance(ticker_metrics, dict) and 'Calculated_Weight' in ticker_metrics:
+                                        weight = ticker_metrics.get('Calculated_Weight', 0)
+                                        if weight > 0:
+                                            current_alloc_from_metrics[ticker] = weight
+                                
+                                # Add CASH if total < 1.0
+                                total_weight = sum(current_alloc_from_metrics.values())
+                                if total_weight < 1.0:
+                                    current_alloc_from_metrics['CASH'] = 1.0 - total_weight
+                                else:
+                                    current_alloc_from_metrics['CASH'] = 0.0
+                                
+                                build_table_from_alloc(current_alloc_from_metrics, None, f"Portfolio Evolution (Current Allocation)")
+                            else:
+                                build_table_from_alloc(final_alloc, None, f"Portfolio Evolution (Current Allocation)")
+                        else:
+                            build_table_from_alloc(final_alloc, None, f"Portfolio Evolution (Current Allocation)")
 
             # This section was moved earlier in the file - removing duplicate
 
@@ -18802,23 +19114,48 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     # Get "If Rebalanced Today" ticker allocations (EXACT same as the pie chart)
                     current_ticker_allocations = {}
                     
-                    # Use the EXACT same logic as the "Target Allocation if Rebalanced Today" plot
-                    snapshot = st.session_state.get('multi_backtest_snapshot_data', {})
-                    today_weights_map = snapshot.get('today_weights_map', {}) if snapshot else {}
+                    # TARGET ALLOCATION IF REBALANCE TODAY - FROM SCRATCH USING ONLY MOMENTUM METRICS
+                    current_ticker_allocations = {}
                     
-                    if selected_portfolio_detail in today_weights_map:
-                        current_ticker_allocations = today_weights_map.get(selected_portfolio_detail, {})
+                    # Get portfolio configuration
+                    portfolio_cfg = next((cfg for cfg in st.session_state.multi_backtest_portfolio_configs 
+                                        if cfg.get('name') == selected_portfolio_detail), None)
+                    use_momentum = portfolio_cfg.get('use_momentum', True) if portfolio_cfg else True
+                    
+                    if use_momentum:
+                        # MOMENTUM: Get data ONLY from Momentum Metrics table
+                        if selected_portfolio_detail in st.session_state.multi_all_metrics:
+                            metrics_data = st.session_state.multi_all_metrics[selected_portfolio_detail]
+                            
+                            if metrics_data:
+                                # Get the most recent date from Momentum Metrics
+                                most_recent_date = max(metrics_data.keys())
+                                most_recent_metrics = metrics_data[most_recent_date]
+                                
+                                # Extract ONLY Calculated_Weight from Momentum Metrics
+                                for ticker, ticker_metrics in most_recent_metrics.items():
+                                    if isinstance(ticker_metrics, dict) and 'Calculated_Weight' in ticker_metrics:
+                                        weight = ticker_metrics.get('Calculated_Weight', 0)
+                                        if weight > 0:  # Only include positive weights
+                                            current_ticker_allocations[ticker] = weight
+                                
+                                # Add CASH if total < 1.0
+                                total_weight = sum(current_ticker_allocations.values())
+                                if total_weight < 1.0:
+                                    current_ticker_allocations['CASH'] = 1.0 - total_weight
+                                else:
+                                    current_ticker_allocations['CASH'] = 0.0
                     else:
-                        # Fallback to current allocation if no stored weights found
-                        if selected_portfolio_detail in st.session_state.multi_all_allocations:
-                            allocation_data = st.session_state.multi_all_allocations[selected_portfolio_detail]
-                            if allocation_data:
-                                last_date = max(allocation_data.keys())
-                                current_ticker_allocations = allocation_data[last_date]
-                            else:
-                                current_ticker_allocations = {}
-                        else:
-                            current_ticker_allocations = {}
+                        # NON-MOMENTUM: Use portfolio configuration
+                        if portfolio_cfg and portfolio_cfg.get('stocks'):
+                            total_allocation = sum(stock.get('allocation', 0) for stock in portfolio_cfg['stocks'] if stock.get('ticker'))
+                            
+                            if total_allocation > 0:
+                                for stock in portfolio_cfg['stocks']:
+                                    ticker = stock.get('ticker', '').strip()
+                                    allocation = stock.get('allocation', 0)
+                                    if ticker and allocation > 0:
+                                        current_ticker_allocations[ticker] = allocation / total_allocation
                     
                     # Create JSON structure for Allocations page compatibility (always available for fusion portfolios)
                     # Get the actual fusion portfolio rebalancing frequency
@@ -20138,11 +20475,21 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         col1, col2, col3 = st.columns(3)
         with col1:
             if st.button("🔄 Clear Cache", help="Clear all cached charts and data"):
-                # Clear all cached data
+                # Clear session state cache
                 keys_to_clear = [key for key in st.session_state.keys() if key.startswith(('multi_allocation_evolution_chart_', 'processed_allocations_df_', 'processed_allocations_tickers_', 'pie_chart_'))]
                 for key in keys_to_clear:
                     del st.session_state[key]
-                st.success("Cache cleared! Charts will be recreated on next selection.")
+                
+                # Clear ticker info cache (PE/valuations)
+                total_cleared = len(keys_to_clear)
+                info_cache_dir = '.streamlit/ticker_info_cache'
+                if os.path.exists(info_cache_dir):
+                    info_cache = dc.Cache(info_cache_dir)
+                    info_cache_size = len(info_cache)
+                    info_cache.clear()
+                    total_cleared += info_cache_size
+                
+                st.success(f"Cache cleared! ({total_cleared} items including charts + PE/valuations)")
                 st.rerun()
         
         with col2:
@@ -20514,13 +20861,13 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                         if pe_ratio is not None and pe_ratio != 'N/A':
                                             if pe_ratio > 0:
                                                 pe_data[ticker] = pe_ratio
-                                        else:
-                                            # Check if this is an ETF (which doesn't have PE ratios)
-                                            etf_indicators = ['SPY', 'GLD', 'TLT', 'QQQ', 'VTI', 'VEA', 'VWO', 'AGG', 'BND', 'IEF', 'TLT', 'GLD', 'SLV', 'DIA', 'QQQ', 'IWM']
-                                            if ticker in etf_indicators:
-                                                pass  # ETF - no PE ratio expected
                                             else:
-                                                st.info(f"❌ {ticker}: No PE data available")
+                                                # Check if this is an ETF (which doesn't have PE ratios)
+                                                etf_indicators = ['SPY', 'GLD', 'TLT', 'QQQ', 'VTI', 'VEA', 'VWO', 'AGG', 'BND', 'IEF', 'TLT', 'GLD', 'SLV', 'DIA', 'QQQ', 'IWM']
+                                                if ticker in etf_indicators:
+                                                    pass  # ETF - no PE ratio expected
+                                                else:
+                                                    st.info(f"❌ {ticker}: No PE data available")
                                         
                                         # Try to get historical earnings data (placeholder for future implementation)
                                         try:
