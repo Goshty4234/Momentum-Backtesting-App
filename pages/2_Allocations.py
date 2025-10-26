@@ -9919,6 +9919,28 @@ if st.session_state.get('alloc_backtest_run', False):
             
             if labels_today and vals_today:
                 st.markdown(f"## Rebalance as of Today ({pd.Timestamp.now().strftime('%Y-%m-%d')})")
+                
+                # Check if targeted rebalancing is enabled for this portfolio and show warning
+                if active_portfolio.get('use_targeted_rebalancing', False):
+                    targeted_settings = active_portfolio.get('targeted_rebalancing_settings', {})
+                    enabled_tickers = [ticker for ticker, settings in targeted_settings.items() if settings.get('enabled', False)]
+                    
+                    if enabled_tickers:
+                        st.warning(f"""
+                        ⚠️ **Important Notice for Targeted Rebalancing Strategy**
+                        
+                        This portfolio uses **Targeted Rebalancing** for: {', '.join(enabled_tickers)}
+                        
+                        **Unlike momentum strategies**, the "Target Allocation if Rebalanced Today" depends on the **backtest start date**. 
+                        The allocation shown here reflects what would happen if rebalanced today based on the current portfolio state, 
+                        but this is **not a standalone strategy** that can be copied independently.
+                        
+                        **Key Points:**
+                        - The allocation depends on when the backtest started
+                        - It's based on the current portfolio drift from initial allocations
+                        - This is **not** a momentum-based allocation like other strategies
+                        """)
+                
                 fig_today = go.Figure(data=[go.Pie(
                     labels=labels_today,
                     values=vals_today,
