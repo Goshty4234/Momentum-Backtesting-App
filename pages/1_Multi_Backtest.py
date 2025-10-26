@@ -1344,7 +1344,6 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
                                 'Close': batch_data[(resolved, 'Close')],
                                 'Dividends': dividends_data
                             })
-                            ticker_data = pd.DataFrame()
                     
                     if not ticker_data.empty:
                         # Apply leverage/expense if needed
@@ -13789,12 +13788,18 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                 else:
                                     # Regular ticker - use yfinance directly with BASE ticker
                                     ticker_obj = yf.Ticker(base_ticker)  # Use base_ticker, not resolved_ticker
-                                    data = ticker_obj.history(period="max", auto_adjust=False, actions=True)
-                                    if not data.empty:
+                                    raw_data = ticker_obj.history(period="max", auto_adjust=False, actions=True)
+                                    if not raw_data.empty:
+                                        # Create DataFrame with same format as batch tickers (Close and Dividends columns)
+                                        ticker_data = pd.DataFrame({
+                                            'Close': raw_data['Close'],
+                                            'Dividends': raw_data.get('Dividends', 0)
+                                        })
+                                        
                                         # Apply leverage and expense if needed
                                         if leverage != 1.0 or expense_ratio != 0.0:
-                                            data = apply_daily_leverage(data, leverage, expense_ratio)
-                                        all_results[ticker] = data
+                                            ticker_data = apply_daily_leverage(ticker_data, leverage, expense_ratio)
+                                        all_results[ticker] = ticker_data
                                         st.session_state.api_call_count += 1
                             except Exception as e:
                                 print(f"Failed to download {ticker}: {e}")
@@ -13837,12 +13842,18 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                                     else:
                                         # Regular ticker - use yfinance directly
                                         ticker_obj = yf.Ticker(resolved_ticker)
-                                        data = ticker_obj.history(period="max", auto_adjust=False, actions=True)
-                                        if not data.empty:
+                                        raw_data = ticker_obj.history(period="max", auto_adjust=False, actions=True)
+                                        if not raw_data.empty:
+                                            # Create DataFrame with same format as batch tickers (Close and Dividends columns)
+                                            ticker_data = pd.DataFrame({
+                                                'Close': raw_data['Close'],
+                                                'Dividends': raw_data.get('Dividends', 0)
+                                            })
+                                            
                                             # Apply leverage and expense if needed
                                             if leverage != 1.0 or expense_ratio != 0.0:
-                                                data = apply_daily_leverage(data, leverage, expense_ratio)
-                                            all_results[ticker] = data
+                                                ticker_data = apply_daily_leverage(ticker_data, leverage, expense_ratio)
+                                            all_results[ticker] = ticker_data
                                             st.session_state.api_call_count += 1
                                 except Exception as e:
                                     print(f"Failed to download {ticker}: {e}")
