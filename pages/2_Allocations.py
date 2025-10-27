@@ -2020,7 +2020,7 @@ def get_tbill_complete_data(period="max"):
         return pd.DataFrame()
 
 def get_ticker_info(ticker_symbol):
-    """Get ticker info (NO CACHE for maximum freshness)
+    """Get ticker info with 4-hour cache
     
     This function handles two special cases:
     1. Canadian tickers: Converts USD OTC to Canadian exchange (CNSWF → CSU.TO)
@@ -2039,9 +2039,30 @@ def get_ticker_info(ticker_symbol):
             # Resolve ticker alias for valuation tables (converts USD OTC to Canadian exchange, indices to ETFs)
             resolved_ticker = resolve_ticker_alias(base_ticker, for_stats=True)
         
+        # Create cache key
+        cache_key = f"individual_info_{resolved_ticker}"
+        
+        # Check cache first (4-hour TTL)
+        cache_dir = '.streamlit/ticker_info_cache'
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+        
+        disk_cache = dc.Cache(cache_dir)
+        
+        # Try to get from cache first
+        cached_result = disk_cache.get(cache_key)
+        if cached_result is not None:
+            # Return cached data
+            return cached_result
+        
+        # If not in cache, fetch from API
         stock = yf.Ticker(resolved_ticker)
         st.session_state.api_call_count += 1
         info = stock.info
+        
+        # Cache the result for 4 hours
+        disk_cache.set(cache_key, info, expire=14400)  # 4 hours = 14400 seconds
+        
         return info
     except Exception:
         return {}
