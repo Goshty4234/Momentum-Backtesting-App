@@ -2051,6 +2051,7 @@ def get_multiple_tickers_info_batch(ticker_list):
     TRUE BATCH download ticker info for multiple tickers using yahooquery.
     
     This makes a SINGLE API call for all tickers instead of multiple individual calls.
+    Uses 4-hour cache for maximum performance.
     
     Args:
         ticker_list: List of ticker symbols
@@ -2060,6 +2061,22 @@ def get_multiple_tickers_info_batch(ticker_list):
     """
     if not ticker_list:
         return {}
+    
+    # Create cache key from sorted ticker list for consistency
+    cache_key = f"batch_info_{hash(tuple(sorted(ticker_list)))}"
+    
+    # Check cache first (4-hour TTL)
+    cache_dir = '.streamlit/ticker_info_cache'
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir, exist_ok=True)
+    
+    disk_cache = dc.Cache(cache_dir)
+    
+    # Try to get from cache first
+    cached_result = disk_cache.get(cache_key)
+    if cached_result is not None:
+        # Return cached data
+        return cached_result
     
     results = {}
     
@@ -2202,6 +2219,12 @@ def get_multiple_tickers_info_batch(ticker_list):
     except Exception as e:
         st.error(f"❌ yahooquery failed: {e} - PE data will be skipped")
         return {}
+    
+    # Save to cache (4-hour TTL)
+    try:
+        disk_cache.set(cache_key, results, expire=14400)  # 4 hours = 14400 seconds
+    except Exception:
+        pass  # Cache save failed, but don't break the function
     
     return results
 
@@ -11241,7 +11264,15 @@ if st.session_state.get('alloc_backtest_run', False):
                         if info and 'trailingPE' in info and info['trailingPE'] is not None:
                             ticker_pe = f"{info['trailingPE']:.2f}"
                         else:
-                            ticker_pe = 'N/A'
+                            # Fallback: Try to get PE directly if preloaded_info doesn't have it
+                            try:
+                                fallback_info = get_ticker_info(ticker)
+                                if fallback_info and 'trailingPE' in fallback_info and fallback_info['trailingPE'] is not None:
+                                    ticker_pe = f"{fallback_info['trailingPE']:.2f}"
+                                else:
+                                    ticker_pe = 'N/A'
+                            except Exception as fallback_e:
+                                ticker_pe = 'N/A'
                     except Exception as e:
                         pass
                     
@@ -11329,12 +11360,6 @@ if st.session_state.get('alloc_backtest_run', False):
         # Prepare available_data for benchmark calculations
         available_data = {}
         benchmark_tickers = ['SPY', 'QQQ', 'SPMO', 'VTI', 'VT', 'SSO', 'QLD', 'BITCOIN']
-        
-        # Add portfolio benchmark ticker to the list if it's not already there
-        if active_portfolio and 'benchmark_ticker' in active_portfolio:
-            portfolio_benchmark = active_portfolio['benchmark_ticker']
-            if portfolio_benchmark not in benchmark_tickers:
-                benchmark_tickers.append(portfolio_benchmark)
         
         for ticker in benchmark_tickers:
             if raw_data and ticker in raw_data and not raw_data[ticker].empty:
