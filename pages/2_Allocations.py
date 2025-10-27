@@ -8,10 +8,130 @@ import yfinance as yf
 import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
+import os
+import diskcache as dc
+from typing import Any
 
 # Initialize API call counter
 if 'api_call_count' not in st.session_state:
     st.session_state.api_call_count = 0
+
+# Yahoo Finance Cache Functions
+def get_ticker_with_cache(ticker_symbol: str) -> Any:
+    """Get yf.Ticker object with 4-hour cache"""
+    try:
+        cache_key = f"ticker_obj_{ticker_symbol}"
+        cache_dir = '.streamlit/ticker_cache'
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+        
+        disk_cache = dc.Cache(cache_dir)
+        cached_result = disk_cache.get(cache_key)
+        if cached_result is not None:
+            return cached_result
+        
+        ticker = yf.Ticker(ticker_symbol)
+        st.session_state.api_call_count += 1
+        disk_cache.set(cache_key, ticker, expire=14400)  # 4 hours
+        return ticker
+    except Exception:
+        return yf.Ticker(ticker_symbol)
+
+def get_ticker_history_with_cache(ticker_symbol: str, period: str = "max", auto_adjust: bool = False, 
+                                 columns: list = None) -> pd.DataFrame:
+    """Get ticker historical data with 4-hour cache"""
+    try:
+        cache_key = f"history_{ticker_symbol}_{period}_{auto_adjust}_{columns}"
+        cache_dir = '.streamlit/ticker_cache'
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+        
+        disk_cache = dc.Cache(cache_dir)
+        cached_result = disk_cache.get(cache_key)
+        if cached_result is not None:
+            return cached_result
+        
+        ticker = yf.Ticker(ticker_symbol)
+        st.session_state.api_call_count += 1
+        hist = ticker.history(period=period, auto_adjust=auto_adjust)
+        
+        if columns and not hist.empty:
+            available_columns = [col for col in columns if col in hist.columns]
+            if available_columns:
+                hist = hist[available_columns]
+        
+        disk_cache.set(cache_key, hist, expire=14400)  # 4 hours
+        return hist
+    except Exception:
+        ticker = yf.Ticker(ticker_symbol)
+        hist = ticker.history(period=period, auto_adjust=auto_adjust)
+        if columns and not hist.empty:
+            available_columns = [col for col in columns if col in hist.columns]
+            if available_columns:
+                hist = hist[available_columns]
+        return hist
+
+def get_ticker_info_with_cache(ticker_symbol: str) -> dict:
+    """Get ticker info with 4-hour cache"""
+    try:
+        cache_key = f"info_{ticker_symbol}"
+        cache_dir = '.streamlit/ticker_info_cache'
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+        
+        disk_cache = dc.Cache(cache_dir)
+        cached_result = disk_cache.get(cache_key)
+        if cached_result is not None:
+            return cached_result
+        
+        ticker = yf.Ticker(ticker_symbol)
+        st.session_state.api_call_count += 1
+        info = ticker.info
+        disk_cache.set(cache_key, info, expire=14400)  # 4 hours
+        return info
+    except Exception:
+        return {}
+
+def get_batch_download_with_cache(ticker_list: list, period: str = "max", 
+                                 auto_adjust: bool = False, **kwargs) -> pd.DataFrame:
+    """Get batch download data with 4-hour cache"""
+    try:
+        cache_key = f"batch_{sorted(ticker_list)}_{period}_{auto_adjust}_{kwargs}"
+        cache_dir = '.streamlit/ticker_cache'
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+        
+        disk_cache = dc.Cache(cache_dir)
+        cached_result = disk_cache.get(cache_key)
+        if cached_result is not None:
+            return cached_result
+        
+        batch_data = yf.download(ticker_list, period=period, auto_adjust=auto_adjust, **kwargs)
+        st.session_state.api_call_count += 1
+        disk_cache.set(cache_key, batch_data, expire=14400)  # 4 hours
+        return batch_data
+    except Exception:
+        return yf.download(ticker_list, period=period, auto_adjust=auto_adjust, **kwargs)
+
+def clear_all_yahoo_caches():
+    """Clear all Yahoo Finance caches"""
+    total_cleared = 0
+    
+    cache_dir = '.streamlit/ticker_cache'
+    if os.path.exists(cache_dir):
+        disk_cache = dc.Cache(cache_dir)
+        cache_size = len(disk_cache)
+        disk_cache.clear()
+        total_cleared += cache_size
+    
+    info_cache_dir = '.streamlit/ticker_info_cache'
+    if os.path.exists(info_cache_dir):
+        info_cache = dc.Cache(info_cache_dir)
+        info_cache_size = len(info_cache)
+        info_cache.clear()
+        total_cleared += info_cache_size
+    
+    return total_cleared
 
 import json
 import io
@@ -1168,7 +1288,7 @@ def get_risk_free_rate_robust(dates):
         ticker = None
         for symbol in symbols:
             try:
-                ticker = yf.Ticker(symbol)
+                ticker = get_ticker_with_cache(symbol)
                 st.session_state.api_call_count += 1
                 hist = ticker.history(period="max", auto_adjust=False)
                 if hist is not None and not hist.empty and 'Close' in hist.columns:
@@ -1178,7 +1298,7 @@ def get_risk_free_rate_robust(dates):
         
         if ticker is None:
             # Final fallback to ^TNX
-            ticker = yf.Ticker("^TNX")
+            ticker = get_ticker_with_cache("^TNX")
             st.session_state.api_call_count += 1
         hist = ticker.history(period="max", auto_adjust=False)
         
@@ -1490,7 +1610,7 @@ def get_ticker_data_for_valuation(ticker_symbol, period="max", auto_adjust=False
             return hist
         
         # Create ticker object with resolved ticker
-        ticker_obj = yf.Ticker(resolved_ticker)
+        ticker_obj = get_ticker_with_cache(resolved_ticker)
         st.session_state.api_call_count += 1
         
         # Get historical data
@@ -1576,13 +1696,13 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
     try:
         # BATCH DOWNLOAD - Fast path (1 API call for all)
         if len(resolved_list) > 1:
-            batch_data = yf.download(
+            batch_data = get_batch_download_with_cache(
                 resolved_list,
                 period=period,
                 auto_adjust=auto_adjust,
                 progress=False,
                 group_by='ticker',
-                actions=True  # Include dividends and stock splits
+                actions=True
             )
             st.session_state.api_call_count += 1
             
@@ -1668,7 +1788,7 @@ def get_multiple_tickers_batch_for_valuation(ticker_list, period="max", auto_adj
     
     try:
         # BULK DOWNLOAD - Single API call for all valuation tickers
-        batch_data = yf.download(
+        batch_data = get_batch_download_with_cache(
             ticker_list,
             period=period,
             auto_adjust=auto_adjust,
@@ -1806,7 +1926,7 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False):
                 hist = apply_daily_leverage(hist, leverage, expense_ratio)
             return hist
         
-        ticker = yf.Ticker(resolved_ticker)
+        ticker = get_ticker_with_cache(resolved_ticker)
         st.session_state.api_call_count += 1
         hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
         
@@ -1859,7 +1979,7 @@ def get_goldsim_complete_data(period="max"):
 def generate_zero_return_data(period="max"):
     """Generate synthetic zero return data for ZEROX ticker"""
     try:
-        ref_ticker = yf.Ticker("SPY")
+        ref_ticker = get_ticker_with_cache("SPY")
         st.session_state.api_call_count += 1
         ref_hist = ref_ticker.history(period=period)
         if ref_hist.empty:
@@ -2056,8 +2176,7 @@ def get_ticker_info(ticker_symbol):
             return cached_result
         
         # If not in cache, fetch from API
-        stock = yf.Ticker(resolved_ticker)
-        st.session_state.api_call_count += 1
+        stock = get_ticker_with_cache(resolved_ticker)
         info = stock.info
         
         # Cache the result for 4 hours
@@ -8673,23 +8792,7 @@ _ALLOC_TOL = 1.0
 if st.sidebar.button("🗑️ Clear Ticker Cache", 
                     help="Clear the 4-hour ticker cache to force fresh data downloads", 
                     use_container_width=True):
-    total_cleared = 0
-    
-    # Clear ticker historical data cache
-    cache_dir = '.streamlit/ticker_cache'
-    if os.path.exists(cache_dir):
-        disk_cache = dc.Cache(cache_dir)
-        cache_size = len(disk_cache)
-        disk_cache.clear()
-        total_cleared += cache_size
-    
-    # Clear ticker info cache (PE/valuations)
-    info_cache_dir = '.streamlit/ticker_info_cache'
-    if os.path.exists(info_cache_dir):
-        info_cache = dc.Cache(info_cache_dir)
-        info_cache_size = len(info_cache)
-        info_cache.clear()
-        total_cleared += info_cache_size
+    total_cleared = clear_all_yahoo_caches()
     
     if total_cleared > 0:
         st.sidebar.success(f"✅ Cleared {total_cleared} cached items (tickers + PE/valuations)")
@@ -11423,7 +11526,7 @@ if st.session_state.get('alloc_backtest_run', False):
                 # Download other missing tickers
                 if missing_tickers:
                     import yfinance as yf
-                    batch_data = yf.download(missing_tickers, period="2y", interval="1d", progress=False, group_by='ticker')
+                    batch_data = get_batch_download_with_cache(missing_tickers, period="2y", interval="1d", progress=False, group_by='ticker')
                     if not batch_data.empty:
                         for ticker in missing_tickers:
                             if ticker in batch_data.columns.get_level_values(0):
