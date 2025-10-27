@@ -99,6 +99,15 @@ st.markdown("""
         }
     }
     
+    /* Override Streamlit default white backgrounds */
+    .stMarkdown {
+        background-color: transparent !important;
+    }
+    
+    .element-container {
+        background-color: transparent !important;
+    }
+    
     /* Responsive design */
     @media (max-width: 768px) {
         .main-header {
@@ -125,7 +134,7 @@ main_tab1, main_tab2 = st.tabs(["System Overview", "Research & ETFs"])
 with main_tab1:
     # Section d'introduction professionnelle
     st.markdown("""
-    <div style="background: #f8f9fa; padding: 2rem; border-radius: 10px; margin: 1rem 0; border-left: 4px solid #007bff;">
+    <div style="background: #d0d0d0; padding: 2rem; border-radius: 10px; margin: 1rem 0; border-left: 4px solid #007bff;">
         <h3 style="color: #2c3e50; margin-bottom: 1rem;">Momentum Strategy Implementation</h3>
         <p style="font-size: 1.1rem; line-height: 1.6; color: #495057; margin: 0;">
         Implementation of the Jegadeesh & Titman (1993) momentum strategy with multi-window approach, 
@@ -140,7 +149,7 @@ with main_tab1:
     
     # Professional metrics
     st.markdown("""
-    <div style="background: #e8f4fd; border: 1px solid #bee5eb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
+    <div style="background: #c0c0c0; border: 1px solid #a0a0a0; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
         <p style="margin: 0; color: #0c5460; font-weight: 500;">
             <strong>VERIFIED METRICS</strong> : All metrics based on actual code analysis
         </p>
@@ -160,6 +169,62 @@ with main_tab1:
     
     with col4:
         create_metric_card("T-Statistic", "6.18", "Statistical significance (J&T 1993)", "📊", "purple")
+    
+    # Professional analysis of momentum 12-1 strategy
+    st.markdown("## Momentum 12-1 Strategy Analysis")
+    
+    st.markdown("""
+    <div style="background: #d0d0d0; padding: 2rem; border-radius: 10px; margin: 1rem 0; border-left: 4px solid #007bff;">
+        <h3 style="color: #2c3e50; margin-bottom: 1rem;">Strategy Overview</h3>
+        <p style="font-size: 1.1rem; line-height: 1.6; color: #495057; margin: 0;">
+        The momentum 12-1 strategy is a quantitative investment approach that exploits the persistence of asset price trends. 
+        This systematic strategy selects securities based on their historical performance over a specific time horizon, 
+        excluding the most recent period to mitigate short-term market microstructure effects.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("""
+        ### Implementation Methodology
+        
+        **Performance Measurement Period**
+        The strategy evaluates asset returns over the past twelve months, deliberately excluding the most recent month. 
+        This exclusion period addresses the short-term reversal effect documented in academic literature and prevents 
+        contamination from temporary market noise and microstructure biases.
+        
+        **Security Ranking Process**
+        Assets are ranked based on their total return performance during the formation period. 
+        The ranking methodology creates a clear distinction between winners and losers, 
+        enabling systematic portfolio construction based on relative performance metrics.
+        
+        **Portfolio Construction**
+        The strategy allocates capital to top-performing securities while avoiding or shorting 
+        underperforming assets. Monthly rebalancing ensures the portfolio maintains exposure 
+        to the momentum factor while adapting to changing market conditions.
+        """)
+    
+    with col2:
+        st.markdown("""
+        ### Academic Foundation
+        
+        **Empirical Evidence**
+        The strategy's effectiveness is supported by extensive academic research spanning over three decades. 
+        Jegadeesh and Titman (1993) documented monthly alpha of 1.49% with statistical significance 
+        of 6.18 t-statistic, establishing momentum as one of the most persistent market anomalies.
+        
+        **Cross-Market Validation**
+        International studies by Asness, Moskowitz, and Pedersen (2013) confirmed momentum's universality 
+        across 40 countries and four asset classes. This global validation demonstrates the strategy's 
+        robustness beyond domestic equity markets.
+        
+        **Behavioral Explanations**
+        Momentum persistence stems from investor behavioral biases including underreaction to new information, 
+        disposition effects causing premature selling of winners, and gradual information diffusion in markets. 
+        These psychological factors create systematic opportunities for quantitative strategies.
+        """)
     
     # Momentum Strategy Overview
     st.markdown("## Momentum Strategy Overview")
@@ -503,7 +568,7 @@ with main_tab2:
         color: #333; 
         margin: 2rem 0; 
         padding: 1rem; 
-        background: #f8f9fa; 
+        background: #d0d0d0; 
         border: 1px solid #dee2e6; 
         border-radius: 8px;
         font-weight: bold;
