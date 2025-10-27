@@ -21,7 +21,7 @@ import yfinance as yf
 import plotly.graph_objects as go
 from datetime import datetime
 
-st.set_page_config(page_title="Quick Momentum ETF Comparison", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Quick Momentum ETF Comparison", page_icon="📈", layout="wide")
 
 # =============================================================================
 # CACHED DATA FUNCTIONS
@@ -192,15 +192,25 @@ st.markdown("**Momentum ETFs:**")
 col1, col2 = st.columns(2)
 
 for i, etf in enumerate(DEFAULT_MOMENTUM_ETFS):
-    # Get start date for each ETF (this will be approximate, actual dates shown after download)
+    # Get start date for each ETF (exact dates from real data)
     if etf == "PDP":
-        start_info = "2007+"
+        start_info = "2007-03-01"
     elif etf == "MTUM":
-        start_info = "2013+"
-    elif etf in ["SPMO", "QMOM", "ONEO", "MMTM", "IMOM"]:
-        start_info = "2015+"
-    elif etf in ["FDMO", "JMOM"]:
-        start_info = "2016-2017+"
+        start_info = "2013-04-18"
+    elif etf == "SPMO":
+        start_info = "2015-10-12"
+    elif etf == "QMOM":
+        start_info = "2015-12-02"
+    elif etf == "FDMO":
+        start_info = "2016-09-15"
+    elif etf == "ONEO":
+        start_info = "2015-12-03"
+    elif etf == "MMTM":
+        start_info = "2012-10-25"
+    elif etf == "IMOM":
+        start_info = "2015-12-23"
+    elif etf == "JMOM":
+        start_info = "2017-11-09"
     else:
         start_info = "?"
     
@@ -209,17 +219,32 @@ for i, etf in enumerate(DEFAULT_MOMENTUM_ETFS):
         if st.checkbox(f"{etf} ({start_info})", value=True):
             selected_momentum_etfs.append(etf)
 
-# Add custom tickers
-st.subheader("➕ Add Custom Tickers")
-custom_tickers_input = st.text_area(
-    "Add custom tickers (one per line)",
-    placeholder="AAPL\nGOOGL\nMSFT",
-    height=100
-)
+# Add custom tickers - In expander
+with st.expander("➕ Add Custom Tickers", expanded=False):
+    custom_tickers_input = st.text_area(
+        "Add custom tickers (separated by spaces, commas, or new lines)",
+        placeholder="AAPL NVDA\nGOOGL MSFT\nTSLA",
+        height=100,
+        help="You can enter tickers in any format: one per line, separated by spaces, or mixed formats"
+    )
 
 custom_tickers = []
 if custom_tickers_input:
-    custom_tickers = [t.strip().upper() for t in custom_tickers_input.split("\n") if t.strip()]
+    # Support multiple formats: newlines, spaces, commas
+    import re
+    
+    # Split by newlines first, then by spaces and commas within each line
+    lines = custom_tickers_input.split("\n")
+    all_tickers = []
+    
+    for line in lines:
+        if line.strip():
+            # Split by spaces, commas, or any whitespace
+            tickers_in_line = re.split(r'[\s,]+', line.strip())
+            all_tickers.extend(tickers_in_line)
+    
+    # Clean and filter tickers
+    custom_tickers = [t.strip().upper() for t in all_tickers if t.strip()]
 
 # Benchmarks
 st.subheader("📈 Benchmarks")
@@ -390,17 +415,17 @@ if st.button("🚀 Run Comparison", type="primary", use_container_width=True):
         for ticker, start_date in sorted(ticker_start_dates.items(), key=lambda x: x[1])
     ])
     
-    # Add color coding
+    # Add color coding - Professional forest/nature colors
     def color_start_dates(row):
         year = row['Start Year']
         if year < 2010:
-            return ['background-color: #28a745; color: white'] * len(row)  # Dark green (oldest)
+            return ['background-color: #2d5016; color: #ffffff'] * len(row)  # Dark forest green (oldest)
         elif year < 2015:
-            return ['background-color: #d4edda; color: #155724'] * len(row)  # Light green
+            return ['background-color: #4a7c59; color: #ffffff'] * len(row)  # Medium forest green
         elif year < 2020:
-            return ['background-color: #fff3cd; color: #856404'] * len(row)  # Yellow
+            return ['background-color: #6b8e6b; color: #ffffff'] * len(row)  # Light forest green
         else:
-            return ['background-color: #f8d7da; color: #721c24'] * len(row)  # Red (newest/shortest)
+            return ['background-color: #8fbc8f; color: #2d5016'] * len(row)  # Light sage green (newest/shortest)
     
     styled_start_dates = start_dates_df.style.apply(color_start_dates, axis=1)
     st.dataframe(styled_start_dates, use_container_width=True, hide_index=True)
@@ -424,44 +449,6 @@ if st.button("🚀 Run Comparison", type="primary", use_container_width=True):
     else:
         st.info(f"ℹ️ **CUSTOM START**: You've chosen a later start date than the latest ticker.")
     
-    # Option to exclude tickers to start earlier
-    st.markdown("---")
-    st.subheader("🎯 Exclude Tickers to Start Earlier")
-    st.markdown("**Exclude recent tickers to start your backtest earlier with older tickers only**")
-    
-    exclude_tickers = st.multiselect(
-        "Select tickers to EXCLUDE from comparison",
-        options=list(data_dict.keys()),
-        default=[],
-        help="Excluding newer tickers allows the backtest to start earlier with older tickers"
-    )
-    
-    if exclude_tickers:
-        st.warning(f"⚠️ Excluding: {', '.join(exclude_tickers)}")
-        
-        # Remove excluded tickers
-        for ticker in exclude_tickers:
-            if ticker in data_dict:
-                del data_dict[ticker]
-        
-        # Recalculate common date (same logic as Page 1)
-        if data_dict:
-            ticker_start_dates = {ticker: data.index.min() for ticker, data in data_dict.items()}
-            common_start_date = max(ticker_start_dates.values())  # Most recent start (bottleneck)
-            earliest_possible_date = min(ticker_start_dates.values())  # Earliest start
-            
-            st.success(f"""
-            ✅ **New Date Range After Exclusions**:
-            - **Backtest will now start**: {common_start_date.strftime('%Y-%m-%d')}
-            - **Oldest ticker**: {min(ticker_start_dates, key=ticker_start_dates.get)} (starts {earliest_possible_date.strftime('%Y-%m-%d')})
-            - **Newest ticker**: {max(ticker_start_dates, key=ticker_start_dates.get)} (starts {common_start_date.strftime('%Y-%m-%d')})
-            - **Total tickers**: {len(data_dict)}
-            """)
-        else:
-            st.error("❌ You excluded all tickers! Please keep at least one ticker.")
-            st.stop()
-    
-    st.markdown("---")
     
     # =============================================================================
     # ALIGN DATA & CALCULATE RETURNS
@@ -826,13 +813,13 @@ elif st.session_state.comparison_results is not None:
     def color_start_dates(row):
         year = row['Start Year']
         if year < 2010:
-            return ['background-color: #28a745; color: white'] * len(row)  # Dark green (oldest)
+            return ['background-color: #2d5016; color: #ffffff'] * len(row)  # Dark forest green (oldest)
         elif year < 2015:
-            return ['background-color: #d4edda; color: #155724'] * len(row)  # Light green
+            return ['background-color: #4a7c59; color: #ffffff'] * len(row)  # Medium forest green
         elif year < 2020:
-            return ['background-color: #fff3cd; color: #856404'] * len(row)  # Yellow
+            return ['background-color: #6b8e6b; color: #ffffff'] * len(row)  # Light forest green
         else:
-            return ['background-color: #f8d7da; color: #721c24'] * len(row)  # Red (newest/shortest)
+            return ['background-color: #8fbc8f; color: #2d5016'] * len(row)  # Light sage green (newest/shortest)
     
     styled_start_dates = start_dates_df.style.apply(color_start_dates, axis=1)
     st.dataframe(styled_start_dates, use_container_width=True, hide_index=True)
@@ -1005,35 +992,19 @@ elif st.session_state.comparison_results is not None:
 
 else:
     st.info("👈 **Select your tickers above and click Run Comparison to start!**")
-    
-    # Show available tickers with start dates
-    st.subheader("📋 Available Tickers")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**Momentum ETFs:**")
-        st.markdown("- **PDP** (2007+) - Longest history")
-        st.markdown("- **MTUM** (2013+) - iShares")
-        st.markdown("- **SPMO** (2015+) - Invesco S&P 500")
-        st.markdown("- **QMOM** (2015+) - Alpha Architect")
-        st.markdown("- **FDMO** (2016+) - Fidelity")
-    
-    with col2:
-        st.markdown("**More ETFs:**")
-        st.markdown("- **ONEO** (2015+) - SPDR Russell 1000")
-        st.markdown("- **MMTM** (2015+) - SPDR S&P 1500")
-        st.markdown("- **IMOM** (2015+) - International")
-        st.markdown("- **JMOM** (2017+) - JPMorgan")
-        st.markdown("")
-        st.markdown("**Benchmarks:**")
-        st.markdown("- **SPY** (1993+) - S&P 500")
-        st.markdown("- **QQQ** (1999+) - NASDAQ 100")
-    
-    st.markdown("---")
-    st.markdown("### 🎯 Quick Tips:")
-    st.markdown("- ✅ **Check/uncheck individual tickers** above")
-    st.markdown("- 📅 **Start dates shown** next to each ticker")
-    st.markdown("- 🚀 **Exclude recent tickers** after download to start backtest earlier")
-    st.markdown("- 📊 **Fair comparison** - all tickers aligned to common date range")
+
+# Footer
+st.markdown("---")
+st.markdown("""
+<div style="
+    text-align: center; 
+    color: #666; 
+    margin: 2rem 0; 
+    padding: 1rem; 
+    font-size: 0.9rem;
+    font-weight: 500;
+">
+    Made by Nicolas Cool
+</div>
+""", unsafe_allow_html=True)
 
