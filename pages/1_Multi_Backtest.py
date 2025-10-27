@@ -1213,8 +1213,7 @@ def get_kmlm_complete_data(period="max"):
             return None
     except Exception as e:
         try:
-            ticker = yf.Ticker("KMLM")
-            st.session_state.api_call_count += 1
+            ticker = get_ticker_with_cache("KMLM")
             return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
         except:
             return pd.DataFrame()
@@ -1234,8 +1233,7 @@ def get_dbmf_complete_data(period="max"):
             return None
     except Exception as e:
         try:
-            ticker = yf.Ticker("DBMF")
-            st.session_state.api_call_count += 1
+            ticker = get_ticker_with_cache("DBMF")
             return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
         except:
             return pd.DataFrame()
@@ -1255,8 +1253,7 @@ def get_tbill_complete_data(period="max"):
             return None
     except Exception as e:
         try:
-            ticker = yf.Ticker("SGOV")
-            st.session_state.api_call_count += 1
+            ticker = get_ticker_with_cache("SGOV")
             return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
         except:
             return pd.DataFrame()
@@ -1278,8 +1275,7 @@ def get_spysim_complete_data(period="max"):
             return None
     except Exception as e:
         try:
-            ticker = yf.Ticker("^SP500TR")
-            st.session_state.api_call_count += 1
+            ticker = get_ticker_with_cache("^SP500TR")
             return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
         except:
             return pd.DataFrame()
@@ -1309,7 +1305,7 @@ def get_goldsim_complete_data(period="max"):
     except ImportError as e:
         print(f"⚠️ WARNING: GOLDSIM import error: {e}, falling back to GLD")
         # Fallback to GLD if import fails
-        ticker = yf.Ticker("GLD")
+        ticker = get_ticker_with_cache("GLD")
         return ticker.history(period=period, auto_adjust=True)[["Close", "Dividends"]]
     except Exception as e:
         print(f"⚠️ WARNING: GOLDSIM function error: {e}, falling back to GLD")
@@ -1541,7 +1537,7 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
     try:
         # BATCH DOWNLOAD - Fast path (1 API call for all)
         if USE_BATCH_DOWNLOAD and len(resolved_list) > 1:
-            batch_data = yf.download(
+            batch_data = get_batch_download_with_cache(
                 resolved_list,
                 period=period,
                 auto_adjust=auto_adjust,
@@ -1582,8 +1578,7 @@ def get_multiple_tickers_batch(ticker_list, period="max", auto_adjust=False):
     for ticker_symbol, resolved, leverage, expense_ratio in yahoo_tickers:
         if ticker_symbol not in results or results[ticker_symbol].empty:
             try:
-                ticker = yf.Ticker(resolved)
-                st.session_state.api_call_count += 1
+                ticker = get_ticker_with_cache(resolved)
                 hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
                 
                 if not hist.empty:
@@ -1705,8 +1700,7 @@ def get_ticker_data(ticker_symbol, period="max", auto_adjust=False, _cache_bust=
                 hist = apply_daily_leverage(hist, leverage, expense_ratio)
             return hist
         
-        ticker = yf.Ticker(resolved_ticker)
-        st.session_state.api_call_count += 1
+        ticker = get_ticker_with_cache(resolved_ticker)
         hist = ticker.history(period=period, auto_adjust=auto_adjust)[["Close", "Dividends"]]
         
         if hist.empty:
@@ -1729,8 +1723,7 @@ def get_ticker_info(ticker_symbol):
         # Resolve ticker alias if it exists
         resolved_ticker = resolve_ticker_alias(base_ticker)
         
-        ticker = yf.Ticker(resolved_ticker)
-        st.session_state.api_call_count += 1
+        ticker = get_ticker_with_cache(resolved_ticker)
         info = ticker.info
         
         return info
@@ -15732,7 +15725,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
         fig_vix = go.Figure()
         try:
             # Get VIX data for the same date range
-            vix_data = yf.download('^VIX', start=first_date, end=last_date, progress=False)
+            vix_data = get_batch_download_with_cache('^VIX', start=first_date, end=last_date, progress=False)
             st.session_state.api_call_count += 1
             
             # VIX data has multi-level columns, need to access it properly
