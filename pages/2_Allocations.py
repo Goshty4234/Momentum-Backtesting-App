@@ -9466,6 +9466,16 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                         rows = []
                         for ticker in tickers:
                             info = all_infos.get(ticker, {})
+                            
+                            # Fallback for PE if batch doesn't have it
+                            pe_ratio = info.get('trailingPE')
+                            if pe_ratio is None:
+                                try:
+                                    fallback_info = get_ticker_info(ticker)
+                                    pe_ratio = fallback_info.get('trailingPE') if fallback_info else None
+                                except:
+                                    pe_ratio = None
+                            
                             alloc_pct = float(today_weights.get(ticker, 0))
                             allocation_value = portfolio_value * alloc_pct
                             total_val = allocation_value
@@ -9473,7 +9483,7 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                             
                             rows.append({
                                 'Ticker': ticker,
-                                'P/E Ratio': info.get('trailingPE'),
+                                'P/E Ratio': pe_ratio,
                                 'Forward P/E': info.get('forwardPE'),
                                 'Beta': info.get('beta'),
                                 '% of Portfolio': pct_of_portfolio
@@ -10267,7 +10277,7 @@ if st.session_state.get('alloc_backtest_run', False):
                             # Valuation Metrics (not applicable for commodities/ETFs)
                             'Market Cap ($B)': info.get('marketCap', info.get('totalAssets', info.get('marketCapitalization', 0))) / 1e9 if (info.get('marketCap') or info.get('totalAssets') or info.get('marketCapitalization')) and not is_commodity else None,
                             'Enterprise Value ($B)': info.get('enterpriseValue', info.get('enterpriseValue', info.get('enterpriseValue', 0))) / 1e9 if info.get('enterpriseValue') and not is_commodity else None,
-                            'P/E Ratio': info.get('trailingPE', info.get('priceEarnings', info.get('pe', info.get('peRatio', None)))) if not is_commodity else None,
+                            'P/E Ratio': info.get('trailingPE', info.get('priceEarnings', info.get('pe', info.get('peRatio', None)))),
                             'Forward P/E': info.get('forwardPE', info.get('forwardPE', info.get('forwardPE', info.get('forwardPERatio', None)))) if not is_commodity else None,
                             'PEG Ratio': None,  # Will be calculated below with fallback strategies
                             'Price/Book': info.get('priceToBook', info.get('priceBook', info.get('pb', info.get('pbRatio', None)))) if not is_commodity else None,
@@ -10318,6 +10328,15 @@ if st.session_state.get('alloc_backtest_run', False):
                             'Operating Margin (%)': info.get('operatingMargins', info.get('operatingMargin', info.get('operatingMargins', info.get('operatingMargin', info.get('operatingMargins', info.get('operatingMargin', 0)))))) * 100 if (info.get('operatingMargins') or info.get('operatingMargin') or info.get('operatingMargins') or info.get('operatingMargin') or info.get('operatingMargins') or info.get('operatingMargin')) and not is_commodity else None,
                             'Gross Margin (%)': info.get('grossMargins', info.get('grossMargin', info.get('grossMargins', info.get('grossMargin', info.get('grossMargins', info.get('grossMargin', 0)))))) * 100 if (info.get('grossMargins') or info.get('grossMargin') or info.get('grossMargins') or info.get('grossMargin') or info.get('grossMargins') or info.get('grossMargin')) and not is_commodity else None,
                         }
+                        
+                        # Fallback for PE if not available in batch data
+                        if row.get('P/E Ratio') is None:
+                            try:
+                                fallback_info = get_ticker_info(ticker)
+                                if fallback_info and fallback_info.get('trailingPE'):
+                                    row['P/E Ratio'] = fallback_info.get('trailingPE')
+                            except:
+                                pass
                         
                         # Simple PEG Ratio calculation: P/E ÷ Earnings Growth
                         pe_ratio = info.get('trailingPE')
