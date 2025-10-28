@@ -17993,6 +17993,14 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                             st.write("Raw data (first 1000 rows):")
                             st.dataframe(metrics_df_display.head(1000))
                     
+                    # Check if this portfolio uses momentum strategy and show note
+                    portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                    portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
+                    is_momentum_portfolio = portfolio_cfg and portfolio_cfg.get('use_momentum', False)
+                    
+                    if not is_momentum_portfolio:
+                        st.info("ℹ️ **Note:** This portfolio does not use momentum strategy. The momentum metrics table above is not used for allocation decisions and can be ignored.")
+                    
 
             # PIE CHARTS SECTION - Show for ALL portfolios (moved outside allocation data condition)
             st.markdown("---")
