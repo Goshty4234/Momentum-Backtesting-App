@@ -18199,14 +18199,14 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             
             # Always use real-time calculation to ensure momentum metrics are used correctly
             # DON'T use cache here - we need fresh data from momentum metrics
-                    if labels_today and vals_today:
-                        fig_today = go.Figure(data=[go.Pie(
-                            labels=labels_today,
-                            values=vals_today,
-                            hole=0.35
-                        )])
-                        fig_today.update_traces(textinfo='percent+label')
-                        fig_today.update_layout(template='plotly_dark', margin=dict(t=10), height=600)
+            if labels_today and vals_today:
+                fig_today = go.Figure(data=[go.Pie(
+                    labels=labels_today,
+                    values=vals_today,
+                    hole=0.35
+                )])
+                fig_today.update_traces(textinfo='percent+label')
+                fig_today.update_layout(template='plotly_dark', margin=dict(t=10), height=600)
                 st.plotly_chart(fig_today, use_container_width=True, key=f"multi_today_{selected_portfolio_detail}")
                 # Store in session state for PDF export
                 st.session_state[f'pie_chart_{selected_portfolio_detail}'] = fig_today
