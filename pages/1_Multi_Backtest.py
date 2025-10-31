@@ -5915,6 +5915,14 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         rets_keys = list(rets.keys())
         all_negative = all(rets[t] <= 0 for t in rets_keys)
         relative_mode = isinstance(momentum_strategy, str) and momentum_strategy.lower().startswith('relat')
+        
+        # Calculate effective strategy for negative momentum (needed for equal weight logic)
+        effective_strategy_for_equal_weight = None
+        if all_negative:
+            is_sp500top20 = any(is_special_dynamic_ticker(t) for t in rets_keys) or config.get('dynamic_portfolio_data') is not None
+            effective_strategy_for_equal_weight = negative_momentum_strategy
+            if is_sp500top20 and negative_momentum_strategy == 'Cash':
+                effective_strategy_for_equal_weight = 'Relative momentum'
 
         def calculate_near_zero_symmetric_momentum(returns, neutral_zone=0.05):
             """
@@ -6207,6 +6215,73 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             total_weight = sum(weights.values())
             if total_weight > 0:
                 weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
+
+        # Apply Equal Weight filter if enabled
+        # Equal weight should:
+        # - Apply to all positive momentum cases
+        # - Apply to Relative momentum and Near-Zero Symmetry when all negative
+        # - NOT apply when all negative and strategy is Cash (should go to 100% cash)
+        # - NOT apply when all negative and strategy is Equal weight (already equal weight for all)
+        use_equal_weight = config.get('use_equal_weight', False)
+        equal_weight_n_tickers = config.get('equal_weight_n_tickers', 10)
+        
+        # Determine if equal weight should be applied
+        should_apply_equal_weight = False
+        if use_equal_weight and equal_weight_n_tickers > 0 and weights:
+            if all_negative:
+                # When all negative, only apply if using Relative momentum or Near-Zero Symmetry
+                if effective_strategy_for_equal_weight in ['Relative momentum', 'Near-Zero Symmetry']:
+                    should_apply_equal_weight = True
+            else:
+                # When there are positive momentums, always apply if enabled
+                should_apply_equal_weight = True
+        
+        if should_apply_equal_weight:
+            # IMPORTANT: Equal weight is applied AFTER min/max allocation filters
+            # This means we work with the tickers that survived the filters
+            # Get all tickers except CASH with weight > 0 (these are the tickers that passed min/max filters)
+            # Sort by their final weight (after all filters) in descending order
+            ticker_weights = [(ticker, weight) for ticker, weight in weights.items() 
+                            if ticker != 'CASH' and weight > 0]
+            ticker_weights.sort(key=lambda x: x[1], reverse=True)
+            
+            if ticker_weights:
+                # Get top N tickers from the filtered set
+                # If filters left fewer tickers than N requested, take all available tickers
+                n_to_select = min(equal_weight_n_tickers, len(ticker_weights))
+                top_n_tickers = [ticker for ticker, _ in ticker_weights[:n_to_select]]
+                
+                # Calculate equal weight per ticker (1/n where n is the actual number selected)
+                equal_weight_per_ticker = 1.0 / len(top_n_tickers)
+                
+                # Create new weights dictionary with equal weights for top N, 0 for others
+                new_weights = {}
+                for ticker in weights.keys():
+                    if ticker == 'CASH':
+                        # Keep CASH weight as is (should be 0 in most cases)
+                        new_weights[ticker] = weights.get(ticker, 0.0)
+                    elif ticker in top_n_tickers:
+                        new_weights[ticker] = equal_weight_per_ticker
+                    else:
+                        # Set to 0 for tickers not in top N
+                        new_weights[ticker] = 0.0
+                
+                # If there's any CASH weight, distribute it proportionally to top N tickers
+                cash_weight = new_weights.get('CASH', 0.0)
+                if cash_weight > 0:
+                    # Add cash weight proportionally to top N tickers
+                    for ticker in top_n_tickers:
+                        new_weights[ticker] += cash_weight / len(top_n_tickers)
+                    new_weights['CASH'] = 0.0
+                
+                # Final normalization to ensure weights sum to exactly 1.0 (100%)
+                # This is important especially when fewer tickers remain than requested N
+                total_weight = sum(new_weights.values())
+                if total_weight > 0:
+                    weights = {ticker: weight / total_weight for ticker, weight in new_weights.items()}
+                else:
+                    # Fallback: if somehow total is 0, keep the new_weights as is
+                    weights = new_weights
 
         # Attach calculated weights to metrics and return
         for t in weights:
@@ -7339,6 +7414,14 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
         rets_keys = list(rets.keys())
         all_negative = all(rets[t] <= 0 for t in rets_keys)
         relative_mode = isinstance(momentum_strategy, str) and momentum_strategy.lower().startswith('relat')
+        
+        # Calculate effective strategy for negative momentum (needed for equal weight logic)
+        effective_strategy_for_equal_weight = None
+        if all_negative:
+            is_sp500top20 = any(is_special_dynamic_ticker(t) for t in rets_keys) or config.get('dynamic_portfolio_data') is not None
+            effective_strategy_for_equal_weight = negative_momentum_strategy
+            if is_sp500top20 and negative_momentum_strategy == 'Cash':
+                effective_strategy_for_equal_weight = 'Relative momentum'
 
         def calculate_near_zero_symmetric_momentum(returns, neutral_zone=0.05):
             """
@@ -7470,6 +7553,73 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
             total_filtered = sum(filtered.values())
             if total_filtered > 0:
                 weights = {t: filtered[t] / total_filtered for t in filtered}
+
+        # Apply Equal Weight filter if enabled
+        # Equal weight should:
+        # - Apply to all positive momentum cases
+        # - Apply to Relative momentum and Near-Zero Symmetry when all negative
+        # - NOT apply when all negative and strategy is Cash (should go to 100% cash)
+        # - NOT apply when all negative and strategy is Equal weight (already equal weight for all)
+        use_equal_weight = config.get('use_equal_weight', False)
+        equal_weight_n_tickers = config.get('equal_weight_n_tickers', 10)
+        
+        # Determine if equal weight should be applied
+        should_apply_equal_weight = False
+        if use_equal_weight and equal_weight_n_tickers > 0 and weights:
+            if all_negative:
+                # When all negative, only apply if using Relative momentum or Near-Zero Symmetry
+                if effective_strategy_for_equal_weight in ['Relative momentum', 'Near-Zero Symmetry']:
+                    should_apply_equal_weight = True
+            else:
+                # When there are positive momentums, always apply if enabled
+                should_apply_equal_weight = True
+        
+        if should_apply_equal_weight:
+            # IMPORTANT: Equal weight is applied AFTER min/max allocation filters
+            # This means we work with the tickers that survived the filters
+            # Get all tickers except CASH with weight > 0 (these are the tickers that passed min/max filters)
+            # Sort by their final weight (after all filters) in descending order
+            ticker_weights = [(ticker, weight) for ticker, weight in weights.items() 
+                            if ticker != 'CASH' and weight > 0]
+            ticker_weights.sort(key=lambda x: x[1], reverse=True)
+            
+            if ticker_weights:
+                # Get top N tickers from the filtered set
+                # If filters left fewer tickers than N requested, take all available tickers
+                n_to_select = min(equal_weight_n_tickers, len(ticker_weights))
+                top_n_tickers = [ticker for ticker, _ in ticker_weights[:n_to_select]]
+                
+                # Calculate equal weight per ticker (1/n where n is the actual number selected)
+                equal_weight_per_ticker = 1.0 / len(top_n_tickers)
+                
+                # Create new weights dictionary with equal weights for top N, 0 for others
+                new_weights = {}
+                for ticker in weights.keys():
+                    if ticker == 'CASH':
+                        # Keep CASH weight as is (should be 0 in most cases)
+                        new_weights[ticker] = weights.get(ticker, 0.0)
+                    elif ticker in top_n_tickers:
+                        new_weights[ticker] = equal_weight_per_ticker
+                    else:
+                        # Set to 0 for tickers not in top N
+                        new_weights[ticker] = 0.0
+                
+                # If there's any CASH weight, distribute it proportionally to top N tickers
+                cash_weight = new_weights.get('CASH', 0.0)
+                if cash_weight > 0:
+                    # Add cash weight proportionally to top N tickers
+                    for ticker in top_n_tickers:
+                        new_weights[ticker] += cash_weight / len(top_n_tickers)
+                    new_weights['CASH'] = 0.0
+                
+                # Final normalization to ensure weights sum to exactly 1.0 (100%)
+                # This is important especially when fewer tickers remain than requested N
+                total_weight = sum(new_weights.values())
+                if total_weight > 0:
+                    weights = {ticker: weight / total_weight for ticker, weight in new_weights.items()}
+                else:
+                    # Fallback: if somehow total is 0, keep the new_weights as is
+                    weights = new_weights
 
         return weights, metrics
     import numpy as np
@@ -8638,6 +8788,8 @@ def add_portfolio_callback():
         'minimal_threshold_percent': 4.0,
         'use_max_allocation': False,
         'max_allocation_percent': 20.0,
+        'use_equal_weight': False,
+        'equal_weight_n_tickers': 10,
         'collect_dividends_as_cash': False,
         'start_date_user': inherit_start_date,
         'end_date_user': inherit_end_date,
@@ -9147,6 +9299,8 @@ def paste_json_callback():
             'ma_cross_rebalance': json_data.get('ma_cross_rebalance', False),
             'ma_tolerance_percent': json_data.get('ma_tolerance_percent', 2.0),
             'ma_confirmation_days': json_data.get('ma_confirmation_days', 3),
+            'use_equal_weight': json_data.get('use_equal_weight', False),
+            'equal_weight_n_tickers': json_data.get('equal_weight_n_tickers', 10),
         }
         
         st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index] = multi_backtest_config
@@ -9264,6 +9418,8 @@ def update_active_portfolio_index():
         st.session_state['multi_backtest_active_threshold_percent'] = active_portfolio.get('minimal_threshold_percent', 4.0)
         st.session_state['multi_backtest_active_use_max_allocation'] = active_portfolio.get('use_max_allocation', False)
         st.session_state['multi_backtest_active_max_allocation_percent'] = active_portfolio.get('max_allocation_percent', 20.0)
+        st.session_state['multi_backtest_active_use_equal_weight'] = active_portfolio.get('use_equal_weight', False)
+        st.session_state['multi_backtest_active_equal_weight_n_tickers'] = active_portfolio.get('equal_weight_n_tickers', 10)
         st.session_state['multi_backtest_active_use_sma_filter'] = active_portfolio.get('use_sma_filter', False)
         st.session_state['multi_backtest_active_sma_window'] = active_portfolio.get('sma_window', 200)
         # MA Multiplier - RECONSTRUCTED (no complex sync)
@@ -9521,6 +9677,12 @@ def update_use_max_allocation():
 
 def update_max_allocation_percent():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['max_allocation_percent'] = st.session_state.multi_backtest_active_max_allocation_percent
+
+def update_use_equal_weight():
+    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['use_equal_weight'] = st.session_state.multi_backtest_active_use_equal_weight
+
+def update_equal_weight_n_tickers():
+    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['equal_weight_n_tickers'] = st.session_state.multi_backtest_active_equal_weight_n_tickers
 
 def update_start_with():
     st.session_state.multi_backtest_start_with = st.session_state.multi_backtest_start_with_radio
@@ -10644,6 +10806,12 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
             del st.session_state[f"disable_max_allocation_{portfolio_index}"]
         if f"enable_max_allocation_{portfolio_index}" in st.session_state:
             del st.session_state[f"enable_max_allocation_{portfolio_index}"]
+        if f"equal_weight_values_{portfolio_index}" in st.session_state:
+            del st.session_state[f"equal_weight_values_{portfolio_index}"]
+        if f"disable_equal_weight_{portfolio_index}" in st.session_state:
+            del st.session_state[f"disable_equal_weight_{portfolio_index}"]
+        if f"enable_equal_weight_{portfolio_index}" in st.session_state:
+            del st.session_state[f"enable_equal_weight_{portfolio_index}"]
         
         # Clean momentum strategy session state
         momentum_keys = [
@@ -10814,6 +10982,86 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
             del st.session_state[f"disable_max_allocation_{portfolio_index}"]
         if f"enable_max_allocation_{portfolio_index}" in st.session_state:
             del st.session_state[f"enable_max_allocation_{portfolio_index}"]
+    
+    # Equal Weight Filter Section - SAME PATTERN AS MAX ALLOCATION
+    if use_momentum_vary:
+        st.markdown("---")
+        st.markdown("**Equal Weight Filter:**")
+        
+        # Initialize equal weight values list if not exists
+        if f"equal_weight_values_{portfolio_index}" not in st.session_state:
+            st.session_state[f"equal_weight_values_{portfolio_index}"] = [10]
+        
+        # Checkboxes for both options (can be both selected)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            disabled = st.checkbox(
+                "Disable Equal Weight",
+                value=True,
+                key=f"equal_disabled_{portfolio_index}"
+            )
+        
+        with col2:
+            enabled = st.checkbox(
+                "Enable Equal Weight",
+                key=f"equal_enabled_{portfolio_index}"
+            )
+        
+        # Build equal weight options
+        equal_weight_options = []
+        
+        if disabled:
+            equal_weight_options.append(None)
+        
+        if enabled:
+            st.markdown("**Equal Weight Values (Number of Top Tickers):**")
+            
+            # Add button
+            if st.button("➕ Add", key=f"add_equal_{portfolio_index}"):
+                st.session_state[f"equal_weight_values_{portfolio_index}"].append(10)
+                st.rerun()
+            
+            # Display values with truly unique keys for each value
+            values = st.session_state[f"equal_weight_values_{portfolio_index}"]
+            for i in range(len(values)):
+                col1, col2 = st.columns([4, 1])
+                
+                # Create truly unique key using timestamp and index
+                unique_id = f"{portfolio_index}_{i}_{id(values)}"
+                
+                with col1:
+                    val = st.number_input(
+                        f"Value {i+1}",
+                        min_value=1,
+                        max_value=100,
+                        value=int(values[i]),
+                        step=1,
+                        key=f"equal_input_{unique_id}"
+                    )
+                    # Update the value in the list
+                    values[i] = val
+                    equal_weight_options.append(val)
+                
+                with col2:
+                    if len(values) > 1 and st.button("🗑️", key=f"del_equal_{unique_id}"):
+                        # Remove the specific index
+                        st.session_state[f"equal_weight_values_{portfolio_index}"] = values[:i] + values[i+1:]
+                        st.rerun()
+        
+        # Add to variant params
+        if equal_weight_options:
+            variant_params["equal_weight"] = equal_weight_options
+    else:
+        variant_params["equal_weight"] = [None]
+        
+        # CLEAN SESSION STATE: When momentum is disabled, clean up equal weight session state
+        if f"equal_weight_values_{portfolio_index}" in st.session_state:
+            del st.session_state[f"equal_weight_values_{portfolio_index}"]
+        if f"disable_equal_weight_{portfolio_index}" in st.session_state:
+            del st.session_state[f"disable_equal_weight_{portfolio_index}"]
+        if f"enable_equal_weight_{portfolio_index}" in st.session_state:
+            del st.session_state[f"enable_equal_weight_{portfolio_index}"]
     
     # Momentum Windows Section - Using the exact same code that works
     if use_momentum_vary:
@@ -11580,6 +11828,13 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                                 else:
                                     variant["use_max_allocation"] = False
                                     variant["max_allocation_percent"] = 20.0
+                            elif param == "equal_weight":
+                                if value is not None:
+                                    variant["use_equal_weight"] = True
+                                    variant["equal_weight_n_tickers"] = value
+                                else:
+                                    variant["use_equal_weight"] = False
+                                    variant["equal_weight_n_tickers"] = 10
                             elif param == "ma_type":
                                 variant["ma_type"] = value
                             elif param == "ma_windows":
@@ -11718,6 +11973,11 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                     if variant.get('use_max_allocation', False):
                         max_allocation_percent = variant.get('max_allocation_percent', 20.0)
                         clear_name_parts.append(f"- Max {max_allocation_percent:.2f}%")
+                    
+                    # Add equal weight information (only show when enabled)
+                    if variant.get('use_equal_weight', False):
+                        equal_weight_n = variant.get('equal_weight_n_tickers', 10)
+                        clear_name_parts.append(f"- Equal {equal_weight_n}")
                     
                     # Add MA filter information (only show when enabled)
                     if variant.get('use_sma_filter', False):
@@ -12837,6 +13097,31 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
             st.warning("⚠️ **SP500TOP20 detected!** Cash strategy does not work yet and needs fixing. Please select 'Relative momentum' or 'Equal weight' instead.")
         active_portfolio['momentum_strategy'] = momentum_strategy
         active_portfolio['negative_momentum_strategy'] = negative_momentum_strategy
+        
+        st.markdown("---")
+        
+        # Equal Weight option - SAME PATTERN AS MAX ALLOCATION
+        # ALWAYS sync equal weight settings from portfolio (not just if not present)
+        st.session_state["multi_backtest_active_use_equal_weight"] = active_portfolio.get('use_equal_weight', False)
+        st.session_state["multi_backtest_active_equal_weight_n_tickers"] = active_portfolio.get('equal_weight_n_tickers', 10)
+        
+        st.checkbox(
+            "Equal Weight Top N Tickers",
+            key="multi_backtest_active_use_equal_weight",
+            on_change=update_use_equal_weight,
+            help="When enabled, takes the top N tickers by momentum weight and assigns them equal weights (1/N each). The momentum strategy is still used to select and rank the tickers."
+        )
+        
+        if st.session_state.get("multi_backtest_active_use_equal_weight", False):
+            st.number_input(
+                "Number of Top Tickers to Equal Weight",
+                min_value=1,
+                max_value=100,
+                key="multi_backtest_active_equal_weight_n_tickers",
+                on_change=update_equal_weight_n_tickers,
+                help="Select the top N tickers by momentum weight to receive equal allocation."
+            )
+        
         st.markdown("💡 **Note:** These options control how weights are assigned based on momentum scores.")
 
     with col_beta_vol:
@@ -14988,6 +15273,11 @@ def paste_all_json_callback():
                     portfolio['ma_confirmation_days'] = 3
                 if 'ma_multiplier' not in portfolio:
                     portfolio['ma_multiplier'] = 1.48  # Only default for new portfolios
+                # Add missing equal weight fields with default values
+                if 'use_equal_weight' not in portfolio:
+                    portfolio['use_equal_weight'] = False
+                if 'equal_weight_n_tickers' not in portfolio:
+                    portfolio['equal_weight_n_tickers'] = 10
         
         if isinstance(obj, list):
             # Clear widget keys to force re-initialization
@@ -15183,6 +15473,8 @@ def paste_all_json_callback():
                     'ma_cross_rebalance': cfg.get('ma_cross_rebalance', False),
                     'ma_tolerance_percent': cfg.get('ma_tolerance_percent', 2.0),
                     'ma_confirmation_days': cfg.get('ma_confirmation_days', 3),
+                    'use_equal_weight': cfg.get('use_equal_weight', False),
+                    'equal_weight_n_tickers': cfg.get('equal_weight_n_tickers', 10),
                     # Preserve fusion portfolio configuration if present
                     'fusion_portfolio': cfg.get('fusion_portfolio', {'enabled': False, 'selected_portfolios': [], 'allocations': {}}),
                     # Note: Ignoring Backtest Engine specific fields like 'portfolio_drag_pct', 'use_custom_dates', etc.
@@ -15314,6 +15606,9 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
             cleaned_config['ma_cross_rebalance'] = config.get('ma_cross_rebalance', False)
             cleaned_config['ma_tolerance_percent'] = config.get('ma_tolerance_percent', 2.0)
             cleaned_config['ma_confirmation_days'] = config.get('ma_confirmation_days', 3)
+            # Ensure equal weight settings are included (read from current config) - same pattern as max_allocation
+            cleaned_config['use_equal_weight'] = config.get('use_equal_weight', False)
+            cleaned_config['equal_weight_n_tickers'] = config.get('equal_weight_n_tickers', 10)
             
             # Convert date objects to strings for JSON serialization
             if cleaned_config.get('start_date_user') is not None:
