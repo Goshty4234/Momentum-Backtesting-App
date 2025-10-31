@@ -6216,7 +6216,74 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
             if total_weight > 0:
                 weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
 
-        # Apply Equal Weight filter if enabled
+        # STEP 1: Apply Limit to Top N filter FIRST (if enabled)
+        # This selects the top N tickers, keeping their proportional weights
+        # IMPORTANT: This runs BEFORE Equal Weight, so Equal Weight can then equalize the selected tickers
+        use_limit_to_top_n = config.get('use_limit_to_top_n', False)
+        limit_to_top_n_tickers = config.get('limit_to_top_n_tickers', 10)
+        
+        should_apply_limit_to_top_n = False
+        if use_limit_to_top_n and limit_to_top_n_tickers > 0 and weights:
+            if all_negative:
+                # When all negative, only apply if using Relative momentum or Near-Zero Symmetry
+                if effective_strategy_for_equal_weight in ['Relative momentum', 'Near-Zero Symmetry']:
+                    should_apply_limit_to_top_n = True
+            else:
+                # When there are positive momentums, always apply if enabled
+                should_apply_limit_to_top_n = True
+        
+        if should_apply_limit_to_top_n:
+            # IMPORTANT: Limit to top N is applied AFTER min/max allocation filters
+            # This means we work with the tickers that survived the filters
+            # Get all tickers except CASH with weight > 0 (these are the tickers that passed min/max filters)
+            # Sort by their final weight (after all filters) in descending order
+            ticker_weights = [(ticker, weight) for ticker, weight in weights.items() 
+                            if ticker != 'CASH' and weight > 0]
+            ticker_weights.sort(key=lambda x: x[1], reverse=True)
+            
+            if ticker_weights:
+                # Get top N tickers from the filtered set
+                # If filters left fewer tickers than N requested, take all available tickers
+                n_to_select = min(limit_to_top_n_tickers, len(ticker_weights))
+                top_n_tickers = [ticker for ticker, _ in ticker_weights[:n_to_select]]
+                
+                # Keep their original proportional weights (unlike equal weight which sets all to 1/N)
+                # Create new weights dictionary with original weights for top N, 0 for others
+                new_weights = {}
+                total_top_n_weight = 0.0
+                for ticker in weights.keys():
+                    if ticker == 'CASH':
+                        # Keep CASH weight as is (should be 0 in most cases)
+                        new_weights[ticker] = weights.get(ticker, 0.0)
+                    elif ticker in top_n_tickers:
+                        # Keep original weight for top N tickers
+                        new_weights[ticker] = weights.get(ticker, 0.0)
+                        total_top_n_weight += weights.get(ticker, 0.0)
+                    else:
+                        # Set to 0 for tickers not in top N
+                        new_weights[ticker] = 0.0
+                
+                # If there's any CASH weight, distribute it proportionally to top N tickers based on their relative weights
+                cash_weight = new_weights.get('CASH', 0.0)
+                if cash_weight > 0 and total_top_n_weight > 0:
+                    # Distribute cash proportionally based on each ticker's weight relative to total top N weight
+                    for ticker in top_n_tickers:
+                        ticker_weight = new_weights[ticker]
+                        proportion = ticker_weight / total_top_n_weight if total_top_n_weight > 0 else 0.0
+                        new_weights[ticker] += cash_weight * proportion
+                    new_weights['CASH'] = 0.0
+                
+                # Final normalization to ensure weights sum to exactly 1.0 (100%)
+                # This preserves the relative proportions among top N tickers
+                total_weight = sum(new_weights.values())
+                if total_weight > 0:
+                    weights = {ticker: weight / total_weight for ticker, weight in new_weights.items()}
+                else:
+                    # Fallback: if somehow total is 0, keep the new_weights as is
+                    weights = new_weights
+
+        # STEP 2: Apply Equal Weight filter AFTER Limit to Top N (if enabled)
+        # This equalizes the weights of the tickers selected by Limit to Top N (or all tickers if Limit to Top N was not used)
         # Equal weight should:
         # - Apply to all positive momentum cases
         # - Apply to Relative momentum and Near-Zero Symmetry when all negative
@@ -6237,19 +6304,24 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 should_apply_equal_weight = True
         
         if should_apply_equal_weight:
-            # IMPORTANT: Equal weight is applied AFTER min/max allocation filters
-            # This means we work with the tickers that survived the filters
-            # Get all tickers except CASH with weight > 0 (these are the tickers that passed min/max filters)
-            # Sort by their final weight (after all filters) in descending order
+            # IMPORTANT: Equal weight is applied AFTER Limit to Top N (if Limit to Top N was applied)
+            # If Limit to Top N was enabled, we equalize the tickers it selected
+            # If Limit to Top N was not enabled, we select our own top N tickers and equalize them
+            # Get all tickers except CASH with weight > 0
             ticker_weights = [(ticker, weight) for ticker, weight in weights.items() 
                             if ticker != 'CASH' and weight > 0]
-            ticker_weights.sort(key=lambda x: x[1], reverse=True)
             
             if ticker_weights:
-                # Get top N tickers from the filtered set
-                # If filters left fewer tickers than N requested, take all available tickers
-                n_to_select = min(equal_weight_n_tickers, len(ticker_weights))
-                top_n_tickers = [ticker for ticker, _ in ticker_weights[:n_to_select]]
+                # If Limit to Top N was applied, use the tickers it selected (all tickers with weight > 0)
+                # Otherwise, select top N based on Equal Weight's N value
+                if should_apply_limit_to_top_n:
+                    # Limit to Top N already selected the tickers - just equalize all that remain
+                    top_n_tickers = [ticker for ticker, _ in ticker_weights]
+                else:
+                    # No Limit to Top N - select top N based on Equal Weight's N value
+                    ticker_weights.sort(key=lambda x: x[1], reverse=True)
+                    n_to_select = min(equal_weight_n_tickers, len(ticker_weights))
+                    top_n_tickers = [ticker for ticker, _ in ticker_weights[:n_to_select]]
                 
                 # Calculate equal weight per ticker (1/n where n is the actual number selected)
                 equal_weight_per_ticker = 1.0 / len(top_n_tickers)
@@ -7554,40 +7626,75 @@ def single_backtest_year_aware(config, sim_index, reindexed_data, _cache_version
             if total_filtered > 0:
                 weights = {t: filtered[t] / total_filtered for t in filtered}
 
-        # Apply Equal Weight filter if enabled
-        # Equal weight should:
-        # - Apply to all positive momentum cases
-        # - Apply to Relative momentum and Near-Zero Symmetry when all negative
-        # - NOT apply when all negative and strategy is Cash (should go to 100% cash)
-        # - NOT apply when all negative and strategy is Equal weight (already equal weight for all)
-        use_equal_weight = config.get('use_equal_weight', False)
-        equal_weight_n_tickers = config.get('equal_weight_n_tickers', 10)
+        # STEP 1: Apply Limit to Top N filter FIRST (if enabled) - SECOND OCCURRENCE
+        use_limit_to_top_n = config.get('use_limit_to_top_n', False)
+        limit_to_top_n_tickers = config.get('limit_to_top_n_tickers', 10)
         
-        # Determine if equal weight should be applied
-        should_apply_equal_weight = False
-        if use_equal_weight and equal_weight_n_tickers > 0 and weights:
+        should_apply_limit_to_top_n = False
+        if use_limit_to_top_n and limit_to_top_n_tickers > 0 and weights:
             if all_negative:
-                # When all negative, only apply if using Relative momentum or Near-Zero Symmetry
                 if effective_strategy_for_equal_weight in ['Relative momentum', 'Near-Zero Symmetry']:
-                    should_apply_equal_weight = True
+                    should_apply_limit_to_top_n = True
             else:
-                # When there are positive momentums, always apply if enabled
-                should_apply_equal_weight = True
+                should_apply_limit_to_top_n = True
         
-        if should_apply_equal_weight:
-            # IMPORTANT: Equal weight is applied AFTER min/max allocation filters
-            # This means we work with the tickers that survived the filters
-            # Get all tickers except CASH with weight > 0 (these are the tickers that passed min/max filters)
-            # Sort by their final weight (after all filters) in descending order
+        if should_apply_limit_to_top_n:
             ticker_weights = [(ticker, weight) for ticker, weight in weights.items() 
                             if ticker != 'CASH' and weight > 0]
             ticker_weights.sort(key=lambda x: x[1], reverse=True)
             
             if ticker_weights:
-                # Get top N tickers from the filtered set
-                # If filters left fewer tickers than N requested, take all available tickers
-                n_to_select = min(equal_weight_n_tickers, len(ticker_weights))
+                n_to_select = min(limit_to_top_n_tickers, len(ticker_weights))
                 top_n_tickers = [ticker for ticker, _ in ticker_weights[:n_to_select]]
+                
+                new_weights = {}
+                total_top_n_weight = 0.0
+                for ticker in weights.keys():
+                    if ticker == 'CASH':
+                        new_weights[ticker] = weights.get(ticker, 0.0)
+                    elif ticker in top_n_tickers:
+                        new_weights[ticker] = weights.get(ticker, 0.0)
+                        total_top_n_weight += weights.get(ticker, 0.0)
+                    else:
+                        new_weights[ticker] = 0.0
+                
+                cash_weight = new_weights.get('CASH', 0.0)
+                if cash_weight > 0 and total_top_n_weight > 0:
+                    for ticker in top_n_tickers:
+                        ticker_weight = new_weights[ticker]
+                        proportion = ticker_weight / total_top_n_weight if total_top_n_weight > 0 else 0.0
+                        new_weights[ticker] += cash_weight * proportion
+                    new_weights['CASH'] = 0.0
+                
+                total_weight = sum(new_weights.values())
+                if total_weight > 0:
+                    weights = {ticker: weight / total_weight for ticker, weight in new_weights.items()}
+                else:
+                    weights = new_weights
+
+        # STEP 2: Apply Equal Weight filter AFTER Limit to Top N (if enabled) - SECOND OCCURRENCE
+        use_equal_weight = config.get('use_equal_weight', False)
+        equal_weight_n_tickers = config.get('equal_weight_n_tickers', 10)
+        
+        should_apply_equal_weight = False
+        if use_equal_weight and equal_weight_n_tickers > 0 and weights:
+            if all_negative:
+                if effective_strategy_for_equal_weight in ['Relative momentum', 'Near-Zero Symmetry']:
+                    should_apply_equal_weight = True
+            else:
+                should_apply_equal_weight = True
+        
+        if should_apply_equal_weight:
+            ticker_weights = [(ticker, weight) for ticker, weight in weights.items() 
+                            if ticker != 'CASH' and weight > 0]
+            
+            if ticker_weights:
+                if should_apply_limit_to_top_n:
+                    top_n_tickers = [ticker for ticker, _ in ticker_weights]
+                else:
+                    ticker_weights.sort(key=lambda x: x[1], reverse=True)
+                    n_to_select = min(equal_weight_n_tickers, len(ticker_weights))
+                    top_n_tickers = [ticker for ticker, _ in ticker_weights[:n_to_select]]
                 
                 # Calculate equal weight per ticker (1/n where n is the actual number selected)
                 equal_weight_per_ticker = 1.0 / len(top_n_tickers)
@@ -8790,6 +8897,8 @@ def add_portfolio_callback():
         'max_allocation_percent': 20.0,
         'use_equal_weight': False,
         'equal_weight_n_tickers': 10,
+        'use_limit_to_top_n': False,
+        'limit_to_top_n_tickers': 10,
         'collect_dividends_as_cash': False,
         'start_date_user': inherit_start_date,
         'end_date_user': inherit_end_date,
@@ -9301,6 +9410,8 @@ def paste_json_callback():
             'ma_confirmation_days': json_data.get('ma_confirmation_days', 3),
             'use_equal_weight': json_data.get('use_equal_weight', False),
             'equal_weight_n_tickers': json_data.get('equal_weight_n_tickers', 10),
+            'use_limit_to_top_n': json_data.get('use_limit_to_top_n', False),
+            'limit_to_top_n_tickers': json_data.get('limit_to_top_n_tickers', 10),
         }
         
         st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index] = multi_backtest_config
@@ -9420,6 +9531,8 @@ def update_active_portfolio_index():
         st.session_state['multi_backtest_active_max_allocation_percent'] = active_portfolio.get('max_allocation_percent', 20.0)
         st.session_state['multi_backtest_active_use_equal_weight'] = active_portfolio.get('use_equal_weight', False)
         st.session_state['multi_backtest_active_equal_weight_n_tickers'] = active_portfolio.get('equal_weight_n_tickers', 10)
+        st.session_state['multi_backtest_active_use_limit_to_top_n'] = active_portfolio.get('use_limit_to_top_n', False)
+        st.session_state['multi_backtest_active_limit_to_top_n_tickers'] = active_portfolio.get('limit_to_top_n_tickers', 10)
         st.session_state['multi_backtest_active_use_sma_filter'] = active_portfolio.get('use_sma_filter', False)
         st.session_state['multi_backtest_active_sma_window'] = active_portfolio.get('sma_window', 200)
         # MA Multiplier - RECONSTRUCTED (no complex sync)
@@ -9683,6 +9796,12 @@ def update_use_equal_weight():
 
 def update_equal_weight_n_tickers():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['equal_weight_n_tickers'] = st.session_state.multi_backtest_active_equal_weight_n_tickers
+
+def update_use_limit_to_top_n():
+    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['use_limit_to_top_n'] = st.session_state.multi_backtest_active_use_limit_to_top_n
+
+def update_limit_to_top_n_tickers():
+    st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['limit_to_top_n_tickers'] = st.session_state.multi_backtest_active_limit_to_top_n_tickers
 
 def update_start_with():
     st.session_state.multi_backtest_start_with = st.session_state.multi_backtest_start_with_radio
@@ -11062,6 +11181,78 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
             del st.session_state[f"disable_equal_weight_{portfolio_index}"]
         if f"enable_equal_weight_{portfolio_index}" in st.session_state:
             del st.session_state[f"enable_equal_weight_{portfolio_index}"]
+
+    # Limit to Top N Section - mirrored from Equal Weight
+    if use_momentum_vary:
+        st.markdown("---")
+        st.markdown("**Limit to Top N:**")
+        
+        # Initialize values list if not exists
+        if f"limit_top_values_{portfolio_index}" not in st.session_state:
+            st.session_state[f"limit_top_values_{portfolio_index}"] = [10]
+        
+        # Checkboxes for both options (can be both selected)
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            disabled = st.checkbox(
+                "Disable Limit to Top N",
+                value=True,
+                key=f"limit_disabled_{portfolio_index}"
+            )
+        
+        with col2:
+            enabled = st.checkbox(
+                "Enable Limit to Top N",
+                key=f"limit_enabled_{portfolio_index}"
+            )
+        
+        # Build options
+        limit_top_options = []
+        
+        if disabled:
+            limit_top_options.append(None)
+        
+        if enabled:
+            st.markdown("**Top N Values (Number of Tickers to Keep):**")
+            # Add button
+            if st.button("➕ Add", key=f"add_limit_top_{portfolio_index}"):
+                st.session_state[f"limit_top_values_{portfolio_index}"].append(10)
+                st.rerun()
+            
+            # Display values
+            values = st.session_state[f"limit_top_values_{portfolio_index}"]
+            for i in range(len(values)):
+                col1, col2 = st.columns([4, 1])
+                unique_id = f"{portfolio_index}_{i}_{id(values)}"
+                with col1:
+                    val = st.number_input(
+                        f"Value {i+1}",
+                        min_value=1,
+                        max_value=100,
+                        value=int(values[i]),
+                        step=1,
+                        key=f"limit_top_input_{unique_id}"
+                    )
+                    values[i] = val
+                    limit_top_options.append(val)
+                with col2:
+                    if len(values) > 1 and st.button("🗑️", key=f"del_limit_top_{unique_id}"):
+                        st.session_state[f"limit_top_values_{portfolio_index}"] = values[:i] + values[i+1:]
+                        st.rerun()
+        
+        # Add to variant params
+        if limit_top_options:
+            variant_params["limit_to_top_n"] = limit_top_options
+    else:
+        variant_params["limit_to_top_n"] = [None]
+        # CLEAN SESSION STATE: When momentum is disabled, clean up limit-to-top-N session state
+        if f"limit_top_values_{portfolio_index}" in st.session_state:
+            del st.session_state[f"limit_top_values_{portfolio_index}"]
+        if f"limit_disabled_{portfolio_index}" in st.session_state:
+            del st.session_state[f"limit_disabled_{portfolio_index}"]
+        if f"limit_enabled_{portfolio_index}" in st.session_state:
+            del st.session_state[f"limit_enabled_{portfolio_index}"]
     
     # Momentum Windows Section - Using the exact same code that works
     if use_momentum_vary:
@@ -11835,6 +12026,13 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                                 else:
                                     variant["use_equal_weight"] = False
                                     variant["equal_weight_n_tickers"] = 10
+                            elif param == "limit_to_top_n":
+                                if value is not None:
+                                    variant["use_limit_to_top_n"] = True
+                                    variant["limit_to_top_n_tickers"] = value
+                                else:
+                                    variant["use_limit_to_top_n"] = False
+                                    variant["limit_to_top_n_tickers"] = 10
                             elif param == "ma_type":
                                 variant["ma_type"] = value
                             elif param == "ma_windows":
@@ -11978,6 +12176,10 @@ with st.expander("🔧 Generate Portfolio Variants", expanded=current_state):
                     if variant.get('use_equal_weight', False):
                         equal_weight_n = variant.get('equal_weight_n_tickers', 10)
                         clear_name_parts.append(f"- Equal {equal_weight_n}")
+                    # Add limit to top N information (only show when enabled)
+                    if variant.get('use_limit_to_top_n', False):
+                        top_n = variant.get('limit_to_top_n_tickers', 10)
+                        clear_name_parts.append(f"- Tickers {top_n}")
                     
                     # Add MA filter information (only show when enabled)
                     if variant.get('use_sma_filter', False):
@@ -13120,6 +13322,30 @@ if st.session_state.get('multi_backtest_active_use_momentum', active_portfolio.g
                 key="multi_backtest_active_equal_weight_n_tickers",
                 on_change=update_equal_weight_n_tickers,
                 help="Select the top N tickers by momentum weight to receive equal allocation."
+            )
+        
+        st.markdown("---")
+        
+        # Limit to Top N option - SAME PATTERN AS EQUAL WEIGHT
+        # ALWAYS sync limit to top N settings from portfolio (not just if not present)
+        st.session_state["multi_backtest_active_use_limit_to_top_n"] = active_portfolio.get('use_limit_to_top_n', False)
+        st.session_state["multi_backtest_active_limit_to_top_n_tickers"] = active_portfolio.get('limit_to_top_n_tickers', 10)
+        
+        st.checkbox(
+            "Limit to Top N Tickers",
+            key="multi_backtest_active_use_limit_to_top_n",
+            on_change=update_use_limit_to_top_n,
+            help="When enabled, takes the top N tickers by momentum weight and keeps their proportional weights (unlike equal weight). The momentum strategy is still used to select and rank the tickers."
+        )
+        
+        if st.session_state.get("multi_backtest_active_use_limit_to_top_n", False):
+            st.number_input(
+                "Number of Top Tickers to Keep",
+                min_value=1,
+                max_value=100,
+                key="multi_backtest_active_limit_to_top_n_tickers",
+                on_change=update_limit_to_top_n_tickers,
+                help="Select the top N tickers by momentum weight to keep (with proportional weights)."
             )
         
         st.markdown("💡 **Note:** These options control how weights are assigned based on momentum scores.")
@@ -15167,9 +15393,17 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
             # OPTIMIZATION: Pre-compute and cache allocation evolution charts for all portfolios
             st.info("Pre-computing charts for instant portfolio selection...")
             
-            # Pre-compute and cache individual portfolio charts
-            precompute_individual_portfolio_charts()
-            progress_bar = st.progress(0)
+            # Pre-compute and cache individual portfolio charts (guarded to avoid silent failures)
+            try:
+                precompute_individual_portfolio_charts()
+            except Exception as e:
+                st.warning(f"Post-processing (precompute) failed: {e}")
+            # Create progress bar for subsequent processing (guarded)
+            try:
+                progress_bar = st.progress(0)
+            except Exception as e:
+                st.warning(f"Post-processing (progress bar) init failed: {e}")
+                progress_bar = None
             
             # Get all available portfolio names for pre-computation
             available_portfolio_names = [cfg.get('name', 'Portfolio') for cfg in st.session_state.get('multi_backtest_portfolio_configs', [])]
@@ -15204,9 +15438,17 @@ if st.sidebar.button("🚀 Run Backtest", type="primary", use_container_width=Tr
                     except Exception as e:
                         st.warning(f"Could not pre-compute chart for {portfolio_name}: {str(e)}")
                 
-                progress_bar.progress((i + 1) / total_portfolios)
+                try:
+                    if progress_bar is not None:
+                        progress_bar.progress((i + 1) / total_portfolios)
+                except Exception as e:
+                    st.warning(f"Post-processing (progress update) failed: {e}")
             
-            progress_bar.empty()
+            try:
+                if progress_bar is not None:
+                    progress_bar.empty()
+            except Exception:
+                pass
             st.success("Charts processed. Portfolio selection is now instantaneous.")
 
 # Sidebar JSON export/import for ALL portfolios
@@ -15278,6 +15520,11 @@ def paste_all_json_callback():
                     portfolio['use_equal_weight'] = False
                 if 'equal_weight_n_tickers' not in portfolio:
                     portfolio['equal_weight_n_tickers'] = 10
+                # Add missing limit to top N fields with default values
+                if 'use_limit_to_top_n' not in portfolio:
+                    portfolio['use_limit_to_top_n'] = False
+                if 'limit_to_top_n_tickers' not in portfolio:
+                    portfolio['limit_to_top_n_tickers'] = 10
         
         if isinstance(obj, list):
             # Clear widget keys to force re-initialization
@@ -15475,6 +15722,8 @@ def paste_all_json_callback():
                     'ma_confirmation_days': cfg.get('ma_confirmation_days', 3),
                     'use_equal_weight': cfg.get('use_equal_weight', False),
                     'equal_weight_n_tickers': cfg.get('equal_weight_n_tickers', 10),
+                    'use_limit_to_top_n': cfg.get('use_limit_to_top_n', False),
+                    'limit_to_top_n_tickers': cfg.get('limit_to_top_n_tickers', 10),
                     # Preserve fusion portfolio configuration if present
                     'fusion_portfolio': cfg.get('fusion_portfolio', {'enabled': False, 'selected_portfolios': [], 'allocations': {}}),
                     # Note: Ignoring Backtest Engine specific fields like 'portfolio_drag_pct', 'use_custom_dates', etc.
@@ -15609,6 +15858,9 @@ with st.sidebar.expander('All Portfolios JSON (Export / Import)', expanded=False
             # Ensure equal weight settings are included (read from current config) - same pattern as max_allocation
             cleaned_config['use_equal_weight'] = config.get('use_equal_weight', False)
             cleaned_config['equal_weight_n_tickers'] = config.get('equal_weight_n_tickers', 10)
+            # Ensure limit to top N settings are included (read from current config) - same pattern as equal weight
+            cleaned_config['use_limit_to_top_n'] = config.get('use_limit_to_top_n', False)
+            cleaned_config['limit_to_top_n_tickers'] = config.get('limit_to_top_n_tickers', 10)
             
             # Convert date objects to strings for JSON serialization
             if cleaned_config.get('start_date_user') is not None:
