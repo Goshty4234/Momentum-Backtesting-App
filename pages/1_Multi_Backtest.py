@@ -12843,11 +12843,12 @@ with st.expander("The Power of Sticking to One Strategy", expanded=False):
     """)
 
 # Special Tickers Section
-# Use session state to control expander state
-if 'special_tickers_expanded' not in st.session_state:
-    st.session_state.special_tickers_expanded = False
+if 'special_tickers_force_open_once' not in st.session_state:
+    st.session_state.special_tickers_force_open_once = False
 
-with st.expander("🎯 Special Long-Term Tickers", expanded=st.session_state.special_tickers_expanded):
+force_open_special_tickers = st.session_state.special_tickers_force_open_once
+
+with st.expander("🎯 Special Long-Term Tickers", expanded=force_open_special_tickers):
     st.markdown("**Quick access to ticker aliases that the system accepts:**")
     
     # Get the actual ticker aliases from the function
@@ -12882,7 +12883,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=st.session_state.spe
                     'include_dividends': True
                 })
                 # Keep expander open and rerun immediately
-                st.session_state.special_tickers_expanded = True
+                st.session_state.special_tickers_force_open_once = True
                 st.rerun()
     
     with col2:
@@ -12918,7 +12919,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=st.session_state.spe
                     'include_dividends': True
                 })
                 # Keep expander open and rerun immediately
-                st.session_state.special_tickers_expanded = True
+                st.session_state.special_tickers_force_open_once = True
                 st.rerun()
     
     with col3:
@@ -12986,7 +12987,7 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=st.session_state.spe
                     'include_in_sma_filter': True
                 })
                 # Keep expander open and rerun immediately
-                st.session_state.special_tickers_expanded = True
+                st.session_state.special_tickers_force_open_once = True
                 st.rerun()
     
     st.markdown("---")
@@ -13001,6 +13002,9 @@ with st.expander("🎯 Special Long-Term Tickers", expanded=st.session_state.spe
     st.markdown("- `TNX` → `^TNX` (10Y Treasury Yield, 1962+), `TYX` → `^TYX` (30Y Treasury Yield, 1977+)")
     st.markdown("- `TBILL3M` → `^IRX` (3M Treasury Yield, 1960+), `SHY` → `SHY` (1-3 Year Treasury ETF, 2002+)")
     st.markdown("- `ZEROX` → `ZERO` (Cash doing nothing), `SPYSIM` → `SPYSIM_COMPLETE` (Complete S&P 500 Simulation, 1885+), `SP500TOP20` → `SP500TOP20` (Dynamic S&P 500 Top 20, Historical), `TBILL` → `TBILL_COMPLETE` (Complete TBILL Dataset, 1948+), `IEFTR` → `IEF_COMPLETE` (Complete IEF Dataset, 1962+), `TLTTR` → `TLT_COMPLETE` (Complete TLT Dataset, 1962+), `ZROZX` → `ZROZ_COMPLETE` (Complete ZROZ Dataset, 1962+), `GOLDSIM` → `GOLDSIM_COMPLETE` (Complete Gold Simulation, 1968+), `GOLDX` → `GOLD_COMPLETE` (Complete Gold Dataset, 1975+), `KMLMX` → `KMLM_COMPLETE` (Complete KMLM Dataset, 1992+), `DBMFX` → `DBMF_COMPLETE` (Complete DBMF Dataset, 2000+), `BITCOINX` → `BTC_COMPLETE` (Complete Bitcoin Dataset, 2010+)")
+
+if force_open_special_tickers:
+    st.session_state.special_tickers_force_open_once = False
 
 with st.expander("⚡ Leverage Guide", expanded=False):
     st.markdown("""
