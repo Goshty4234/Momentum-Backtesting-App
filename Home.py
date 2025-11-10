@@ -99,6 +99,15 @@ st.markdown("""
         }
     }
     
+    /* Override Streamlit default white backgrounds */
+    .stMarkdown {
+        background-color: transparent !important;
+    }
+    
+    .element-container {
+        background-color: transparent !important;
+    }
+    
     /* Responsive design */
     @media (max-width: 768px) {
         .main-header {
@@ -117,18 +126,17 @@ st.markdown('<h1 class="main-header">Momentum Strategy 12-1</h1>', unsafe_allow_
 st.markdown('<p class="subtitle">Quantitative Analysis & Multi-Portfolio Backtesting System</p>', unsafe_allow_html=True)
 
 # Navigation par onglets principaux
-main_tab1, main_tab2, main_tab3 = st.tabs(["System Overview", "Research & ETFs", "Further Development"])
+main_tab1, main_tab2, main_tab3 = st.tabs(["System Overview", "Momentum Research", "Further Development"])
 
 # ============================================================================
 # ONGLET 1: SYSTEM OVERVIEW (de test.py)
 # ============================================================================
 with main_tab1:
-    # AI Features section (between Momentum Strategy Overview and Momentum Strategy Implementation)
     # Section d'introduction professionnelle
     st.markdown("""
-    <div style="background: #f8f9fa; padding: 2rem; border-radius: 10px; margin: 1rem 0; border-left: 4px solid #007bff;">
-        <h3 style="color: #2c3e50; margin-bottom: 1rem;">Momentum Strategy Implementation</h3>
-        <p style="font-size: 1.1rem; line-height: 1.6; color: #495057; margin: 0;">
+    <div style="background: #404040; color: white; padding: 2rem; border-radius: 10px; margin: 1rem 0; border-left: 4px solid #007bff;">
+        <h3 style="color: white; margin-bottom: 1rem;">Momentum Strategy Implementation</h3>
+        <p style="font-size: 1.1rem; line-height: 1.6; color: white; margin: 0;">
         Implementation of the Jegadeesh & Titman (1993) momentum strategy with multi-window approach, 
         negative momentum handling, and comprehensive risk management. The system supports multiple 
         asset classes including equities, fixed income, commodities, and cryptocurrencies.
@@ -136,13 +144,15 @@ with main_tab1:
     </div>
     """, unsafe_allow_html=True)
     
+    
+    
     # Momentum Research Facts
     st.markdown("## Momentum Research Facts")
     
     # Professional metrics
     st.markdown("""
-    <div style="background: #e8f4fd; border: 1px solid #bee5eb; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
-        <p style="margin: 0; color: #0c5460; font-weight: 500;">
+    <div style="background: #505050; color: white; border: 1px solid #707070; border-radius: 8px; padding: 1rem; margin: 1rem 0;">
+        <p style="margin: 0; color: white; font-weight: 500;">
             <strong>VERIFIED METRICS</strong> : All metrics based on actual code analysis
         </p>
     </div>
@@ -166,9 +176,9 @@ with main_tab1:
     st.markdown("## Momentum 12-1 Strategy Analysis")
     
     st.markdown("""
-    <div style="background: #f8f9fa; padding: 2rem; border-radius: 10px; margin: 1rem 0; border-left: 4px solid #007bff;">
-        <h3 style="color: #2c3e50; margin-bottom: 1rem;">Strategy Overview</h3>
-        <p style="font-size: 1.1rem; line-height: 1.6; color: #495057; margin: 0;">
+    <div style="background: #404040; color: white; padding: 2rem; border-radius: 10px; margin: 1rem 0; border-left: 4px solid #007bff;">
+        <h3 style="color: white; margin-bottom: 1rem;">Strategy Overview</h3>
+        <p style="font-size: 1.1rem; line-height: 1.6; color: white; margin: 0;">
         The momentum 12-1 strategy is a quantitative investment approach that exploits the persistence of asset price trends. 
         This systematic strategy selects securities based on their historical performance over a specific time horizon, 
         excluding the most recent period to mitigate short-term market microstructure effects.
@@ -257,7 +267,7 @@ with main_tab1:
         **Hong & Stein (1999)**: Gradual information diffusion
         """)
     
-    # AI Features section (inserted right before Momentum Strategy Implementation)
+    # AI Features section (between Momentum Strategy Overview and Momentum Strategy Implementation)
     st.success("AI analysis is live in Allocations with persistent results and secure key handling.")
     st.markdown(
         """
@@ -450,15 +460,18 @@ with main_tab1:
         - Resource management
         """)
 
+    
+
     # Tab-specific footer
     st.markdown("---")
     st.markdown("""
     <div style="
         text-align: center; 
-        color: #333; 
+        color: white; 
         margin: 2rem 0; 
         padding: 1rem; 
-        background: #f8f9fa; 
+        background: #404040; 
+        color: white; 
         border: 1px solid #dee2e6; 
         border-radius: 8px;
         font-weight: bold;
@@ -469,16 +482,71 @@ with main_tab1:
     """, unsafe_allow_html=True)
 
 # ============================================================================
-# ONGLET 2: RESEARCH & ETFS (de Home.py)
+# ONGLET 3: FURTHER DEVELOPMENT (Roadmap)
+# ============================================================================
+with main_tab3:
+    st.markdown("# Further Development Roadmap")
+    st.markdown("""
+    ### 1) Expand AI across the app
+    - AI is already live on the Allocations page (Gemini/OpenAI/DeepSeek) with overall and per‑ticker scores, comments, suggestions, additional insights, persistence, model selection, and secure key handling.
+    - Live backtest monitoring: track drawdowns, regime shifts, allocation flips, signal conflicts, and data gaps in real time; raise warnings, explain why rebalances occur, and surface anomalies.
+    - Explainable recommendations: step‑by‑step reasoning that cites the metrics used (momentum, beta, volatility, valuation, growth, sector context); return natural language and structured JSON for downstream use.
+    - Scenario and stress testing: simulate “what‑ifs” (macro shocks, rate moves, volatility spikes, sector rotations); propose hedges or tilt adjustments under constraints.
+    - Parameter advisory: suggest lookbacks, exclusion windows, top‑N, caps/thresholds, and rebalancing cadence using multi‑objective risk/return signals.
+    - Risk notebook: flag concentration risk, beta drift, liquidity filters, correlation spikes, and compliance rules; generate risk notes per run.
+    - Per‑page AI history: retain pinned analyses, allow diff between runs, and export results (CSV/JSON) with the exact prompt and payload.
+    - Richer equity analysis: valuation/growth/quality overlays, peer/sector comparisons, factor exposure commentary, and portfolio‑level diagnostics.
+    - Coach mode: proactive tips, suggested rebalancing instructions, and “explain this chart” helpers across pages.
+
+    ### 2) Migrate from Streamlit to React + fast backend
+    - React front‑end with a high‑performance API backend (FastAPI or Node) for faster UI, lower latency, and better concurrency.
+    - Background workers for backtests, WebSocket live progress, and server‑side caching. Typing, modular APIs, and easier CI/CD.
+    - Streamlit was used as a rapid testbed to validate the project before hardening performance.
+
+    ### 3) Bilingual app (English/French)
+    - Add a simple EN/FR toggle in the header; remember last choice.
+    - Translate page labels, messages, and tables (start with Home and Allocations).
+    - Use Québec French tone/formatting (dates, decimals) when FR is selected.
+
+    ### 4) Data and performance upgrades
+    - Centralized caching (diskcache/Redis), smart invalidation, and parallel data fetches.
+    - Compute engine optimizations (vectorization/numba), multi‑process runs, resumable jobs.
+
+    ### 5) Accounts, persistence, and cloud backend
+    - User accounts (email or OAuth) to securely save portfolios and backtests in the cloud.
+    - Persist AI analyses and prompts per user; restore previous runs and compare results.
+    - Import/export (CSV/JSON) and versioned presets with rollback.
+    - Optional multi-device sync so progress follows the user.
+    """)
+
+    # Tab-specific footer
+    st.markdown("---")
+    st.markdown("""
+    <div style="
+        text-align: center; 
+        color: white; 
+        margin: 2rem 0; 
+        padding: 1rem; 
+        background: #404040; 
+        color: white; 
+        border: 1px solid #dee2e6; 
+        border-radius: 8px;
+        font-weight: bold;
+        font-size: 1rem;
+    ">
+        Made by Nicolas Cool
+    </div>
+    """, unsafe_allow_html=True)
+
+# ============================================================================
+# ONGLET 2: MOMENTUM RESEARCH (de Home.py)
 # ============================================================================
 with main_tab2:
-    st.markdown("# 📚 Momentum Research & ETFs")
+    st.markdown("# 📚 Momentum Research")
     
     # Research Papers
-    st.markdown("## 📖 Essential Momentum Research Papers")
-    
     st.markdown("""
-    ### 🏆 Essential Momentum Research Papers
+    ### Essential Momentum Research Papers
     
     **1. [Jegadeesh & Titman (1993) - "Returns to Buying Winners and Selling Losers"](https://www.bauer.uh.edu/rsusmel/phd/jegadeesh-titman93.pdf)**
     - **Journal**: Journal of Finance, Vol. 48, No. 1, pp. 65-91
@@ -523,137 +591,16 @@ with main_tab2:
     - **Significance**: Latest insights from momentum pioneers
     """)
     
-    # Momentum ETFs
-    st.markdown("## 📈 Complete Momentum ETF Universe")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("""
-        ### 🇺🇸 US Momentum ETFs
-        
-        **MTUM** - iShares MSCI USA Momentum Factor ETF
-        
-        **SPMO** - SPDR S&P 500 Momentum ETF
-        
-        **PDP** - Invesco DWA Momentum ETF
-        
-        **QMOM** - Alpha Architect U.S. Quantitative Momentum ETF
-        
-        **MOM** - AGFiQ U.S. Market Neutral Momentum Fund
-        
-        **MOMI** - AGFiQ U.S. Market Neutral Anti-Beta Fund
-        
-        **MOMZ** - Alpha Architect U.S. Quantitative Value ETF
-        """)
-    
-    with col2:
-        st.markdown("""
-        ### 🌍 International & Global Momentum ETFs
-        
-        **IMTM** - iShares MSCI International Momentum Factor ETF
-        
-        **EMOM** - Alpha Architect International Quantitative Momentum ETF
-        
-        **DWAS** - Invesco DWA SmallCap Momentum ETF
-        
-        **DWMC** - Invesco DWA MidCap Momentum ETF
-        
-        **DWUS** - Invesco DWA Momentum & Low Volatility Rotation ETF
-        
-        **DWAT** - Invesco DWA Technology Momentum ETF
-        
-        **DWMF** - Invesco DWA Momentum & Low Volatility Rotation ETF
-        """)
-    
-    # Additional Momentum ETFs
-    st.markdown("### 🏢 Sector & Specialty Momentum ETFs")
-    
-    col3, col4 = st.columns(2)
-    
-    with col3:
-        st.markdown("""
-        **DWAS** - Invesco DWA SmallCap Momentum ETF
-        
-        **DWMC** - Invesco DWA MidCap Momentum ETF
-        
-        **DWAT** - Invesco DWA Technology Momentum ETF
-        """)
-    
-    with col4:
-        st.markdown("""
-        **DWUS** - Invesco DWA Momentum & Low Volatility Rotation ETF
-        
-        **DWMF** - Invesco DWA Momentum & Low Volatility Rotation ETF
-        
-        **MOMI** - AGFiQ U.S. Market Neutral Anti-Beta Fund
-        """)
-    
     # Footer - Always visible
     st.markdown("---")
     st.markdown("""
     <div style="
         text-align: center; 
-        color: #333; 
+        color: white; 
         margin: 2rem 0; 
         padding: 1rem; 
-        background: #f8f9fa; 
-        border: 1px solid #dee2e6; 
-        border-radius: 8px;
-        font-weight: bold;
-        font-size: 1rem;
-    ">
-        Made by Nicolas Cool
-    </div>
-    """, unsafe_allow_html=True)
-
-# ============================================================================
-# ONGLET 3: FURTHER DEVELOPMENT (Roadmap)
-# ============================================================================
-with main_tab3:
-    st.markdown("# 🚀 Further Development Roadmap")
-    st.markdown("""
-    ### 1) Expand AI across the app
-    - AI is already live on the Allocations page (Gemini/OpenAI/DeepSeek) with overall and per‑ticker scores, comments, suggestions, additional insights, persistence, model selection, and secure key handling.
-    - Live backtest monitoring: track drawdowns, regime shifts, allocation flips, signal conflicts, and data gaps in real time; raise warnings, explain why rebalances occur, and surface anomalies.
-    - Explainable recommendations: step‑by‑step reasoning that cites the metrics used (momentum, beta, volatility, valuation, growth, sector context); return natural language and structured JSON for downstream use.
-    - Scenario and stress testing: simulate “what‑ifs” (macro shocks, rate moves, volatility spikes, sector rotations); propose hedges or tilt adjustments under constraints.
-    - Parameter advisory: suggest lookbacks, exclusion windows, top‑N, caps/thresholds, and rebalancing cadence using multi‑objective risk/return signals.
-    - Risk notebook: flag concentration risk, beta drift, liquidity filters, correlation spikes, and compliance rules; generate risk notes per run.
-    - Per‑page AI history: retain pinned analyses, allow diff between runs, and export results (CSV/JSON) with the exact prompt and payload.
-    - Richer equity analysis: valuation/growth/quality overlays, peer/sector comparisons, factor exposure commentary, and portfolio‑level diagnostics.
-    - Coach mode: proactive tips, suggested rebalancing instructions, and “explain this chart” helpers across pages.
-
-    ### 2) Migrate from Streamlit to React + fast backend
-    - React front‑end with a high‑performance API backend (FastAPI or Node) for faster UI, lower latency, and better concurrency.
-    - Background workers for backtests, WebSocket live progress, and server‑side caching. Typing, modular APIs, and easier CI/CD.
-    - Streamlit was used as a rapid testbed to validate the project before hardening performance.
-
-    ### 3) Bilingual app (English/French)
-    - Add a simple EN/FR toggle in the header; remember last choice.
-    - Translate page labels, messages, and tables (start with Home and Allocations).
-    - Use Québec French tone/formatting (dates, decimals) when FR is selected.
-
-    ### 4) Data and performance upgrades
-    - Centralized caching (diskcache/Redis), smart invalidation, and parallel data fetches.
-    - Compute engine optimizations (vectorization/numba), multi‑process runs, resumable jobs.
-
-    ### 5) Accounts, persistence, and cloud backend
-    - User accounts (email or OAuth) to securely save portfolios and backtests in the cloud.
-    - Persist AI analyses and prompts per user; restore previous runs and compare results.
-    - Import/export (CSV/JSON) and versioned presets with rollback.
-    - Optional multi-device sync so progress follows the user.
-    """)
-
-    # Tab-specific footer
-    st.markdown("---")
-    st.markdown("""
-    <div style="
-        text-align: center; 
-        color: #333; 
-        margin: 2rem 0; 
-        padding: 1rem; 
-        background: #f8f9fa; 
+        background: #404040; 
+        color: white; 
         border: 1px solid #dee2e6; 
         border-radius: 8px;
         font-weight: bold;
