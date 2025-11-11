@@ -6081,6 +6081,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
         max_allocation_percent = config.get('max_allocation_percent', 20.0)
         use_threshold = config.get('use_minimal_threshold', False)
         threshold_percent = config.get('minimal_threshold_percent', 4.0)
+        apply_caps_before_top_n = False
         
         # Build dictionary of individual ticker caps from stock configs
         individual_caps = {}
@@ -6091,7 +6092,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 individual_caps[ticker] = individual_cap / 100.0
         
         # Apply caps if either global cap is enabled OR any individual caps exist
-        if (use_max_allocation or individual_caps) and weights:
+        if apply_caps_before_top_n and (use_max_allocation or individual_caps) and weights:
             max_allocation_decimal = max_allocation_percent / 100.0
             
             # FIRST PASS: Apply maximum allocation filter (EXCLUDE CASH from max_allocation limit)
@@ -6153,7 +6154,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
         
         # Apply minimal threshold filter if enabled
-        if use_threshold and weights:
+        if apply_caps_before_top_n and use_threshold and weights:
             threshold_decimal = threshold_percent / 100.0
             
             # Check which stocks are below threshold after max allocation redistribution
@@ -6175,7 +6176,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 weights = weights
         
         # SECOND PASS: Apply maximum allocation filter again (in case normalization created new excess)
-        if (use_max_allocation or individual_caps) and weights:
+        if apply_caps_before_top_n and (use_max_allocation or individual_caps) and weights:
             max_allocation_decimal = max_allocation_percent / 100.0
             
             # Check if any stocks exceed the cap after threshold filtering and normalization
@@ -6374,6 +6375,122 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 else:
                     # Fallback: if somehow total is 0, keep the new_weights as is
                     weights = new_weights
+
+        # Final allocation filters (after Top N / Equal Weight): Max Allocation -> Min Threshold -> Max Allocation
+        if (use_max_allocation or individual_caps) and weights:
+            max_allocation_decimal = max_allocation_percent / 100.0
+
+            capped_weights = {}
+            excess_weight = 0.0
+
+            for ticker, weight in weights.items():
+                if ticker == 'CASH':
+                    capped_weights[ticker] = weight
+                else:
+                    ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+
+                    if weight > ticker_cap:
+                        capped_weights[ticker] = ticker_cap
+                        excess_weight += (weight - ticker_cap)
+                    else:
+                        capped_weights[ticker] = weight
+
+            if excess_weight > 0:
+                eligible_stocks = {}
+                for ticker, weight in capped_weights.items():
+                    if ticker == 'CASH':
+                        eligible_stocks[ticker] = weight
+                    else:
+                        ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                        if weight < ticker_cap:
+                            eligible_stocks[ticker] = weight
+
+                if eligible_stocks:
+                    total_eligible_weight = sum(eligible_stocks.values())
+
+                    if total_eligible_weight > 0:
+                        for ticker in eligible_stocks:
+                            proportion = eligible_stocks[ticker] / total_eligible_weight
+                            additional_weight = excess_weight * proportion
+                            new_weight = capped_weights[ticker] + additional_weight
+
+                            if ticker == 'CASH':
+                                capped_weights[ticker] = new_weight
+                            else:
+                                ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                                capped_weights[ticker] = min(new_weight, ticker_cap)
+
+            weights = capped_weights
+
+            total_weight = sum(weights.values())
+            if total_weight > 0:
+                weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
+
+        if use_threshold and weights:
+            threshold_decimal = threshold_percent / 100.0
+
+            filtered_weights = {}
+            for ticker, weight in weights.items():
+                if weight >= threshold_decimal:
+                    filtered_weights[ticker] = weight
+
+            if filtered_weights:
+                total_weight = sum(filtered_weights.values())
+                if total_weight > 0:
+                    weights = {ticker: weight / total_weight for ticker, weight in filtered_weights.items()}
+                else:
+                    weights = {}
+            else:
+                weights = weights
+
+        if (use_max_allocation or individual_caps) and weights:
+            max_allocation_decimal = max_allocation_percent / 100.0
+
+            capped_weights = {}
+            excess_weight = 0.0
+
+            for ticker, weight in weights.items():
+                if ticker == 'CASH':
+                    capped_weights[ticker] = weight
+                else:
+                    ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+
+                    if weight > ticker_cap:
+                        capped_weights[ticker] = ticker_cap
+                        excess_weight += (weight - ticker_cap)
+                    else:
+                        capped_weights[ticker] = weight
+
+            if excess_weight > 0:
+                eligible_stocks = {}
+                for ticker, weight in capped_weights.items():
+                    if ticker == 'CASH':
+                        eligible_stocks[ticker] = weight
+                    else:
+                        ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                        if weight < ticker_cap:
+                            eligible_stocks[ticker] = weight
+
+                if eligible_stocks:
+                    total_eligible_weight = sum(eligible_stocks.values())
+
+                    if total_eligible_weight > 0:
+                        for ticker in eligible_stocks:
+                            proportion = eligible_stocks[ticker] / total_eligible_weight
+                            additional_weight = excess_weight * proportion
+                            new_weight = capped_weights[ticker] + additional_weight
+
+                            if ticker == 'CASH':
+                                capped_weights[ticker] = new_weight
+                            else:
+                                ticker_cap = individual_caps.get(ticker, max_allocation_decimal if use_max_allocation else float('inf'))
+                                capped_weights[ticker] = min(new_weight, ticker_cap)
+
+            weights = capped_weights
+
+            total_weight = sum(weights.values())
+            if total_weight > 0:
+                weights = {ticker: weight / total_weight for ticker, weight in weights.items()}
 
         # Attach calculated weights to metrics and return
         for t in weights:
@@ -7046,6 +7163,7 @@ def single_backtest(config, sim_index, reindexed_data, _cache_version="v2_daily_
                 max_allocation_percent = config.get('max_allocation_percent', 10.0)
                 use_threshold = config.get('use_minimal_threshold', False)
                 threshold_percent = config.get('minimal_threshold_percent', 2.0)
+                apply_caps_before_top_n = False
                 
                 # Start with original allocations
                 rebalance_allocations = {t: allocations.get(t, 0) for t in tickers}
