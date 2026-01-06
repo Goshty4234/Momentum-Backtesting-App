@@ -18811,7 +18811,693 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                 else:
                     st.warning("No allocation data available for this portfolio.")
 
-            # Table 2: Momentum Metrics and Calculated Weights (moved right after Historical Allocations)
+            # Table 2: Historical Shares and Position Values
+            if selected_portfolio_detail in st.session_state.multi_all_allocations:
+                st.markdown("---")
+                st.markdown(f"**Historical Shares and Position Values for {selected_portfolio_detail}**")
+                
+                # Get allocation data and portfolio results
+                allocation_data = st.session_state.multi_all_allocations[selected_portfolio_detail]
+                portfolio_results = st.session_state.multi_all_results.get(selected_portfolio_detail)
+                
+                if allocation_data and portfolio_results:
+                    # Get portfolio value series (with additions)
+                    if isinstance(portfolio_results, dict) and 'with_additions' in portfolio_results:
+                        portfolio_values = portfolio_results['with_additions']
+                    elif isinstance(portfolio_results, pd.Series):
+                        portfolio_values = portfolio_results
+                    else:
+                        portfolio_values = None
+                    
+                    # Get raw data for prices
+                    raw_data = st.session_state.get('multi_backtest_raw_data', {})
+                    
+                    # Helper function to get price on or before a date
+                    def get_price_on_date(df, target_date):
+                        try:
+                            available_dates = df.index[df.index <= target_date]
+                            if len(available_dates) > 0:
+                                closest_date = available_dates[-1]
+                                return float(df.loc[closest_date, 'Close'])
+                            return None
+                        except Exception:
+                            return None
+                    
+                    # Build historical shares and values data
+                    shares_data = {}
+                    values_data = {}
+                    all_tickers_set = set()
+                    
+                    # Collect all tickers first
+                    for date, alloc_dict in allocation_data.items():
+                        all_tickers_set.update(alloc_dict.keys())
+                    
+                    # Remove None if present
+                    all_tickers_set.discard(None)
+                    all_tickers_list = sorted(list(all_tickers_set))
+                    if 'CASH' in all_tickers_list:
+                        all_tickers_list.remove('CASH')
+                        all_tickers_list.append('CASH')
+                    
+                    # Determine rebalancing dates (same logic used elsewhere)
+                    rebalancing_dates = []
+                    try:
+                        # Get portfolio config to read frequency
+                        portfolio_configs_local = st.session_state.get('multi_backtest_portfolio_configs', [])
+                        portfolio_cfg_local = next((cfg for cfg in portfolio_configs_local if cfg.get('name') == selected_portfolio_detail), None)
+                        rebalancing_frequency = portfolio_cfg_local.get('rebalancing_frequency', 'none') if portfolio_cfg_local else 'none'
+                        # Map to standard names
+                        frequency_mapping = {
+                            'monthly': 'Monthly',
+                            'weekly': 'Weekly',
+                            'bi-weekly': 'Biweekly',
+                            'biweekly': 'Biweekly',
+                            'quarterly': 'Quarterly',
+                            'semi-annually': 'Semiannually',
+                            'semiannually': 'Semiannually',
+                            'annually': 'Annually',
+                            'yearly': 'Annually',
+                            'never': 'Never',
+                            'none': 'Never',
+                            'buy & hold': 'Buy & Hold',
+                            'buy & hold (target)': 'Buy & Hold (Target)'
+                        }
+                        rb_freq_display = frequency_mapping.get(str(rebalancing_frequency).lower(), rebalancing_frequency)
+                        # Determine sim_index from results
+                        sim_index = None
+                        if isinstance(portfolio_results, dict) and 'no_additions' in portfolio_results:
+                            sim_index = portfolio_results['no_additions'].index
+                        elif isinstance(portfolio_results, pd.Series):
+                            sim_index = portfolio_results.index
+                        # Get cached rebalancing dates
+                        portfolio_rebalancing_dates = get_cached_rebalancing_dates(selected_portfolio_detail, rb_freq_display, sim_index)
+                        # Filter to dates we have in allocation_data
+                        if portfolio_rebalancing_dates:
+                            rebalancing_dates = sorted([d for d in portfolio_rebalancing_dates if d in allocation_data])
+                    except Exception:
+                        rebalancing_dates = []
+                    
+                    # Fallback: if no rebalancing dates and frequency implies periodic rebalancing, use all allocation dates
+                    if not rebalancing_dates:
+                        if rb_freq_display not in ['Never', 'Buy & Hold', 'Buy & Hold (Target)']:
+                            rebalancing_dates = sorted(allocation_data.keys())
+                    
+                    # Process only rebalancing dates
+                    for date in rebalancing_dates:
+                        alloc_dict = allocation_data[date]
+                        
+                        # Get portfolio value for this date
+                        if portfolio_values is not None and date in portfolio_values.index:
+                            portfolio_value = float(portfolio_values.loc[date])
+                        else:
+                            # Try to find closest date
+                            if portfolio_values is not None:
+                                available_dates = portfolio_values.index[portfolio_values.index <= date]
+                                if len(available_dates) > 0:
+                                    portfolio_value = float(portfolio_values.loc[available_dates[-1]])
+                                else:
+                                    portfolio_value = 0.0
+                            else:
+                                portfolio_value = 0.0
+                        
+                        shares_row = {}
+                        values_row = {}
+                        
+                        for ticker in all_tickers_list:
+                            # Get allocation percentage
+                            alloc_value = alloc_dict.get(ticker, 0)
+                            if isinstance(alloc_value, dict):
+                                alloc_pct = float(alloc_value.get('allocation', alloc_value.get('weight', 0)))
+                            else:
+                                alloc_pct = float(alloc_value) if alloc_value is not None else 0.0
+                            
+                            if ticker == 'CASH':
+                                shares_row[ticker] = 0.0
+                                values_row[ticker] = portfolio_value * alloc_pct
+                            else:
+                                # Get price for this ticker on this date
+                                df = raw_data.get(ticker)
+                                price = None
+                                if isinstance(df, pd.DataFrame) and 'Close' in df.columns:
+                                    price = get_price_on_date(df, date)
+                                
+                                if price and price > 0:
+                                    allocation_value = portfolio_value * alloc_pct
+                                    shares = allocation_value / price
+                                    shares_row[ticker] = round(shares, 2)
+                                    values_row[ticker] = shares * price
+                                else:
+                                    shares_row[ticker] = 0.0
+                                    values_row[ticker] = portfolio_value * alloc_pct
+                        
+                        shares_data[date] = shares_row
+                        values_data[date] = values_row
+                    
+                    # Create DataFrames
+                    shares_df = pd.DataFrame(shares_data).T
+                    shares_df.index = pd.to_datetime(shares_df.index)
+                    shares_df = shares_df.sort_index()
+                    shares_df = shares_df.fillna(0.0)
+                    shares_df = shares_df[all_tickers_list]
+                    shares_df.index.name = "Date"
+                    
+                    values_df = pd.DataFrame(values_data).T
+                    values_df.index = pd.to_datetime(values_df.index)
+                    values_df = values_df.sort_index()
+                    values_df = values_df.fillna(0.0)
+                    values_df = values_df[all_tickers_list]
+                    values_df.index.name = "Date"
+                    
+                    # Display Shares table
+                    st.markdown("**Shares Held**")
+                    try:
+                        total_cells = shares_df.shape[0] * shares_df.shape[1]
+                        if total_cells > 200000:
+                            st.warning(f"Shares table is very large ({total_cells:,} cells). Showing simplified view.")
+                            recent_data = shares_df.tail(100)
+                            st.dataframe(recent_data, use_container_width=True)
+                            st.caption("Showing last 100 rows. Use filters to narrow down the data.")
+                        else:
+                            pd.set_option("styler.render.max_elements", max(total_cells * 2, 500000))
+                            
+                            def highlight_shares_rows(s):
+                                is_even_row = shares_df.index.get_loc(s.name) % 2 == 0
+                                bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
+                                return [f'{bg_color}; color: white;'] * len(s)
+                            
+                            styler = shares_df.style.apply(highlight_shares_rows, axis=1)
+                            styler.format('{:,.2f}', na_rep='N/A')
+                            st.dataframe(styler, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error displaying shares table: {str(e)}")
+                        st.dataframe(shares_df.head(1000))
+                    
+                    # Display Values table
+                    st.markdown("**Position Values ($)**")
+                    try:
+                        total_cells = values_df.shape[0] * values_df.shape[1]
+                        if total_cells > 200000:
+                            st.warning(f"Values table is very large ({total_cells:,} cells). Showing simplified view.")
+                            recent_data = values_df.tail(100)
+                            st.dataframe(recent_data, use_container_width=True)
+                            st.caption("Showing last 100 rows. Use filters to narrow down the data.")
+                        else:
+                            pd.set_option("styler.render.max_elements", max(total_cells * 2, 500000))
+                            
+                            def highlight_values_rows(s):
+                                is_even_row = values_df.index.get_loc(s.name) % 2 == 0
+                                bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
+                                return [f'{bg_color}; color: white;'] * len(s)
+                            
+                            styler = values_df.style.apply(highlight_values_rows, axis=1)
+                            styler.format('${:,.2f}', na_rep='N/A')
+                            st.dataframe(styler, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error displaying values table: {str(e)}")
+                        st.dataframe(values_df.head(1000))
+                    
+                    # Table 2b: Realized and Unrealized Gains/Losses from Purchases vs Price Variations
+                    st.markdown("---")
+                    st.markdown(f"**Realized and Unrealized Gains/Losses Analysis for {selected_portfolio_detail}**")
+                    st.markdown("*Shows gains/losses from purchases/sales vs price variations at each rebalance*")
+                    
+                    # IMPORTANT: Dividend handling affects interpretation.
+                    # - If dividends are collected as cash (collect_dividends_as_cash=True), they behave like "new cash"
+                    #   and will NOT create artificial realized gains in this analysis.
+                    # - If dividends are reinvested, they increase position value and may appear as additional shares
+                    #   between rebalances (because we infer shares from value/price snapshots).
+                    portfolio_cfg_for_div = None
+                    try:
+                        portfolio_cfg_for_div = next(
+                            (cfg for cfg in st.session_state.get('multi_backtest_portfolio_configs', [])
+                             if cfg.get('name') == selected_portfolio_detail),
+                            None
+                        )
+                    except Exception:
+                        portfolio_cfg_for_div = None
+                    collect_div_as_cash = bool(portfolio_cfg_for_div.get('collect_dividends_as_cash', False)) if portfolio_cfg_for_div else False
+                    if collect_div_as_cash:
+                        st.info("Dividends are **collected as cash** for this portfolio. In this analysis, dividends behave like **new cash** (added after gain/loss calculations, then reflected in the next rebalance snapshot).")
+                    else:
+                        st.warning("Dividends are currently **reinvested** for this portfolio. This analysis may show dividend reinvestment as **extra shares** between rebalances (because shares are inferred from value/price). If you want dividends treated exactly like new cash here, enable `collect_dividends_as_cash` in the portfolio config.")
+                    
+                    # Track average purchase price for each ticker (FIFO-like approach)
+                    # We'll use weighted average cost basis
+                    avg_purchase_price = {}  # {ticker: average_price}
+                    realized_gains_data = {}  # {date: {ticker: realized_gain}}
+                    unrealized_gains_data = {}  # {date: {ticker: unrealized_gain}}
+                    total_realized_data = {}  # {date: total_realized}
+                    total_unrealized_data = {}  # {date: total_unrealized}
+                    
+                    # Use the same rebalancing dates as above
+                    sorted_dates = rebalancing_dates
+                    
+                    for i, date in enumerate(sorted_dates):
+                        prev_date = sorted_dates[i-1] if i > 0 else None
+                        prev_shares = shares_df.loc[prev_date] if prev_date is not None else pd.Series(0.0, index=all_tickers_list)
+                        current_shares = shares_df.loc[date]
+                        
+                        # Get prices for this date
+                        prices = {}
+                        for ticker in all_tickers_list:
+                            if ticker == 'CASH':
+                                prices[ticker] = None
+                            else:
+                                df = raw_data.get(ticker)
+                                if isinstance(df, pd.DataFrame) and 'Close' in df.columns:
+                                    prices[ticker] = get_price_on_date(df, date)
+                                else:
+                                    prices[ticker] = None
+                        
+                        realized_row = {}
+                        unrealized_row = {}
+                        
+                        # Get previous prices for comparison
+                        prev_prices = {}
+                        for ticker in all_tickers_list:
+                            if ticker == 'CASH':
+                                prev_prices[ticker] = None
+                            else:
+                                if prev_date:
+                                    df = raw_data.get(ticker)
+                                    if isinstance(df, pd.DataFrame) and 'Close' in df.columns:
+                                        prev_prices[ticker] = get_price_on_date(df, prev_date)
+                                    else:
+                                        prev_prices[ticker] = None
+                                else:
+                                    prev_prices[ticker] = None
+                        
+                        # STEP 1: Calculate gains/losses on EXISTING shares (before new purchases)
+                        # This handles sales and price variations on held positions
+                        for ticker in all_tickers_list:
+                            if ticker == 'CASH':
+                                realized_row[ticker] = 0.0
+                                unrealized_row[ticker] = 0.0
+                                continue
+                            
+                            prev_shares_count = prev_shares.get(ticker, 0.0)
+                            current_shares_count = current_shares.get(ticker, 0.0)
+                            current_price = prices.get(ticker)
+                            prev_price = prev_prices.get(ticker)
+                            
+                            if current_price is None or current_price <= 0:
+                                realized_row[ticker] = 0.0
+                                unrealized_row[ticker] = 0.0
+                                continue
+                            
+                            # Initialize average purchase price if first time seeing this ticker
+                            # This represents the weighted average cost basis of shares held
+                            if ticker not in avg_purchase_price:
+                                if prev_shares_count > 0:
+                                    # We had shares before - need to estimate cost basis
+                                    # Try to get it from previous period's value and shares
+                                    if prev_date:
+                                        prev_values = values_df.loc[prev_date] if prev_date in values_df.index else None
+                                        if prev_values is not None and ticker in prev_values:
+                                            prev_value = prev_values[ticker]
+                                            if prev_value > 0 and prev_shares_count > 0:
+                                                # Cost basis = previous value / previous shares
+                                                avg_purchase_price[ticker] = prev_value / prev_shares_count
+                                            elif prev_price and prev_price > 0:
+                                                avg_purchase_price[ticker] = prev_price
+                                            else:
+                                                avg_purchase_price[ticker] = current_price if current_price > 0 else 0.0
+                                        elif prev_price and prev_price > 0:
+                                            avg_purchase_price[ticker] = prev_price
+                                        else:
+                                            avg_purchase_price[ticker] = current_price if current_price > 0 else 0.0
+                                    elif prev_price and prev_price > 0:
+                                        avg_purchase_price[ticker] = prev_price
+                                    else:
+                                        avg_purchase_price[ticker] = current_price if current_price > 0 else 0.0
+                                elif current_shares_count > 0:
+                                    # First purchase: use current price
+                                    avg_purchase_price[ticker] = current_price if current_price > 0 else 0.0
+                                else:
+                                    avg_purchase_price[ticker] = 0.0
+                            
+                            # Calculate shares difference
+                            shares_diff = current_shares_count - prev_shares_count
+                            
+                            # Handle sales (shares decreased) - this is a realized transaction
+                            if shares_diff < 0:
+                                # We sold shares
+                                shares_sold = abs(shares_diff)
+                                
+                                # Calculate realized gain/loss PERIOD-BY-PERIOD (for isolated period analysis)
+                                # Uses previous rebalance price as reference point for this period's performance
+                                realized_gain = 0.0
+                                
+                                if prev_shares_count > 0 and current_price > 0:
+                                    # Use previous price as the reference point (price at start of this period)
+                                    # This gives us the gain/loss for THIS PERIOD ONLY (isolated analysis)
+                                    if prev_price and prev_price > 0:
+                                        # Realized gain/loss for this period = (sale_price - previous_price) * shares_sold
+                                        # This shows what happened in THIS period only
+                                        realized_gain = (current_price - prev_price) * shares_sold
+                                    else:
+                                        # Fallback: try to get reference price from previous value
+                                        if prev_date and prev_date in values_df.index:
+                                            prev_values = values_df.loc[prev_date]
+                                            if ticker in prev_values and prev_values[ticker] > 0 and prev_shares_count > 0:
+                                                # Use previous value / shares as reference price for this period
+                                                reference_price = prev_values[ticker] / prev_shares_count
+                                                realized_gain = (current_price - reference_price) * shares_sold
+                                        elif avg_purchase_price.get(ticker, 0.0) > 0:
+                                            # Last fallback: use avg purchase price
+                                            realized_gain = (current_price - avg_purchase_price[ticker]) * shares_sold
+                                
+                                realized_row[ticker] = realized_gain
+                                
+                                # Unrealized gain for remaining shares (if any)
+                                # Use previous price as cost basis (not avg_purchase_price) to show period-specific gain
+                                if current_shares_count > 0:
+                                    if prev_price and prev_price > 0:
+                                        # Unrealized gain on remaining shares = (current_price - prev_price) * remaining_shares
+                                        # This shows the price change on shares that were held (not sold)
+                                        unrealized_gain = (current_price - prev_price) * current_shares_count
+                                        unrealized_row[ticker] = unrealized_gain
+                                    elif avg_purchase_price[ticker] > 0:
+                                        # Fallback: use avg_purchase_price if prev_price not available
+                                        unrealized_gain = (current_price - avg_purchase_price[ticker]) * current_shares_count
+                                        unrealized_row[ticker] = unrealized_gain
+                                    else:
+                                        unrealized_row[ticker] = 0.0
+                                else:
+                                    unrealized_row[ticker] = 0.0
+                                    # Sold all shares - reset average purchase price for next purchase
+                                    avg_purchase_price[ticker] = 0.0
+                            
+                            # Handle no change or purchases - calculate unrealized gains on existing shares
+                            else:
+                                # No realized gain (no sales)
+                                realized_row[ticker] = 0.0
+                                
+                                # Calculate unrealized gain on PREVIOUS shares (before new purchases)
+                                # This shows the gain/loss from price variation on existing positions
+                                if prev_shares_count > 0:
+                                    # Use previous price as the cost basis for existing shares
+                                    if prev_price and prev_price > 0:
+                                        # Unrealized gain = (current_price - previous_price) * previous_shares
+                                        # This is the gain/loss from price change on shares that existed before this rebalance
+                                        unrealized_gain = (current_price - prev_price) * prev_shares_count
+                                        unrealized_row[ticker] = unrealized_gain
+                                    elif avg_purchase_price[ticker] > 0:
+                                        # Fallback: use average purchase price if previous price not available
+                                        unrealized_gain = (current_price - avg_purchase_price[ticker]) * prev_shares_count
+                                        unrealized_row[ticker] = unrealized_gain
+                                    else:
+                                        unrealized_row[ticker] = 0.0
+                                else:
+                                    unrealized_row[ticker] = 0.0
+                        
+                        # STEP 2: AFTER calculating gains/losses, update average purchase price for new purchases
+                        # This way new cash investments don't affect the gain/loss calculations
+                        for ticker in all_tickers_list:
+                            if ticker == 'CASH':
+                                continue
+                            
+                            prev_shares_count = prev_shares.get(ticker, 0.0)
+                            current_shares_count = current_shares.get(ticker, 0.0)
+                            current_price = prices.get(ticker)
+                            
+                            if current_price is None or current_price <= 0:
+                                continue
+                            
+                            shares_diff = current_shares_count - prev_shares_count
+                            
+                            # Handle purchases (shares increased) - update cost basis AFTER gain calculations
+                            if shares_diff > 0:
+                                # We bought more shares (could be from new cash or rebalancing)
+                                shares_bought = shares_diff
+                                
+                                # Update average purchase price (weighted average) for next rebalance
+                                if prev_shares_count > 0:
+                                    # Get the cost basis for previous shares using avg_purchase_price (weighted average cost)
+                                    if avg_purchase_price.get(ticker, 0.0) > 0:
+                                        # Use the maintained average purchase price (this is the correct cost basis)
+                                        prev_cost_basis = prev_shares_count * avg_purchase_price[ticker]
+                                    elif prev_date and prev_date in values_df.index:
+                                        # Fallback: calculate from previous value and shares
+                                        prev_values = values_df.loc[prev_date]
+                                        if ticker in prev_values and prev_values[ticker] > 0:
+                                            prev_cost_basis = prev_values[ticker]
+                                        elif prev_prices.get(ticker) and prev_prices.get(ticker) > 0:
+                                            prev_cost_basis = prev_shares_count * prev_prices[ticker]
+                                        else:
+                                            prev_cost_basis = 0.0
+                                    elif prev_prices.get(ticker) and prev_prices.get(ticker) > 0:
+                                        prev_cost_basis = prev_shares_count * prev_prices[ticker]
+                                    else:
+                                        prev_cost_basis = 0.0
+                                    
+                                    # Weighted average: (old_shares * old_price + new_shares * new_price) / total_shares
+                                    total_cost_new = shares_bought * current_price
+                                    total_shares = current_shares_count
+                                    if total_shares > 0:
+                                        avg_purchase_price[ticker] = (prev_cost_basis + total_cost_new) / total_shares
+                                    else:
+                                        avg_purchase_price[ticker] = current_price
+                                else:
+                                    # First purchase or all shares were sold before
+                                    avg_purchase_price[ticker] = current_price
+                            
+                            # If shares decreased (sale), avg_purchase_price stays the same (we already handled it above)
+                            # If shares stayed the same, keep the same cost basis (don't reset it)
+                            # The cost basis should only change when we buy new shares or sell all shares
+                            # For next period, we'll use the same avg_purchase_price to calculate unrealized gains
+                        
+                        # Calculate totals for this rebalance period
+                        total_realized = sum(realized_row.values())
+                        total_unrealized = sum(unrealized_row.values())
+                        
+                        realized_gains_data[date] = realized_row
+                        unrealized_gains_data[date] = unrealized_row
+                        total_realized_data[date] = total_realized
+                        total_unrealized_data[date] = total_unrealized
+                    
+                    # Create DataFrames for realized and unrealized gains
+                    realized_df = pd.DataFrame(realized_gains_data).T
+                    realized_df.index = pd.to_datetime(realized_df.index)
+                    realized_df = realized_df.sort_index()
+                    realized_df = realized_df.fillna(0.0)
+                    # Ensure all tickers are present
+                    for ticker in all_tickers_list:
+                        if ticker not in realized_df.columns:
+                            realized_df[ticker] = 0.0
+                    realized_df = realized_df[all_tickers_list]
+                    realized_df['TOTAL'] = realized_df.sum(axis=1)
+                    
+                    # Create period labels for index (prev_date - current_date)
+                    # Keep original dates for year calculation
+                    sorted_dates_list = sorted(rebalancing_dates)
+                    period_labels = []
+                    period_to_date_map = {}  # Map period label to original date
+                    
+                    for i, current_date in enumerate(sorted_dates_list):
+                        if i > 0:
+                            prev_date = sorted_dates_list[i-1]
+                            # Format dates without time (YYYY-MM-DD)
+                            prev_date_str = prev_date.strftime('%Y-%m-%d') if isinstance(prev_date, pd.Timestamp) else str(prev_date)[:10]
+                            current_date_str = current_date.strftime('%Y-%m-%d') if isinstance(current_date, pd.Timestamp) else str(current_date)[:10]
+                            period_label = f"{prev_date_str} - {current_date_str}"
+                        else:
+                            # First period: show start date only or use first date as reference
+                            current_date_str = current_date.strftime('%Y-%m-%d') if isinstance(current_date, pd.Timestamp) else str(current_date)[:10]
+                            period_label = f"{current_date_str} (start)"
+                        period_labels.append((current_date, period_label))
+                        period_to_date_map[period_label] = current_date
+                    
+                    # Create mapping from date to period label
+                    period_map = {date: label for date, label in period_labels}
+                    
+                    # Store original dates mapping for annual aggregation
+                    original_dates_for_realized = {label: date for date, label in period_labels}
+                    
+                    # Update index with period labels
+                    new_index = [period_map.get(date, date.strftime('%Y-%m-%d') if isinstance(date, pd.Timestamp) else str(date)[:10]) 
+                                 for date in realized_df.index]
+                    realized_df.index = new_index
+                    realized_df.index.name = "Period"
+                    
+                    unrealized_df = pd.DataFrame(unrealized_gains_data).T
+                    unrealized_df.index = pd.to_datetime(unrealized_df.index)
+                    unrealized_df = unrealized_df.sort_index()
+                    unrealized_df = unrealized_df.fillna(0.0)
+                    # Ensure all tickers are present
+                    for ticker in all_tickers_list:
+                        if ticker not in unrealized_df.columns:
+                            unrealized_df[ticker] = 0.0
+                    unrealized_df = unrealized_df[all_tickers_list]
+                    unrealized_df['TOTAL'] = unrealized_df.sum(axis=1)
+                    
+                    # Store original dates mapping for unrealized as well
+                    original_dates_for_unrealized = {label: date for date, label in period_labels}
+                    
+                    # Update index with period labels (same mapping)
+                    new_index_unrealized = [period_map.get(date, date.strftime('%Y-%m-%d') if isinstance(date, pd.Timestamp) else str(date)[:10]) 
+                                           for date in unrealized_df.index]
+                    unrealized_df.index = new_index_unrealized
+                    unrealized_df.index.name = "Period"
+                    
+                    # Display Realized Gains/Losses table
+                    st.markdown("**Realized Gains/Losses (from Sales)**")
+                    try:
+                        total_cells = realized_df.shape[0] * realized_df.shape[1]
+                        if total_cells > 200000:
+                            st.warning(f"Realized gains table is very large ({total_cells:,} cells). Showing simplified view.")
+                            recent_data = realized_df.tail(100)
+                            st.dataframe(recent_data, use_container_width=True)
+                            st.caption("Showing last 100 rows. Use filters to narrow down the data.")
+                        else:
+                            pd.set_option("styler.render.max_elements", max(total_cells * 2, 500000))
+                            
+                            def highlight_realized_rows(s):
+                                is_even_row = realized_df.index.get_loc(s.name) % 2 == 0
+                                bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
+                                return [f'{bg_color}; color: white;'] * len(s)
+                            
+                            styler = realized_df.style.apply(highlight_realized_rows, axis=1)
+                            # Format all columns except TOTAL as currency
+                            format_dict = {col: '${:,.2f}' for col in realized_df.columns if col != 'TOTAL'}
+                            format_dict['TOTAL'] = '${:,.2f}'  # Also format TOTAL
+                            styler.format(format_dict, na_rep='N/A')
+                            st.dataframe(styler, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error displaying realized gains table: {str(e)}")
+                        st.dataframe(realized_df.head(1000))
+                    
+                    # Display Unrealized Gains/Losses table
+                    st.markdown("**Unrealized Gains/Losses (from Price Variations)**")
+                    try:
+                        total_cells = unrealized_df.shape[0] * unrealized_df.shape[1]
+                        if total_cells > 200000:
+                            st.warning(f"Unrealized gains table is very large ({total_cells:,} cells). Showing simplified view.")
+                            recent_data = unrealized_df.tail(100)
+                            st.dataframe(recent_data, use_container_width=True)
+                            st.caption("Showing last 100 rows. Use filters to narrow down the data.")
+                        else:
+                            pd.set_option("styler.render.max_elements", max(total_cells * 2, 500000))
+                            
+                            def highlight_unrealized_rows(s):
+                                is_even_row = unrealized_df.index.get_loc(s.name) % 2 == 0
+                                bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
+                                return [f'{bg_color}; color: white;'] * len(s)
+                            
+                            styler = unrealized_df.style.apply(highlight_unrealized_rows, axis=1)
+                            # Format all columns as currency
+                            format_dict = {col: '${:,.2f}' for col in unrealized_df.columns}
+                            styler.format(format_dict, na_rep='N/A')
+                            st.dataframe(styler, use_container_width=True)
+                    except Exception as e:
+                        st.error(f"Error displaying unrealized gains table: {str(e)}")
+                        st.dataframe(unrealized_df.head(1000))
+                    
+                    st.info("💡 **Explanation:** Realized gains/losses occur when shares are sold. Unrealized gains/losses show paper gains/losses from price changes on held positions. The TOTAL column shows the sum for each rebalance period.")
+                    
+                    # Annual Summary Table for Tax Purposes
+                    st.markdown("---")
+                    st.markdown(f"**📊 Annual Gains/Losses Summary (for Tax Calculation) - {selected_portfolio_detail}**")
+                    
+                    # Group by year and sum
+                    # Use original dates mapping to get the year
+                    annual_realized = {}
+                    annual_unrealized = {}
+                    
+                    for period_label in realized_df.index:
+                        # Get original date from period label
+                        original_date = original_dates_for_realized.get(period_label)
+                        if original_date is None:
+                            continue
+                        year = original_date.year if isinstance(original_date, pd.Timestamp) else pd.to_datetime(original_date).year
+                        if year not in annual_realized:
+                            annual_realized[year] = 0.0
+                            annual_unrealized[year] = 0.0
+                        
+                        # Sum TOTAL column for each year
+                        if 'TOTAL' in realized_df.columns:
+                            annual_realized[year] += realized_df.loc[period_label, 'TOTAL']
+                        else:
+                            annual_realized[year] += realized_df.loc[period_label].sum()
+                    
+                    for period_label in unrealized_df.index:
+                        # Get original date from period label
+                        original_date = original_dates_for_unrealized.get(period_label)
+                        if original_date is None:
+                            continue
+                        year = original_date.year if isinstance(original_date, pd.Timestamp) else pd.to_datetime(original_date).year
+                        if year not in annual_unrealized:
+                            annual_unrealized[year] = 0.0
+                        
+                        # Sum TOTAL column for each year
+                        if 'TOTAL' in unrealized_df.columns:
+                            annual_unrealized[year] += unrealized_df.loc[period_label, 'TOTAL']
+                        else:
+                            annual_unrealized[year] += unrealized_df.loc[period_label].sum()
+                    
+                    # Create annual summary DataFrame
+                    all_years = sorted(set(list(annual_realized.keys()) + list(annual_unrealized.keys())))
+                    annual_data = []
+                    for year in all_years:
+                        realized = annual_realized.get(year, 0.0)
+                        unrealized = annual_unrealized.get(year, 0.0)
+                        total = realized + unrealized
+                        
+                        # Calculate percentage of gains that are taxable (realized)
+                        # Use absolute values to ensure percentage is always between 0 and 100%
+                        abs_realized = abs(realized)
+                        abs_unrealized = abs(unrealized)
+                        abs_total = abs_realized + abs_unrealized
+                        
+                        if abs_total > 0.01:  # Total is significant (not near zero)
+                            # Percentage = realized / (abs(realized) + abs(unrealized)) * 100
+                            # This ensures the percentage is always between 0 and 100%
+                            taxable_pct = (abs_realized / abs_total) * 100
+                        else:  # Both are near zero
+                            taxable_pct = 0.0
+                        
+                        # Create period label: previous year - current year (e.g., "2024-2025")
+                        prev_year = year - 1
+                        period_label = f"{prev_year}-{year}"
+                        
+                        annual_data.append({
+                            'Period': period_label,
+                            'Realized Gains/Losses ($)': realized,
+                            'Unrealized Gains/Losses ($)': unrealized,
+                            'Total (Realized + Unrealized) ($)': total,
+                            '% Taxable (Realized)': taxable_pct
+                        })
+                    
+                    annual_df = pd.DataFrame(annual_data)
+                    annual_df = annual_df.set_index('Period')
+                    
+                    # Display annual table
+                    try:
+                        def highlight_annual_rows(s):
+                            is_even_row = annual_df.index.get_loc(s.name) % 2 == 0
+                            bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
+                            return [f'{bg_color}; color: white;'] * len(s)
+                        
+                        styler = annual_df.style.apply(highlight_annual_rows, axis=1)
+                        format_dict = {}
+                        for col in annual_df.columns:
+                            if '% Taxable' in col:
+                                format_dict[col] = '{:,.1f}%'
+                            else:
+                                format_dict[col] = '${:,.2f}'
+                        styler.format(format_dict, na_rep='N/A')
+                        st.dataframe(styler, use_container_width=True)
+                        
+                        st.warning("⚠️ **IMPORTANT FOR TAXES:** Only **Realized Gains/Losses** are taxable. Unrealized gains/losses are NOT taxable until shares are sold. Use the 'Realized Gains/Losses ($)' column for your tax calculations.")
+                        st.info("💡 **Note:** The 'Total (Realized + Unrealized)' column shows the total portfolio value change for the year (excluding dividends and new cash contributions). This is for reference only and does NOT represent taxable income.")
+                        st.info("📊 **How it works:** This table sums ALL rebalancing periods within each year. Whether you rebalance monthly, quarterly, or annually, all realized and unrealized gains from all rebalance periods in that year are aggregated here.")
+                    except Exception as e:
+                        st.error(f"Error displaying annual summary table: {str(e)}")
+                        st.dataframe(annual_df)
+                else:
+                    st.warning("No allocation or portfolio data available for shares and values table.")
+            
+            # Table 3: Momentum Metrics and Calculated Weights (moved after Historical Shares)
             if selected_portfolio_detail in st.session_state.multi_all_metrics:
                 st.markdown("---")
                 st.markdown(f"**Momentum Metrics and Calculated Weights for {selected_portfolio_detail}**")
@@ -19748,6 +20434,11 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     if final_date and last_rebal_date:
                         final_alloc = allocation_data.get(final_date, {})
                         rebal_alloc = allocation_data.get(last_rebal_date, {})
+                        
+                        # Check if this is a fusion portfolio
+                        portfolio_configs = st.session_state.get('multi_backtest_portfolio_configs', [])
+                        portfolio_cfg = next((cfg for cfg in portfolio_configs if cfg.get('name') == selected_portfolio_detail), None)
+                        is_fusion = portfolio_cfg and portfolio_cfg.get('fusion_portfolio', {}).get('enabled', False)
                         
                         # Get portfolio value for calculations
                         portfolio_value = get_portfolio_value(selected_portfolio_detail)
