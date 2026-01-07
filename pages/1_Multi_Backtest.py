@@ -19344,11 +19344,23 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     st.markdown("**Realized Gains/Losses (from Sales)**")
                     try:
                         total_cells = realized_df.shape[0] * realized_df.shape[1]
-                        if total_cells > 200000:
-                            st.warning(f"Realized gains table is very large ({total_cells:,} cells). Showing simplified view.")
-                            recent_data = realized_df.tail(100)
-                            st.dataframe(recent_data, use_container_width=True)
-                            st.caption("Showing last 100 rows. Use filters to narrow down the data.")
+                        if total_cells > 500000:  # Increased limit from 200000 to 500000
+                            st.warning(f"Realized gains table is very large ({total_cells:,} cells). Showing all data (may be slow to render).")
+                        # Always show full dataframe - removed the limit restriction
+                        pd.set_option("styler.render.max_elements", max(total_cells * 2, 1000000))
+                        
+                        if total_cells > 500000:
+                            # For very large tables, show all but warn user
+                            def highlight_realized_rows(s):
+                                is_even_row = realized_df.index.get_loc(s.name) % 2 == 0
+                                bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
+                                return [f'{bg_color}; color: white;'] * len(s)
+                            
+                            styler = realized_df.style.apply(highlight_realized_rows, axis=1)
+                            format_dict = {col: '${:,.2f}' for col in realized_df.columns if col != 'TOTAL'}
+                            format_dict['TOTAL'] = '${:,.2f}'
+                            styler.format(format_dict, na_rep='N/A')
+                            st.dataframe(styler, use_container_width=True, height=600)
                         else:
                             pd.set_option("styler.render.max_elements", max(total_cells * 2, 500000))
                             
@@ -19371,11 +19383,22 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     st.markdown("**Unrealized Gains/Losses (from Price Variations)**")
                     try:
                         total_cells = unrealized_df.shape[0] * unrealized_df.shape[1]
-                        if total_cells > 200000:
-                            st.warning(f"Unrealized gains table is very large ({total_cells:,} cells). Showing simplified view.")
-                            recent_data = unrealized_df.tail(100)
-                            st.dataframe(recent_data, use_container_width=True)
-                            st.caption("Showing last 100 rows. Use filters to narrow down the data.")
+                        if total_cells > 500000:  # Increased limit from 200000 to 500000
+                            st.warning(f"Unrealized gains table is very large ({total_cells:,} cells). Showing all data (may be slow to render).")
+                        # Always show full dataframe - removed the limit restriction
+                        pd.set_option("styler.render.max_elements", max(total_cells * 2, 1000000))
+                        
+                        if total_cells > 500000:
+                            # For very large tables, show all but warn user
+                            def highlight_unrealized_rows(s):
+                                is_even_row = unrealized_df.index.get_loc(s.name) % 2 == 0
+                                bg_color = 'background-color: #0e1117' if is_even_row else 'background-color: #262626'
+                                return [f'{bg_color}; color: white;'] * len(s)
+                            
+                            styler = unrealized_df.style.apply(highlight_unrealized_rows, axis=1)
+                            format_dict = {col: '${:,.2f}' for col in unrealized_df.columns}
+                            styler.format(format_dict, na_rep='N/A')
+                            st.dataframe(styler, use_container_width=True, height=600)
                         else:
                             pd.set_option("styler.render.max_elements", max(total_cells * 2, 500000))
                             
