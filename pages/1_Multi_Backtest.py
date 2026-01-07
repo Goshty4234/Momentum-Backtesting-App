@@ -19404,12 +19404,44 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                     annual_realized = {}
                     annual_unrealized = {}
                     
+                    # Map to get start and end dates for each period
+                    period_start_end_map = {}
+                    for i, (current_date, period_label) in enumerate(period_labels):
+                        if i > 0:
+                            prev_date = sorted_dates_list[i-1]
+                            period_start_end_map[period_label] = (prev_date, current_date)
+                        else:
+                            # First period: use current_date as both start and end
+                            period_start_end_map[period_label] = (current_date, current_date)
+                    
                     for period_label in realized_df.index:
-                        # Get original date from period label
-                        original_date = original_dates_for_realized.get(period_label)
-                        if original_date is None:
+                        # Get start and end dates for this period
+                        start_end = period_start_end_map.get(period_label)
+                        if start_end is None:
                             continue
-                        year = original_date.year if isinstance(original_date, pd.Timestamp) else pd.to_datetime(original_date).year
+                        start_date, end_date = start_end
+                        
+                        # Get years
+                        start_year = start_date.year if isinstance(start_date, pd.Timestamp) else pd.to_datetime(start_date).year
+                        end_year = end_date.year if isinstance(end_date, pd.Timestamp) else pd.to_datetime(end_date).year
+                        
+                        # Include period in the year range it belongs to
+                        # A period belongs to a year range "prev_year-year" if it starts in prev_year OR ends in year
+                        # Example: "2025-01-01 - 2025-07-01" starts in 2025 → belongs to "2025-2026" (year 2026)
+                        #          "2025-07-01 - 2026-01-01" ends in 2026 → belongs to "2025-2026" (year 2026)
+                        # Rule: periods that start in year X are counted in year X+1 (which shows "X-(X+1)")
+                        #       periods that end in year Y are counted in year Y (which shows "(Y-1)-Y")
+                        if start_year < end_year:
+                            # Period spans years: count in end year (shows as "(end_year-1)-end_year")
+                            year = end_year
+                        elif start_year == end_year:
+                            # Period within same year: count in year+1 (shows as "year-(year+1)")
+                            # This ensures periods starting in 2025 are in "2025-2026"
+                            year = end_year + 1
+                        else:
+                            # Should not happen, but use end_year as fallback
+                            year = end_year
+                        
                         if year not in annual_realized:
                             annual_realized[year] = 0.0
                             annual_unrealized[year] = 0.0
@@ -19421,11 +19453,28 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                             annual_realized[year] += realized_df.loc[period_label].sum()
                     
                     for period_label in unrealized_df.index:
-                        # Get original date from period label
-                        original_date = original_dates_for_unrealized.get(period_label)
-                        if original_date is None:
+                        # Get start and end dates for this period
+                        start_end = period_start_end_map.get(period_label)
+                        if start_end is None:
                             continue
-                        year = original_date.year if isinstance(original_date, pd.Timestamp) else pd.to_datetime(original_date).year
+                        start_date, end_date = start_end
+                        
+                        # Get years
+                        start_year = start_date.year if isinstance(start_date, pd.Timestamp) else pd.to_datetime(start_date).year
+                        end_year = end_date.year if isinstance(end_date, pd.Timestamp) else pd.to_datetime(end_date).year
+                        
+                        # Same logic as realized gains
+                        if start_year < end_year:
+                            # Period spans years: count in end year (shows as "(end_year-1)-end_year")
+                            year = end_year
+                        elif start_year == end_year:
+                            # Period within same year: count in year+1 (shows as "year-(year+1)")
+                            # This ensures periods starting in 2025 are in "2025-2026"
+                            year = end_year + 1
+                        else:
+                            # Should not happen, but use end_year as fallback
+                            year = end_year
+                        
                         if year not in annual_unrealized:
                             annual_unrealized[year] = 0.0
                         
