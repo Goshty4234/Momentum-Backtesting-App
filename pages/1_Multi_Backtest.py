@@ -9797,6 +9797,8 @@ def update_active_portfolio_index():
 
 def update_name():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['name'] = st.session_state.multi_backtest_active_name
+    # Keep selector in sync so we stay on the same portfolio after rename
+    st.session_state.multi_backtest_portfolio_selector = st.session_state.multi_backtest_active_name
 
 def update_initial():
     st.session_state.multi_backtest_portfolio_configs[st.session_state.multi_backtest_active_portfolio_index]['initial_value'] = st.session_state.multi_backtest_active_initial
@@ -10158,14 +10160,17 @@ if 'multi_backtest_portfolio_selector' in st.session_state:
         current_portfolio_name = selector_value
         st.session_state.multi_backtest_active_portfolio_index = portfolio_names.index(selector_value)
     else:
-        # Selector value is invalid (portfolio was deleted?) - clear it and use index
-        del st.session_state.multi_backtest_portfolio_selector
+        # Selector value is invalid (e.g. portfolio was renamed) - keep current index, sync selector to current portfolio
         if (st.session_state.multi_backtest_active_portfolio_index is not None and 
             st.session_state.multi_backtest_active_portfolio_index < len(portfolio_names)):
+            # Preserve active portfolio: use current index, update selector to new name
             current_portfolio_name = portfolio_names[st.session_state.multi_backtest_active_portfolio_index]
+            st.session_state.multi_backtest_portfolio_selector = current_portfolio_name
         else:
             current_portfolio_name = portfolio_names[0] if portfolio_names else None
             st.session_state.multi_backtest_active_portfolio_index = 0 if portfolio_names else None
+            if current_portfolio_name:
+                st.session_state.multi_backtest_portfolio_selector = current_portfolio_name
 else:
     # No selector value - use active index
     if (st.session_state.multi_backtest_active_portfolio_index is not None and 
