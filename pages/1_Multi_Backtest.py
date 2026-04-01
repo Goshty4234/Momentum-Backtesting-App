@@ -4776,9 +4776,16 @@ def get_cached_rebalancing_dates(portfolio_name, rebalancing_frequency, sim_inde
 def calculate_cagr(values, dates):
     if len(values) < 2:
         return np.nan
-    start_val = values[0]
-    end_val = values[-1]
-    years = (dates[-1] - dates[0]).days / 365.25
+    # Use positional access: Series[0] is label-based (fails on DatetimeIndex without label 0).
+    if isinstance(values, pd.Series):
+        start_val = values.iloc[0]
+        end_val = values.iloc[-1]
+    else:
+        start_val = values[0]
+        end_val = values[-1]
+    d_end = dates.iloc[-1] if isinstance(dates, pd.Series) else dates[-1]
+    d_start = dates.iloc[0] if isinstance(dates, pd.Series) else dates[0]
+    years = (d_end - d_start).days / 365.25
     if years <= 0 or start_val == 0:
         return np.nan
     return (end_val / start_val) ** (1 / years) - 1
