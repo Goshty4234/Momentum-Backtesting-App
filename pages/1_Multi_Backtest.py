@@ -4773,22 +4773,35 @@ def get_cached_rebalancing_dates(portfolio_name, rebalancing_frequency, sim_inde
     
     return portfolio_rebalancing_dates
 
-def calculate_cagr(values, dates):
-    if len(values) < 2:
+def calculate_cagr(values, dates=None):
+    """CAGR from equity curve. Always uses positional first/last row (never Series[0] label lookup).
+
+    Accepts (Series) or (array-like values + index dates). Cloud/local differences often come from
+    index dtype (DatetimeIndex vs RangeIndex) or numpy vs Timestamp dates — .days on timedeltas
+    can fail on numpy types; we normalize with pd.Timestamp and Timedelta division.
+    """
+    try:
+        if isinstance(values, pd.Series):
+            s = values.dropna()
+        else:
+            arr = np.asarray(values, dtype=float).ravel()
+            if dates is None or len(dates) != len(arr):
+                return np.nan
+            s = pd.Series(arr, index=pd.Index(dates)).dropna()
+        if len(s) < 2:
+            return np.nan
+        start_val = float(s.iloc[0])
+        end_val = float(s.iloc[-1])
+        if start_val == 0 or not (np.isfinite(start_val) and np.isfinite(end_val)):
+            return np.nan
+        t0 = pd.Timestamp(s.index[0])
+        t1 = pd.Timestamp(s.index[-1])
+        years = float((t1 - t0) / pd.Timedelta(days=365.25))
+        if years <= 0 or not np.isfinite(years):
+            return np.nan
+        return (end_val / start_val) ** (1 / years) - 1
+    except Exception:
         return np.nan
-    # Use positional access: Series[0] is label-based (fails on DatetimeIndex without label 0).
-    if isinstance(values, pd.Series):
-        start_val = values.iloc[0]
-        end_val = values.iloc[-1]
-    else:
-        start_val = values[0]
-        end_val = values[-1]
-    d_end = dates.iloc[-1] if isinstance(dates, pd.Series) else dates[-1]
-    d_start = dates.iloc[0] if isinstance(dates, pd.Series) else dates[0]
-    years = (d_end - d_start).days / 365.25
-    if years <= 0 or start_val == 0:
-        return np.nan
-    return (end_val / start_val) ** (1 / years) - 1
 
 def calculate_max_drawdown(values):
     values = np.array(values)
