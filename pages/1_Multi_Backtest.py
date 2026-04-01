@@ -18453,7 +18453,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                                 profit_factor = gross_profit / gross_loss if gross_loss > 0 else np.inf
                                 
                                 # Calculate monthly returns for monthly metrics
-                                monthly_returns = filtered_series.resample('M').last().pct_change().fillna(0) * 100
+                                monthly_returns = filtered_series.resample('ME').last().pct_change().fillna(0) * 100
                                 best_month = monthly_returns.max() if len(monthly_returns) > 0 else 0
                                 worst_month = monthly_returns.min() if len(monthly_returns) > 0 else 0
                                 median_monthly = monthly_returns.median() if len(monthly_returns) > 0 else 0
@@ -18985,7 +18985,7 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
                         else:
                             ser_noadd_full = series_obj if isinstance(series_obj, pd.Series) else None
                         if ser_noadd_full is not None and not ser_noadd_full.empty:
-                            monthly_ser = ser_noadd_full.resample('M').last().pct_change().dropna()
+                            monthly_ser = ser_noadd_full.resample('ME').last().pct_change().dropna()
                             if not monthly_ser.empty:
                                 vols = monthly_ser.groupby([monthly_ser.index.year]).std(ddof=0)
                                 if vols is not None and len(vols) > 0:
@@ -19156,9 +19156,9 @@ if 'multi_backtest_ran' in st.session_state and st.session_state.multi_backtest_
             try:
                 series_obj = st.session_state.multi_all_results.get(name)
                 if isinstance(series_obj, dict) and 'no_additions' in series_obj:
-                    ser_noadd = series_obj['no_additions'].resample('M').last()
+                    ser_noadd = series_obj['no_additions'].resample('ME').last()
                 elif isinstance(series_obj, pd.Series):
-                    ser_noadd = series_obj.resample('M').last()
+                    ser_noadd = series_obj.resample('ME').last()
             except Exception:
                 ser_noadd = None
 
