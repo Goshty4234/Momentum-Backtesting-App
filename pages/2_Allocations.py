@@ -12545,7 +12545,7 @@ if st.session_state.get('alloc_backtest_run', False):
                             except:
                                 pass
                         return ''
-                    styled_benchmark = styled_benchmark.applymap(style_pe, subset=[col])
+                    styled_benchmark = styled_benchmark.map(style_pe, subset=[col])
                 elif col not in ['Ticker', 'Beta', 'Volatility']:
                     def style_returns(val):
                         if isinstance(val, str) and val.endswith('%'):
@@ -12558,7 +12558,7 @@ if st.session_state.get('alloc_backtest_run', False):
                             except:
                                 pass
                         return ''
-                    styled_benchmark = styled_benchmark.applymap(style_returns, subset=[col])
+                    styled_benchmark = styled_benchmark.map(style_returns, subset=[col])
             
             # Highlight the PORTFOLIO row in benchmark table
             def highlight_benchmark_portfolio_row(row):
@@ -13979,7 +13979,7 @@ if st.session_state.get('alloc_backtest_run', False):
                 
                 # Apply styling only to returns/Momentum columns (exclude Volatility/Beta)
                 percent_cols = [c for c in ['Momentum', '1W', '1M', '3M', '6M', '1Y'] if c in returns_df.columns]
-                styled_returns = returns_df.style.applymap(style_returns, subset=percent_cols)
+                styled_returns = returns_df.style.map(style_returns, subset=percent_cols)
                 
                 # Highlight the PORTFOLIO row only
                 def highlight_portfolio_row(row):
