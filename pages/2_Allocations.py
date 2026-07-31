@@ -2700,9 +2700,9 @@ if 'alloc_portfolio_configs' not in st.session_state:
             'momentum_strategy': 'Classic',
             'negative_momentum_strategy': 'Cash',
             'momentum_windows': [
-                {"lookback": 365, "exclude": 30, "weight": 0.5, "discard_if_negative": False},
-                {"lookback": 180, "exclude": 30, "weight": 0.3, "discard_if_negative": False},
-                {"lookback": 120, "exclude": 30, "weight": 0.2, "discard_if_negative": False},
+                {"lookback": 365, "exclude": 30, "weight": 0.5, "discard_if_negative": False, "discard_unless_recent_positive": False},
+                {"lookback": 180, "exclude": 30, "weight": 0.3, "discard_if_negative": False, "discard_unless_recent_positive": False},
+                {"lookback": 120, "exclude": 30, "weight": 0.2, "discard_if_negative": False, "discard_unless_recent_positive": False},
             ],
             'calc_beta': False,
             'calc_volatility': False,
@@ -5462,20 +5462,49 @@ def parse_bool_from_json(value, default=False):
 
 
 def normalize_momentum_windows_discard_flags(momentum_windows):
-    """Ensure discard_if_negative is a real bool on each window (JSON import / legacy configs)."""
+    """Ensure discard flags are real bools on each window (JSON import / legacy configs)."""
     if not isinstance(momentum_windows, list):
         return
     for window in momentum_windows:
         if isinstance(window, dict):
             window['discard_if_negative'] = parse_bool_from_json(window.get('discard_if_negative', False), False)
+            window['discard_unless_recent_positive'] = parse_bool_from_json(
+                window.get('discard_unless_recent_positive', False), False
+            )
 
 
-def _momentum_window_discards_negative(window, window_return):
+def _momentum_return_between(df_t, start_ts, end_ts, include_div=False):
+    """Total return between start_ts and end_ts (rebalance date), or None if not computable."""
+    if not isinstance(df_t, pd.DataFrame) or "Close" not in df_t.columns:
+        return None
+    try:
+        price_start_index = df_t.index.asof(start_ts)
+        price_end_index = df_t.index.asof(end_ts)
+    except Exception:
+        return None
+    if pd.isna(price_start_index) or pd.isna(price_end_index):
+        return None
+    price_start = df_t.loc[price_start_index, "Close"]
+    price_end = df_t.loc[price_end_index, "Close"]
+    if pd.isna(price_start) or pd.isna(price_end) or price_start == 0:
+        return None
+    if include_div and "Dividends" in df_t.columns:
+        divs_in_period = df_t.loc[price_start_index:price_end_index, "Dividends"].fillna(0).sum()
+        return ((price_end + divs_in_period) - price_start) / price_start
+    return (price_end - price_start) / price_start
+
+
+def _momentum_window_discards_negative(window, window_return, recent_return=None):
     """Exclude asset when discard_if_negative is set and this window's return is below zero."""
     if not isinstance(window, dict):
         return False
     discard_enabled = parse_bool_from_json(window.get("discard_if_negative", False), False)
-    return discard_enabled and window_return < 0
+    if not discard_enabled or window_return >= 0:
+        return False
+    unless_recent = parse_bool_from_json(window.get("discard_unless_recent_positive", False), False)
+    if unless_recent and recent_return is not None and recent_return > 0:
+        return False
+    return True
 
 
 def single_backtest(config, sim_index, reindexed_data):
@@ -5878,7 +5907,16 @@ def single_backtest(config, sim_index, reindexed_data):
                     ret = ((price_end + divs_in_period) - price_start) / price_start
                 else:
                     ret = (price_end - price_start) / price_start
-                if _momentum_window_discards_negative(window, ret):
+                recent_ret = None
+                if (
+                    ret < 0
+                    and parse_bool_from_json(window.get("discard_if_negative", False), False)
+                    and parse_bool_from_json(window.get("discard_unless_recent_positive", False), False)
+                ):
+                    recent_ret = _momentum_return_between(
+                        df_t, end_mom, date, include_dividends.get(t, False)
+                    )
+                if _momentum_window_discards_negative(window, ret, recent_ret):
                     is_valid = False
                     break
                 asset_returns += ret * weight
@@ -7435,9 +7473,9 @@ def reset_stock_selection_callback():
 
 def reset_momentum_windows_callback():
     st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['momentum_windows'] = [
-        {"lookback": 365, "exclude": 30, "weight": 0.5, "discard_if_negative": False},
-        {"lookback": 180, "exclude": 30, "weight": 0.3, "discard_if_negative": False},
-        {"lookback": 120, "exclude": 30, "weight": 0.2, "discard_if_negative": False},
+        {"lookback": 365, "exclude": 30, "weight": 0.5, "discard_if_negative": False, "discard_unless_recent_positive": False},
+        {"lookback": 180, "exclude": 30, "weight": 0.3, "discard_if_negative": False, "discard_unless_recent_positive": False},
+        {"lookback": 120, "exclude": 30, "weight": 0.2, "discard_if_negative": False, "discard_unless_recent_positive": False},
     ]
     st.session_state.alloc_rerun_flag = True
 
@@ -7467,7 +7505,7 @@ def add_momentum_window_callback():
     if 'momentum_windows' not in cfg:
         cfg['momentum_windows'] = []
     # default new window
-    cfg['momentum_windows'].append({"lookback": 90, "exclude": 30, "weight": 0.1, "discard_if_negative": False})
+    cfg['momentum_windows'].append({"lookback": 90, "exclude": 30, "weight": 0.1, "discard_if_negative": False, "discard_unless_recent_positive": False})
     st.session_state.alloc_portfolio_configs[idx] = cfg
     st.session_state.alloc_rerun_flag = True
 
@@ -7484,6 +7522,14 @@ def update_momentum_discard_if_negative(index):
     discard_key = f"alloc_discard_if_negative_{idx}_{index}"
     st.session_state.alloc_portfolio_configs[idx]['momentum_windows'][index]['discard_if_negative'] = parse_bool_from_json(
         st.session_state.get(discard_key, False), False
+    )
+
+
+def update_momentum_discard_unless_recent_positive(index):
+    idx = st.session_state.alloc_active_portfolio_index
+    unless_key = f"alloc_discard_unless_recent_positive_{idx}_{index}"
+    st.session_state.alloc_portfolio_configs[idx]['momentum_windows'][index]['discard_unless_recent_positive'] = parse_bool_from_json(
+        st.session_state.get(unless_key, False), False
     )
 
 
@@ -7820,9 +7866,9 @@ def update_use_momentum():
             # When momentum is enabled, keep existing beta and volatility settings
             pass
             st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['momentum_windows'] = [
-                {"lookback": 365, "exclude": 30, "weight": 0.5, "discard_if_negative": False},
-                {"lookback": 180, "exclude": 30, "weight": 0.3, "discard_if_negative": False},
-                {"lookback": 120, "exclude": 30, "weight": 0.2, "discard_if_negative": False},
+                {"lookback": 365, "exclude": 30, "weight": 0.5, "discard_if_negative": False, "discard_unless_recent_positive": False},
+                {"lookback": 180, "exclude": 30, "weight": 0.3, "discard_if_negative": False, "discard_unless_recent_positive": False},
+                {"lookback": 120, "exclude": 30, "weight": 0.2, "discard_if_negative": False, "discard_unless_recent_positive": False},
             ]
         else:
             st.session_state.alloc_portfolio_configs[st.session_state.alloc_active_portfolio_index]['momentum_windows'] = []
@@ -9201,7 +9247,7 @@ if active_portfolio['use_momentum']:
     # If no windows exist, show an informational message and allow adding via the button.
     if len(active_portfolio.get('momentum_windows', [])) == 0:
         st.info("No momentum windows configured. Click 'Add Window' to create momentum lookback windows.")
-    col_headers = st.columns(4)
+    col_headers = st.columns(5)
     with col_headers[0]:
         st.markdown("**Lookback (days)**")
     with col_headers[1]:
@@ -9210,15 +9256,18 @@ if active_portfolio['use_momentum']:
         st.markdown("**Weight %**")
     with col_headers[3]:
         st.markdown("**Discard if negative**")
+    with col_headers[4]:
+        st.markdown("**Unless recent +**")
 
     for j in range(len(active_portfolio.get('momentum_windows', []))):
         with st.container():
-            col_mw1, col_mw2, col_mw3, col_mw4 = st.columns(4)
+            col_mw1, col_mw2, col_mw3, col_mw4, col_mw5 = st.columns(5)
             portfolio_index = st.session_state.alloc_active_portfolio_index
             lookback_key = f"alloc_lookback_active_{portfolio_index}_{j}"
             exclude_key = f"alloc_exclude_active_{portfolio_index}_{j}"
             weight_key = f"alloc_weight_input_active_{portfolio_index}_{j}"
             discard_key = f"alloc_discard_if_negative_{portfolio_index}_{j}"
+            unless_key = f"alloc_discard_unless_recent_positive_{portfolio_index}_{j}"
             
             # Initialize session state values if not present
             if lookback_key not in st.session_state:
@@ -9244,6 +9293,9 @@ if active_portfolio['use_momentum']:
             st.session_state[discard_key] = parse_bool_from_json(
                 active_portfolio['momentum_windows'][j].get('discard_if_negative', False), False
             )
+            st.session_state[unless_key] = parse_bool_from_json(
+                active_portfolio['momentum_windows'][j].get('discard_unless_recent_positive', False), False
+            )
             
             with col_mw1:
                 st.number_input(f"Lookback {j+1}", min_value=1, key=lookback_key, label_visibility="collapsed", on_change=update_momentum_lookback, args=(j,))
@@ -9259,6 +9311,18 @@ if active_portfolio['use_momentum']:
                     on_change=update_momentum_discard_if_negative,
                     args=(j,),
                     help="If checked, exclude the stock at rebalance when this window's momentum return is negative.",
+                )
+            with col_mw5:
+                st.checkbox(
+                    f"Unless recent positive {j+1}",
+                    key=unless_key,
+                    label_visibility="collapsed",
+                    on_change=update_momentum_discard_unless_recent_positive,
+                    args=(j,),
+                    help=(
+                        "Only with Discard if negative. Uses return from Exclude days to rebalance date "
+                        "(e.g. 120–30 window with exclude 30 → checks 30–0). Cancels expulsion when that recent return is positive."
+                    ),
                 )
 else:
     # Don't clear momentum_windows - they should persist when momentum is disabled
