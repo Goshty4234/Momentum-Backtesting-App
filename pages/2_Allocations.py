@@ -1,4 +1,5 @@
 # ALLOCATIONS PAGE - WITH CACHE
+# STANDALONE (same bootstrap as 1_Multi_Backtest - no yahoo_finance_setup)
 import streamlit as st
 import datetime
 from datetime import timedelta, time
@@ -11,12 +12,6 @@ from plotly.subplots import make_subplots
 import os
 import diskcache as dc
 from typing import Any
-
-def _yahooquery_kwargs():
-    if os.environ.get("YFINANCE_STRICT_SSL") == "1":
-        return {}
-    return {"verify": False}
-
 
 # Initialize API call counter
 if 'api_call_count' not in st.session_state:
@@ -2288,7 +2283,7 @@ def get_multiple_tickers_info_batch(ticker_list):
         try:
             from yahooquery import Ticker as YahooQueryTicker
 
-            batch_ticker = YahooQueryTicker(missing_resolved, **_yahooquery_kwargs())
+            batch_ticker = YahooQueryTicker(missing_resolved)
 
             summary_detail = batch_ticker.summary_detail
             financial_data = batch_ticker.financial_data
