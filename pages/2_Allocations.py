@@ -1,14 +1,3 @@
-import os
-import sys
-
-_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _APP_ROOT not in sys.path:
-    sys.path.insert(0, _APP_ROOT)
-
-import yahoo_finance_setup as _yahoo_finance_setup
-
-_yahoo_finance_setup.setup()
-
 # ALLOCATIONS PAGE - WITH CACHE
 import streamlit as st
 import datetime
@@ -22,6 +11,12 @@ from plotly.subplots import make_subplots
 import os
 import diskcache as dc
 from typing import Any
+
+def _yahooquery_kwargs():
+    if os.environ.get("YFINANCE_STRICT_SSL") == "1":
+        return {}
+    return {"verify": False}
+
 
 # Initialize API call counter
 if 'api_call_count' not in st.session_state:
@@ -2293,7 +2288,7 @@ def get_multiple_tickers_info_batch(ticker_list):
         try:
             from yahooquery import Ticker as YahooQueryTicker
 
-            batch_ticker = YahooQueryTicker(missing_resolved, **_yahoo_finance_setup.yahooquery_kwargs())
+            batch_ticker = YahooQueryTicker(missing_resolved, **_yahooquery_kwargs())
 
             summary_detail = batch_ticker.summary_detail
             financial_data = batch_ticker.financial_data
