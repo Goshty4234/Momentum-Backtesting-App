@@ -1,3 +1,10 @@
+import os
+import sys
+
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _APP_ROOT not in sys.path:
+    sys.path.insert(0, _APP_ROOT)
+
 import yahoo_finance_setup as _yahoo_finance_setup
 
 _yahoo_finance_setup.setup()
